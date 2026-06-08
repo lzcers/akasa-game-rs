@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useNavigate } from 'react-router-dom';
 import { useGameInternalStore } from '../store/gameStore';
@@ -17,6 +17,7 @@ import { appRoutes, routeWithClonedSession } from '../lib/appRoutes';
 import type { Choice } from '../lib/api';
 
 const EMPTY_BROADCAST_ITEMS: string[] = [];
+const AUTO_CHOICE_STORAGE_KEY = 'akasa:auto-choice-enabled';
 
 const GameplayPage: React.FC = () => {
   const navigate = useNavigate();
@@ -63,6 +64,9 @@ const GameplayPage: React.FC = () => {
   const displayRound = useGameInternalStore((state) => state.displayRound);
   const roundStates = useGameInternalStore((state) => state.roundStates);
   const [completedTypingKey, setCompletedTypingKey] = useState<string | null>(null);
+  const [autoChoiceEnabled, setAutoChoiceEnabled] = useState(() => (
+    import.meta.env.DEV && window.localStorage.getItem(AUTO_CHOICE_STORAGE_KEY) === '1'
+  ));
   const [roundControls, setRoundControls] = useState<{
     round: number;
     activeObsession: boolean;
@@ -75,6 +79,7 @@ const GameplayPage: React.FC = () => {
     previews: {},
   });
   const [feedback, setFeedback] = useState<string | null>(null);
+  const autoChoiceKeyRef = useRef<string | null>(null);
 
   const currentRound = Math.max(displayRound || turnIndex || 1, 1);
   const narrationHistory = useMemo<NarrationRoundEntry[]>(() => (
@@ -87,7 +92,10 @@ const GameplayPage: React.FC = () => {
   const activeObsession = hasCurrentRoundControls ? roundControls.activeObsession : false;
   const obsessionInput = hasCurrentRoundControls ? roundControls.obsessionInput : '';
   const previews = hasCurrentRoundControls ? roundControls.previews : {};
-  const currentRoundChoices = activeRoundState?.choices ?? [];
+  const currentRoundChoices = useMemo(
+    () => activeRoundState?.choices ?? [],
+    [activeRoundState?.choices],
+  );
   const hasChoices = currentRoundChoices.length > 0;
   const isNarrationStreaming = activeRoundState?.narrationStatus === 'pending'
     || activeRoundState?.narrationStatus === 'running';
@@ -149,6 +157,14 @@ const GameplayPage: React.FC = () => {
     return () => window.clearTimeout(timer);
   }, [feedback]);
 
+  useEffect(() => {
+    if (!import.meta.env.DEV) {
+      return;
+    }
+
+    window.localStorage.setItem(AUTO_CHOICE_STORAGE_KEY, autoChoiceEnabled ? '1' : '0');
+  }, [autoChoiceEnabled]);
+
   const handleTypewriterComplete = useCallback(() => {
     setCompletedTypingKey(typingKey);
   }, [typingKey]);
@@ -197,7 +213,7 @@ const GameplayPage: React.FC = () => {
     }
   };
 
-  const handleChoiceClick = async (choice: Choice) => {
+  const handleChoiceClick = useCallback(async (choice: Choice) => {
     try {
       await submitChoice({
         input: {
@@ -216,7 +232,50 @@ const GameplayPage: React.FC = () => {
     } catch (submitError) {
       setFeedback(readErrorMessage(submitError, '推进剧情失败。'));
     }
-  };
+  }, [activeObsession, currentRound, readErrorMessage, submitChoice]);
+
+  useEffect(() => {
+    if (!autoChoiceEnabled) {
+      autoChoiceKeyRef.current = null;
+      return undefined;
+    }
+
+    if (activeObsession || !hasChoices || isChoiceInteractionDisabled) {
+      return undefined;
+    }
+
+    const nextChoice = currentRoundChoices.find((choice) => !choice.disabled);
+
+    if (!nextChoice) {
+      return undefined;
+    }
+
+    const autoChoiceKey = [
+      sessionId ?? 'no-session',
+      currentRound,
+      currentRoundChoices.map((choice) => `${choice.id}:${choice.action}`).join('|'),
+    ].join(':');
+
+    if (autoChoiceKeyRef.current === autoChoiceKey) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      autoChoiceKeyRef.current = autoChoiceKey;
+      void handleChoiceClick(nextChoice);
+    }, 450);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    activeObsession,
+    autoChoiceEnabled,
+    currentRound,
+    currentRoundChoices,
+    handleChoiceClick,
+    hasChoices,
+    isChoiceInteractionDisabled,
+    sessionId,
+  ]);
 
   const handleObsessionSubmit = async (actionText: string) => {
     if (!actionText) {
@@ -289,9 +348,12 @@ const GameplayPage: React.FC = () => {
                 remainingIntuitionPoints={intuitionPoints}
                 activeObsession={activeObsession}
                 obsessionInput={obsessionInput}
+                autoChoiceEnabled={autoChoiceEnabled}
+                showAutoChoiceToggle={import.meta.env.DEV}
                 isChoiceInteractionDisabled={isChoiceInteractionDisabled}
                 isObsessionSubmitDisabled={isObsessionSubmitDisabled}
                 onChoiceClick={handleChoiceClick}
+                onAutoChoiceToggle={setAutoChoiceEnabled}
                 onPreview={handlePreview}
                 onObsessionInputChange={(nextValue) => {
                   setRoundControls((prev) => ({

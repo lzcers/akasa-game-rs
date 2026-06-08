@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { Eye } from "lucide-react";
+import { Bot, Eye } from "lucide-react";
 import type { Choice } from "../lib/api";
 import { SecondaryButton } from "./AkashicUI";
 
@@ -10,9 +10,12 @@ interface ChoicePanelProps {
   remainingIntuitionPoints: number;
   activeObsession: boolean;
   obsessionInput: string;
+  autoChoiceEnabled?: boolean;
+  showAutoChoiceToggle?: boolean;
   isChoiceInteractionDisabled: boolean;
   isObsessionSubmitDisabled: boolean;
   onChoiceClick: (choice: Choice) => void | Promise<void>;
+  onAutoChoiceToggle?: (enabled: boolean) => void;
   onPreview: (
     choice: Choice,
     event: React.MouseEvent<HTMLButtonElement>,
@@ -28,9 +31,12 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
   remainingIntuitionPoints,
   activeObsession,
   obsessionInput,
+  autoChoiceEnabled = false,
+  showAutoChoiceToggle = false,
   isChoiceInteractionDisabled,
   isObsessionSubmitDisabled,
   onChoiceClick,
+  onAutoChoiceToggle,
   onPreview,
   onObsessionInputChange,
   onObsessionSubmit,
@@ -53,6 +59,37 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
   return (
     <div className="flex w-full">
       <div className="game-choices flex-1 rounded-[1.1rem] border border-[rgba(116,103,80,0.35)] bg-[rgba(5,11,22,0.55)] px-1.5 py-2">
+        {showAutoChoiceToggle ? (
+          <div className="mb-2 flex items-center justify-end px-0.5">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoChoiceEnabled}
+              onClick={() => onAutoChoiceToggle?.(!autoChoiceEnabled)}
+              className="inline-flex h-8 items-center gap-2 rounded-full border border-[rgba(116,103,80,0.48)] bg-[rgba(18,26,41,0.72)] px-3 text-[0.68rem] font-medium text-[#d9cbb1] transition-colors hover:border-[rgba(215,188,146,0.72)] hover:text-[#f3ead8] sm:text-xs"
+              title="开发测试：自动选择第一个可用选项"
+            >
+              <Bot className="h-3.5 w-3.5" />
+              <span>自动选择</span>
+              <span
+                className={[
+                  "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full border transition-colors",
+                  autoChoiceEnabled
+                    ? "border-[#d1b78d] bg-[#d1b78d]/85"
+                    : "border-[#746750]/70 bg-[#1d283b]",
+                ].join(" ")}
+              >
+                <span
+                  className={[
+                    "h-3 w-3 rounded-full bg-[#f7efe2] transition-transform",
+                    autoChoiceEnabled ? "translate-x-3.5" : "translate-x-0.5",
+                  ].join(" ")}
+                />
+              </span>
+            </button>
+          </div>
+        ) : null}
+
         {!activeObsession ? (
           <div className="akashic-scroll max-h-[28dvh] touch-pan-y space-y-1 overflow-y-auto pr-0.5 py-0.5">
             {choices.map((choice) => (
