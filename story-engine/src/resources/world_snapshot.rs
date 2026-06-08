@@ -215,7 +215,7 @@ impl WorldSnapshot {
             writeln!(out, "可用出口：{}", self.location_exits.join("、")).unwrap();
         }
         writeln!(out, "地点状态：{}", self.location_status).unwrap();
-        writeln!(out, "环境细节：{}", self.description).unwrap();
+        writeln!(out, "场景细节：{}", self.description).unwrap();
 
         if let Some(protagonist_action) = protagonist_action {
             writeln!(out, "主角刚刚的行动：{}", protagonist_action).unwrap();

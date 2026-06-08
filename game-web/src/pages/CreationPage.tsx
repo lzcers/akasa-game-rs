@@ -1,7 +1,8 @@
 import React from 'react';
-import { ChevronDown, TriangleAlert } from 'lucide-react';
+import { ChevronDown, RotateCcw, Save, TriangleAlert } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useGameUIStore } from '../store/gameUIStore';
+import type { Character, World } from '../lib/api';
 import {
   FieldLabel,
   PrimaryButton,
@@ -13,6 +14,12 @@ import {
 } from '../components/AkashicUI';
 import { appRoutes } from '../lib/appRoutes';
 import { track } from '../lib/analytics';
+import {
+  cloneCharacter,
+  cloneWorld,
+  initialCharacter,
+  initialWorld,
+} from '../store/gameStoreHelpers';
 
 const backgroundOptions = [
   '背负诅咒的继承者',
@@ -106,6 +113,7 @@ const eraOptions = [
 const ATTRIBUTE_TOTAL = 30;
 const ATTRIBUTE_MIN = 1;
 const ATTRIBUTE_MAX = 10;
+const CREATION_DRAFT_STORAGE_KEY = 'akashic-creation-draft';
 
 const traitConfigs = [
   { key: 'intellect', label: '智力', hint: '理解、推演与拆解复杂问题的能力。' },
@@ -117,6 +125,11 @@ const traitConfigs = [
 ] as const;
 
 type TraitKey = (typeof traitConfigs)[number]['key'];
+
+interface CreationDraft {
+  character: Character;
+  world: World;
+}
 
 interface SearchableSelectProps {
   value: string;
@@ -220,6 +233,87 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
   );
 };
 
+function canUseLocalStorage() {
+  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+}
+
+function readCreationDraft(): CreationDraft | null {
+  if (!canUseLocalStorage()) {
+    return null;
+  }
+
+  const raw = window.localStorage.getItem(CREATION_DRAFT_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+
+    const draft = parsed as Partial<CreationDraft>;
+    if (!isCharacterDraft(draft.character) || !isWorldDraft(draft.world)) {
+      return null;
+    }
+
+    return {
+      character: cloneCharacter(draft.character),
+      world: cloneWorld(draft.world),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeCreationDraft(draft: CreationDraft) {
+  if (!canUseLocalStorage()) {
+    return false;
+  }
+
+  window.localStorage.setItem(CREATION_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  return true;
+}
+
+function removeCreationDraft() {
+  if (!canUseLocalStorage()) {
+    return false;
+  }
+
+  window.localStorage.removeItem(CREATION_DRAFT_STORAGE_KEY);
+  return true;
+}
+
+function isCharacterDraft(value: unknown): value is Character {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const character = value as Partial<Character>;
+  const traits = character.traits as Partial<Character['traits']> | undefined;
+  return typeof character.name === 'string'
+    && typeof character.gender === 'string'
+    && typeof character.age === 'number'
+    && Number.isFinite(character.age)
+    && typeof character.appearance === 'string'
+    && typeof character.background === 'string'
+    && Boolean(traits)
+    && traitConfigs.every((trait) => typeof traits?.[trait.key] === 'number');
+}
+
+function isWorldDraft(value: unknown): value is World {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const world = value as Partial<World>;
+  return typeof world.era === 'string'
+    && typeof world.description === 'string'
+    && Array.isArray(world.specialRules)
+    && world.specialRules.every((rule) => typeof rule === 'string');
+}
+
 const CreationPage: React.FC = () => {
   const navigate = useNavigate();
   const {
@@ -231,9 +325,13 @@ const CreationPage: React.FC = () => {
     isLoading,
     error,
   } = useGameUIStore();
+  const [initialDraft] = React.useState(readCreationDraft);
+  const [draftFeedback, setDraftFeedback] = React.useState<string | null>(
+    initialDraft ? '已恢复本地草稿' : null,
+  );
   const [ageInput, setAgeInput] = React.useState(() => ({
-    sourceAge: character.age,
-    value: String(character.age),
+    sourceAge: initialDraft?.character.age ?? character.age,
+    value: String(initialDraft?.character.age ?? character.age),
   }));
   const displayedAgeInput = ageInput.sourceAge === character.age
     ? ageInput.value
@@ -259,6 +357,15 @@ const CreationPage: React.FC = () => {
 
   const canStart = Boolean(character.name.trim()) && (character.gender === '男' || character.gender === '女');
 
+  React.useEffect(() => {
+    if (!initialDraft) {
+      return;
+    }
+
+    updateCharacter(initialDraft.character);
+    updateWorld(initialDraft.world);
+  }, [initialDraft, updateCharacter, updateWorld]);
+
   const handleStartGame = async () => {
     track('creation_submitted', {
       character,
@@ -269,6 +376,25 @@ const CreationPage: React.FC = () => {
     } catch {
       // Store already keeps the error message for UI surfaces elsewhere.
     }
+  };
+
+  const handleSaveDraft = () => {
+    const saved = writeCreationDraft({
+      character: cloneCharacter(character),
+      world: cloneWorld(world),
+    });
+    setDraftFeedback(saved ? '已保存到本地草稿' : '当前环境无法访问本地存储');
+  };
+
+  const handleResetDraft = () => {
+    removeCreationDraft();
+    updateCharacter(cloneCharacter(initialCharacter));
+    updateWorld(cloneWorld(initialWorld));
+    setAgeInput({
+      sourceAge: initialCharacter.age,
+      value: String(initialCharacter.age),
+    });
+    setDraftFeedback('已重置创建表单');
   };
 
   const handleTraitChange = (key: TraitKey, rawValue: number) => {
@@ -298,6 +424,11 @@ const CreationPage: React.FC = () => {
               iconClassName="text-[#ff9b9b]"
             >
               {error}
+            </StatusPill>
+          ) : null}
+          {draftFeedback ? (
+            <StatusPill icon={null} className="border-[#3d5f82]/45 bg-[#102033]/82 text-[#d7e5ff]">
+              {draftFeedback}
             </StatusPill>
           ) : null}
 
@@ -534,6 +665,14 @@ const CreationPage: React.FC = () => {
           <div className="sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-20 mt-2 flex touch-pan-y flex-col gap-2 rounded-xl border border-[#6f6655]/50 bg-[#0a1222]/94 p-1.5 shadow-[0_12px_28px_rgba(2,8,18,0.44)] backdrop-blur-xl sm:static sm:inset-auto sm:mt-1 sm:flex-row sm:justify-end sm:rounded-none sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">
             <SecondaryButton onClick={() => navigate(appRoutes.lobby)} className="min-h-10 w-full px-3.5 py-2 text-sm sm:w-auto md:min-h-11 md:px-4 md:py-2.5">
               返回大厅
+            </SecondaryButton>
+            <SecondaryButton onClick={handleResetDraft} disabled={isLoading} className="flex min-h-10 w-full items-center justify-center gap-2 px-3.5 py-2 text-sm sm:w-auto md:min-h-11 md:px-4 md:py-2.5">
+              <RotateCcw className="h-4 w-4" />
+              重置
+            </SecondaryButton>
+            <SecondaryButton onClick={handleSaveDraft} disabled={isLoading} className="flex min-h-10 w-full items-center justify-center gap-2 px-3.5 py-2 text-sm sm:w-auto md:min-h-11 md:px-4 md:py-2.5">
+              <Save className="h-4 w-4" />
+              保存草稿
             </SecondaryButton>
             <PrimaryButton onClick={handleStartGame} disabled={!canStart || isLoading} className="min-h-10 w-full px-3.5 py-2 text-sm sm:w-auto md:min-h-11 md:px-4 md:py-2.5">
               {isLoading ? '设定生成中...' : '开启命运'}

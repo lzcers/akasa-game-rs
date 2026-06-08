@@ -37,6 +37,7 @@ use crate::{
             player_sys::player_input_consume_system,
             protagonist_sys::{protagonist_apply_system, protagonist_dispatch_system},
         },
+        context_export_sys::context_export_system,
         export_sys::export_system,
         flow::{agent_task_system, cleanup_previous_turn_outcomes_system, flow_progress_system},
         history_sys::history_sys,
@@ -778,6 +779,7 @@ fn build_schedule() -> Schedule {
         (
             history_sys,
             export_system,
+            context_export_system,
             cleanup_previous_turn_outcomes_system,
             message_update_system,
         )

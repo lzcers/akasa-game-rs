@@ -52,9 +52,6 @@ impl TurnFlow {
     pub fn advance(&mut self) {
         match self.stage {
             TurnStage::Idle => {
-                if self.active_turn_id <= self.turn_index {
-                    self.active_turn_id = self.turn_index + 1;
-                }
                 self.stage = TurnStage::Simulation;
             }
             TurnStage::TurnCompleted => {

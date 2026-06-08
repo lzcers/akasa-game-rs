@@ -49,9 +49,8 @@ pub fn fate_weaver_dispatch_system(
         }) {
             agent.append_user_message(
                 &json!({
-                    "round": flow.active_turn_id.max(flow.turn_index + 1),
+                    "round": flow.active_turn_id,
                     "protagonist_action": decision_state.committed_action(),
-                    "previous_world_snapshot": world_snapshot,
                 })
                 .to_string(),
             );
