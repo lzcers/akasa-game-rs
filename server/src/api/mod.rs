@@ -22,7 +22,6 @@ pub fn build_router(state: AppState) -> Router {
             "/api/game-sessions/create",
             post(handlers::create_game_session),
         )
-        .route("/api/game-sessions/load", post(handlers::load_game_session))
         .route(
             "/api/game-sessions/{session_id}",
             get(handlers::get_game_session_world),
@@ -30,10 +29,6 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/game-sessions/{session_id}/clone",
             post(handlers::clone_game_session),
-        )
-        .route(
-            "/api/game-sessions/{session_id}/save",
-            post(handlers::create_save_slot),
         )
         .route(
             "/api/game-sessions/{session_id}/save-export",

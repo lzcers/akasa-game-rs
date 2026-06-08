@@ -16,18 +16,15 @@ use crate::{
     api::archive,
     api::dto::{
         ControlGameSessionData, ControlGameSessionRequest, CreateGameSessionData,
-        CreateGameSessionRequest, CreateSaveSlotData, GameSessionControlCommand,
-        GameSessionWorldStateData, RoundHistoryData, SaveExportData, SessionActionInput,
-        WorldStateData,
+        CreateGameSessionRequest, GameSessionControlCommand, GameSessionWorldStateData,
+        RoundHistoryData, SaveExportData, SessionActionInput, WorldStateData,
     },
-    db::ArchiveRepository,
     error::AppError,
 };
 
 #[derive(Clone)]
 pub struct AppState {
     sessions: Arc<Mutex<HashMap<String, SessionRecord>>>,
-    archive_repo: ArchiveRepository,
     engine: AkashicEngine,
 }
 
@@ -45,15 +42,11 @@ pub struct LiveSessionStream {
 const EVENT_CHANNEL_CAPACITY: usize = 256;
 
 impl AppState {
-    pub fn new(archive_repo: ArchiveRepository) -> Result<Self, AppError> {
-        archive_repo
-            .init_schema()
-            .map_err(|err| AppError::internal(format!("初始化存档数据库失败：{err:#}")))?;
-        Ok(Self {
+    pub fn new() -> Self {
+        Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            archive_repo,
             engine: AkashicEngine::new(),
-        })
+        }
     }
 
     // 创建会话
@@ -94,62 +87,6 @@ impl AppState {
         Ok(CreateGameSessionData {
             session_id,
             created_at,
-        })
-    }
-
-    pub async fn load_game_session_from_slot(
-        &self,
-        slot_id: &str,
-    ) -> Result<GameSessionWorldStateData, AppError> {
-        let payload = self
-            .archive_repo
-            .load_archive_payload(slot_id)
-            .map_err(|err| AppError::internal(format!("读取存档 `{slot_id}` 失败：{err:#}")))?
-            .ok_or_else(|| AppError::not_found(format!("未找到存档槽 `{slot_id}`")))?;
-        let session_id = payload.session_id.clone();
-        let engine = archive::load_archive_payload(&self.engine, payload)
-            .await
-            .map_err(AppError::internal)?;
-        engine
-            .wait_until_ready()
-            .await
-            .map_err(AppError::internal)?;
-        let session = build_session_record(session_id.clone(), engine);
-        let snapshot = session.engine.get_game_session();
-        let state_view = world_state_from_session(&session, &snapshot);
-
-        self.sessions.lock().await.insert(session_id, session);
-
-        Ok(state_view)
-    }
-
-    pub async fn create_save_slot(
-        &self,
-        session_id: &str,
-        title: Option<&str>,
-    ) -> Result<CreateSaveSlotData, AppError> {
-        let payload = {
-            let mut sessions = self.sessions.lock().await;
-            let session = sessions
-                .get_mut(session_id)
-                .ok_or_else(|| AppError::not_found(format!("未找到会话 `{session_id}`")))?;
-            archive::gen_archive_payload(session_id, title, &session.engine)
-                .await
-                .map_err(AppError::bad_request)?
-        };
-
-        let slot_id = format!("slot-{}", Uuid::new_v4().simple());
-        let saved = self
-            .archive_repo
-            .upsert_save_slot(&slot_id, &payload)
-            .map_err(|err| AppError::internal(format!("创建存档失败：{err:#}")))?;
-
-        Ok(CreateSaveSlotData {
-            slot_id: saved.slot_id,
-            session_id: saved.session_id,
-            title: saved.title,
-            created_at: saved.created_at,
-            updated_at: saved.updated_at,
         })
     }
 
@@ -468,8 +405,10 @@ fn now_string() -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
+    use super::*;
+    use crate::api::archive::{
+        ProtagonistDecisionArchive, SessionArchivePayload, TurnStateArchive,
+    };
     use agent::agent::context::Context;
     use serde_json::Value;
     use story_engine::resources::{
@@ -478,26 +417,16 @@ mod tests {
         turn_state::TurnPhase,
         world_snapshot::WorldSnapshot,
     };
-    use uuid::Uuid;
-
-    use super::*;
-    use crate::api::archive::{
-        ProtagonistDecisionArchive, SessionArchivePayload, TurnStateArchive,
-    };
 
     #[tokio::test]
-    async fn load_game_session_from_slot_restores_runtime_into_registry() {
-        let db_path = std::env::temp_dir().join(format!("state-load-{}.sqlite3", Uuid::new_v4()));
-        let repo = ArchiveRepository::new(&db_path);
-        repo.init_schema().expect("schema should initialize");
-        repo.upsert_save_slot("slot-load", &sample_payload())
-            .expect("payload should persist");
-
-        let state = AppState::new(repo).expect("app state should initialize");
+    async fn load_game_session_from_archive_restores_runtime_into_registry() {
+        let state = AppState::new();
+        let compressed =
+            archive::compress_archive_payload(&sample_payload()).expect("archive compresses");
         let restored = state
-            .load_game_session_from_slot("slot-load")
+            .load_game_session_from_archive(compressed)
             .await
-            .expect("slot should restore");
+            .expect("archive should restore");
 
         assert_eq!(restored.session_id, "session-from-slot");
         assert_eq!(restored.phase, TurnPhase::AwaitingPlayer);
@@ -517,15 +446,11 @@ mod tests {
             .await
             .expect("restored session should be queryable");
         assert_eq!(loaded_again.world_state.scene_title, "钟楼阴影");
-
-        let _ = fs::remove_file(db_path);
     }
 
     #[tokio::test]
-    async fn create_save_slot_persists_archive_payload() {
-        let db_path = std::env::temp_dir().join(format!("state-save-{}.sqlite3", Uuid::new_v4()));
-        let repo = ArchiveRepository::new(&db_path);
-        let state = AppState::new(repo.clone()).expect("app state should initialize");
+    async fn export_save_archive_returns_local_archive_payload() {
+        let state = AppState::new();
 
         let created = state
             .create_game_session(crate::api::dto::CreateGameSessionRequest {
@@ -536,29 +461,23 @@ mod tests {
             .await
             .expect("session should create");
 
-        let saved = state
-            .create_save_slot(&created.session_id, Some("测试存档"))
+        let exported = state
+            .export_save_archive(&created.session_id, Some("测试存档"))
             .await
-            .expect("save slot should be created");
+            .expect("save archive should export");
 
-        let persisted = repo
-            .load_archive_payload(&saved.slot_id)
-            .expect("db query should succeed")
-            .expect("payload should exist");
+        let payload = archive::decompress_archive_payload(&exported.compressed_archive)
+            .expect("exported archive should decode");
 
-        assert_eq!(persisted.session_id, created.session_id);
-        assert_eq!(persisted.title, "测试存档");
-        assert_eq!(saved.title, "测试存档");
-
-        let _ = fs::remove_file(db_path);
+        assert_eq!(payload.session_id, created.session_id);
+        assert_eq!(payload.title, "测试存档");
+        assert_eq!(exported.title, "测试存档");
+        assert!(!exported.compressed_archive.is_empty());
     }
 
     #[tokio::test]
     async fn load_game_session_from_archive_overwrites_existing_session() {
-        let db_path =
-            std::env::temp_dir().join(format!("state-archive-{}.sqlite3", Uuid::new_v4()));
-        let repo = ArchiveRepository::new(&db_path);
-        let state = AppState::new(repo).expect("app state should initialize");
+        let state = AppState::new();
 
         state
             .create_game_session(crate::api::dto::CreateGameSessionRequest {
@@ -585,15 +504,11 @@ mod tests {
             .await
             .expect("restored session should be queryable");
         assert_eq!(loaded_again.current_protagonist_action, "绕到钟楼背面");
-
-        let _ = fs::remove_file(db_path);
     }
 
     #[tokio::test]
     async fn clone_game_session_creates_independent_runtime_session() {
-        let db_path = std::env::temp_dir().join(format!("state-clone-{}.sqlite3", Uuid::new_v4()));
-        let repo = ArchiveRepository::new(&db_path);
-        let state = AppState::new(repo).expect("app state should initialize");
+        let state = AppState::new();
         let compressed =
             archive::compress_archive_payload(&sample_payload()).expect("archive compresses");
         state
@@ -625,8 +540,6 @@ mod tests {
             cloned_again.world_state.scene_title
         );
         assert_eq!(source.history.len(), cloned_again.history.len());
-
-        let _ = fs::remove_file(db_path);
     }
 
     #[test]

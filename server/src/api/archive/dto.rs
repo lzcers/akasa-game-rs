@@ -61,19 +61,3 @@ pub struct SessionArchivePayload {
     /// 每轮结构化历史，保证前端可恢复完整时间线
     pub history_log: SessionHistoryLog,
 }
-
-/// 数据库存档槽记录
-/// 用于“多存档槽 + 列表筛选字段”。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct SaveSlotRecord {
-    pub slot_id: String,
-    pub session_id: String,
-    pub title: String,
-    /// ISO8601 文本即可，避免过早引入额外时间类型耦合
-    pub created_at: String,
-    pub updated_at: String,
-
-    /// 真正的完整归档
-    pub payload: SessionArchivePayload,
-}

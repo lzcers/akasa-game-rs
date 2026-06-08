@@ -63,22 +63,6 @@ pub struct CreateGameSessionData {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateSaveSlotRequest {
-    pub title: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateSaveSlotData {
-    pub slot_id: String,
-    pub session_id: String,
-    pub title: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveExportData {
@@ -91,14 +75,14 @@ pub struct SaveExportData {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LoadArchiveRequest {
-    pub compressed_archive: String,
+pub struct SaveExportRequest {
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LoadGameSessionRequest {
-    pub slot_id: String,
+pub struct LoadArchiveRequest {
+    pub compressed_archive: String,
 }
 
 pub type SessionActionInput = PlayerActionInput;

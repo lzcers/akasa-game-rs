@@ -1,24 +1,21 @@
 mod api;
-mod db;
 mod error;
 mod state;
 
-use std::{net::SocketAddr, path::PathBuf};
+use std::net::SocketAddr;
 
 use anyhow::Context;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::info;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{api::build_router, db::ArchiveRepository, state::AppState};
+use crate::{api::build_router, state::AppState};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing();
 
-    let archive_repo = ArchiveRepository::new(default_archive_db_path());
-    let state = AppState::new(archive_repo)
-        .map_err(|err| anyhow::anyhow!("failed to initialize app state: {:?}", err))?;
+    let state = AppState::new();
 
     let app = build_router(state)
         .layer(CorsLayer::permissive())
@@ -50,8 +47,4 @@ fn init_tracing() {
                 .compact(),
         )
         .init();
-}
-
-fn default_archive_db_path() -> PathBuf {
-    PathBuf::from("db-data/archive.sqlite3")
 }
