@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Compass, Download, Share2, Sparkles } from "lucide-react";
+import { Compass, Copy, Download, Sparkles } from "lucide-react";
 
 import { cn } from "../lib/utils";
 import { createQrCodeMatrix, qrCodeToSvgPath } from "../lib/qrCode";
@@ -26,6 +26,7 @@ const StoryShareCard: React.FC<StoryShareCardProps> = ({
 }) => {
   const content = summary.trim();
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const qrCode = useMemo(() => {
     try {
@@ -54,6 +55,29 @@ const StoryShareCard: React.FC<StoryShareCardProps> = ({
       );
     } finally {
       setIsDownloading(false);
+    }
+  };
+
+  const handleCopyLink = async () => {
+    setCopyFeedback(null);
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(gameUrl);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = gameUrl;
+        textArea.setAttribute("readonly", "");
+        textArea.style.position = "fixed";
+        textArea.style.left = "-9999px";
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+      }
+      setCopyFeedback("链接已复制到剪贴板");
+    } catch {
+      setCopyFeedback("复制失败，请手动复制链接。");
     }
   };
 
@@ -154,6 +178,11 @@ const StoryShareCard: React.FC<StoryShareCardProps> = ({
               {downloadError}
             </p>
           ) : null}
+          {copyFeedback ? (
+            <p className="text-xs leading-5 text-cyan-100/85">
+              {copyFeedback}
+            </p>
+          ) : null}
         </div>
 
         <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:flex sm:flex-row">
@@ -166,15 +195,14 @@ const StoryShareCard: React.FC<StoryShareCardProps> = ({
             <Download className="h-4 w-4" />
             <span>{isDownloading ? "生成中..." : "分享卡片"}</span>
           </button>
-          <a
-            href={gameUrl}
-            target="_blank"
-            rel="noreferrer"
+          <button
+            type="button"
+            onClick={() => void handleCopyLink()}
             className="inline-flex h-10 items-center justify-center gap-1.5 rounded-full bg-[#d8c18f] px-3 text-xs font-medium text-[#111624] shadow-[0_10px_30px_rgba(216,193,143,0.25)] transition-colors hover:bg-[#e4d1a9] sm:h-11 sm:gap-2 sm:px-5 sm:text-sm"
           >
-            <Share2 className="h-4 w-4" />
+            <Copy className="h-4 w-4" />
             <span>{ctaLabel}</span>
-          </a>
+          </button>
         </div>
       </div>
     </article>
