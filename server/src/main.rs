@@ -1,8 +1,9 @@
+mod analytics;
 mod api;
 mod error;
 mod state;
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::Context;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -15,7 +16,7 @@ use crate::{api::build_router, state::AppState};
 async fn main() -> anyhow::Result<()> {
     init_tracing();
 
-    let state = AppState::new();
+    let state = AppState::new(default_analytics_events_path());
 
     let app = build_router(state)
         .layer(CorsLayer::permissive())
@@ -47,4 +48,8 @@ fn init_tracing() {
                 .compact(),
         )
         .init();
+}
+
+fn default_analytics_events_path() -> PathBuf {
+    PathBuf::from("db-data/analytics.sqlite3")
 }

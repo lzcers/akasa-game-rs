@@ -12,6 +12,7 @@ import {
   StatusPill,
 } from '../components/AkashicUI';
 import { appRoutes } from '../lib/appRoutes';
+import { track } from '../lib/analytics';
 
 const backgroundOptions = [
   '背负诅咒的继承者',
@@ -259,6 +260,10 @@ const CreationPage: React.FC = () => {
   const canStart = Boolean(character.name.trim()) && (character.gender === '男' || character.gender === '女');
 
   const handleStartGame = async () => {
+    track('creation_submitted', {
+      character,
+      world,
+    });
     try {
       await startGame();
     } catch {

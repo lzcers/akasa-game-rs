@@ -13,11 +13,13 @@ use tokio::sync::{Mutex, broadcast};
 use uuid::Uuid;
 
 use crate::{
+    analytics::AnalyticsRepository,
     api::archive,
     api::dto::{
-        ControlGameSessionData, ControlGameSessionRequest, CreateGameSessionData,
-        CreateGameSessionRequest, GameSessionControlCommand, GameSessionWorldStateData,
-        RoundHistoryData, SaveExportData, SessionActionInput, WorldStateData,
+        AnalyticsBatchRequest, ControlGameSessionData, ControlGameSessionRequest,
+        CreateGameSessionData, CreateGameSessionRequest, GameSessionControlCommand,
+        GameSessionWorldStateData, RoundHistoryData, SaveExportData, SessionActionInput,
+        WorldStateData,
     },
     error::AppError,
 };
@@ -25,6 +27,7 @@ use crate::{
 #[derive(Clone)]
 pub struct AppState {
     sessions: Arc<Mutex<HashMap<String, SessionRecord>>>,
+    analytics_repo: AnalyticsRepository,
     engine: AkashicEngine,
 }
 
@@ -42,11 +45,32 @@ pub struct LiveSessionStream {
 const EVENT_CHANNEL_CAPACITY: usize = 256;
 
 impl AppState {
-    pub fn new() -> Self {
+    pub fn new(analytics_events_path: impl Into<std::path::PathBuf>) -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            analytics_repo: AnalyticsRepository::new(analytics_events_path),
             engine: AkashicEngine::new(),
         }
+    }
+
+    pub async fn record_analytics_events(
+        &self,
+        request: AnalyticsBatchRequest,
+    ) -> Result<usize, AppError> {
+        if request.events.len() > 100 {
+            return Err(AppError::bad_request(
+                "单次最多提交 100 条 analytics events。",
+            ));
+        }
+
+        for event in &request.events {
+            event.validate()?;
+        }
+
+        self.analytics_repo
+            .append_events(&request.events)
+            .await
+            .map_err(|err| AppError::internal(format!("写入埋点事件失败：{err:#}")))
     }
 
     // 创建会话
@@ -418,9 +442,16 @@ mod tests {
         world_snapshot::WorldSnapshot,
     };
 
+    fn test_state() -> AppState {
+        AppState::new(std::env::temp_dir().join(format!(
+            "akasa-analytics-{}.sqlite3",
+            Uuid::new_v4().simple()
+        )))
+    }
+
     #[tokio::test]
     async fn load_game_session_from_archive_restores_runtime_into_registry() {
-        let state = AppState::new();
+        let state = test_state();
         let compressed =
             archive::compress_archive_payload(&sample_payload()).expect("archive compresses");
         let restored = state
@@ -450,7 +481,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_save_archive_returns_local_archive_payload() {
-        let state = AppState::new();
+        let state = test_state();
 
         let created = state
             .create_game_session(crate::api::dto::CreateGameSessionRequest {
@@ -477,7 +508,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_game_session_from_archive_overwrites_existing_session() {
-        let state = AppState::new();
+        let state = test_state();
 
         state
             .create_game_session(crate::api::dto::CreateGameSessionRequest {
@@ -508,7 +539,7 @@ mod tests {
 
     #[tokio::test]
     async fn clone_game_session_creates_independent_runtime_session() {
-        let state = AppState::new();
+        let state = test_state();
         let compressed =
             archive::compress_archive_payload(&sample_payload()).expect("archive compresses");
         state

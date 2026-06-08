@@ -20,10 +20,10 @@ use tokio::sync::broadcast;
 use crate::{error::AppError, state::AppState};
 
 use super::dto::{
-    ApiResponse, ControlGameSessionData, ControlGameSessionRequest, CreateGameSessionData,
-    CreateGameSessionRequest, GameSessionWorldStateData, GenerateProfilesData,
-    GenerateProfilesRequest, LoadArchiveRequest, SaveExportData, SaveExportRequest, SessionPath,
-    StorySummaryData,
+    AnalyticsBatchData, AnalyticsBatchRequest, ApiResponse, ControlGameSessionData,
+    ControlGameSessionRequest, CreateGameSessionData, CreateGameSessionRequest,
+    GameSessionWorldStateData, GenerateProfilesData, GenerateProfilesRequest, LoadArchiveRequest,
+    SaveExportData, SaveExportRequest, SessionPath, StorySummaryData,
 };
 
 type ApiResult<T> = Result<Json<ApiResponse<T>>, AppError>;
@@ -96,6 +96,14 @@ pub async fn create_game_session(
 ) -> ApiResult<CreateGameSessionData> {
     let session = state.create_game_session(request).await?;
     Ok(Json(ApiResponse::ok(session)))
+}
+
+pub async fn record_analytics_events(
+    State(state): State<AppState>,
+    Json(request): Json<AnalyticsBatchRequest>,
+) -> ApiResult<AnalyticsBatchData> {
+    let accepted = state.record_analytics_events(request).await?;
+    Ok(Json(ApiResponse::ok(AnalyticsBatchData { accepted })))
 }
 
 pub async fn save_export(

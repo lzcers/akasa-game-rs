@@ -17,6 +17,10 @@ use crate::state::AppState;
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
+        .route(
+            "/api/analytics/events",
+            post(handlers::record_analytics_events),
+        )
         .route("/api/profiles/generate", post(handlers::generate_profiles))
         .route(
             "/api/game-sessions/create",

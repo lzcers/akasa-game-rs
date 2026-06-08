@@ -36,7 +36,7 @@ const LobbyPage: React.FC = () => {
         />
         <div className="relative z-10">
           <div className="space-y-6">
-            <PageTitle title="阿卡夏·回响" subtitle="命运将从此刻展开" />
+            <PageTitle title="阿卡夏·回响" subtitle="" />
             {error ? (
               <StatusPill
                 icon={TriangleAlert}

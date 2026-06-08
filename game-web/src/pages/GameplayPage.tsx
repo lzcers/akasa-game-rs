@@ -14,6 +14,7 @@ import GameplayToolbar from '../components/GameplayToolbar';
 import NarrationPanel from '../components/NarrationPanel';
 import type { NarrationRoundEntry } from '../components/gameplayTypes';
 import { appRoutes, routeWithClonedSession } from '../lib/appRoutes';
+import { track } from '../lib/analytics';
 import type { Choice } from '../lib/api';
 
 const EMPTY_BROADCAST_ITEMS: string[] = [];
@@ -197,6 +198,11 @@ const GameplayPage: React.FC = () => {
         throw new Error('这个选项暂时没有可窥见的命运碎片。');
       }
       consumeIntuition();
+      track('intuition_preview_used', {
+        round: currentRound,
+        choiceId: choice.id,
+        previewText: motivationAndRisk,
+      });
 
       setRoundControls((prev) => ({
         round: currentRound,
@@ -291,6 +297,10 @@ const GameplayPage: React.FC = () => {
         },
         displayText: actionText,
       }, true);
+      track('obsession_action_submitted', {
+        round: currentRound,
+        actionText: actionText.trim(),
+      });
       setRoundControls({
         round: currentRound,
         activeObsession: false,

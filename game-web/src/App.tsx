@@ -15,6 +15,11 @@ import GameplayPage from './pages/GameplayPage';
 import EndingPage from './pages/EndingPage';
 import { useGameInternalStore } from './store/gameStore';
 import { useGameUIStore } from './store/gameUIStore';
+import {
+  captureAttribution,
+  setAnalyticsGameSessionId,
+  track,
+} from './lib/analytics';
 
 function NavigationBridge() {
   const navigate = useNavigate();
@@ -75,6 +80,9 @@ function SessionCloneGate({ sourceSessionId }: { sourceSessionId: string }) {
   const navigate = useNavigate();
 
   useEffect(() => {
+    track('share_clone_opened', {
+      sourceSessionId,
+    });
     void cloneSharedSession(sourceSessionId)
       .then((cloned) => {
         navigate(
@@ -163,6 +171,19 @@ function EndingRoute() {
 }
 
 function App() {
+  useEffect(() => {
+    captureAttribution();
+    track('app_opened');
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = useGameInternalStore.subscribe((state) => {
+      setAnalyticsGameSessionId(state.sessionId);
+    });
+    setAnalyticsGameSessionId(useGameInternalStore.getState().sessionId);
+    return unsubscribe;
+  }, []);
+
   return (
     <div className="relative h-dvh w-full overflow-hidden bg-background">
       <div className="pointer-events-none absolute inset-0 z-0">

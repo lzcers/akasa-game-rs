@@ -26,6 +26,11 @@ import {
 } from '../lib/saveSlots';
 import { appRoutes, routeWithSession } from '../lib/appRoutes';
 import { navigateTo } from '../lib/navigation';
+import {
+  getAnalyticsSourceSessionId,
+  setAnalyticsGameSessionId,
+  track,
+} from '../lib/analytics';
 import { useGameValueStore } from './gameValueStore';
 import {
   createRoundState,
@@ -207,6 +212,10 @@ function waitForNextPaint() {
   });
 }
 
+function errorAnalyticsType(error: unknown) {
+  return error instanceof Error ? error.name || 'Error' : typeof error;
+}
+
 function waitForRoundNarrationStarted(sessionId: string, round: number) {
   return new Promise<void>((resolve, reject) => {
     const hasStarted = () => {
@@ -379,6 +388,7 @@ function applyStreamTaskToStores(task: TaskView, boundRound?: number | null) {
       }
       break;
     }
+    case 'simulation':
     case 'fate_planning': {
       const raw = taskRawContent(task);
       const parsed = parseJsonValue(raw);
@@ -566,6 +576,14 @@ const createGameUIActions = (
       const generatingStartedAt = Date.now();
       generatedProfiles = await generateProfiles(character, world);
       const generatingElapsed = Date.now() - generatingStartedAt;
+      track('profile_generate_completed', {
+        durationMs: generatingElapsed,
+        characterInput: character,
+        worldInput: world,
+        generatedProtagonistProfile: generatedProfiles.protagonist,
+        generatedWorldProfile: generatedProfiles.world,
+        generatedKeyStoryBeats: generatedProfiles.keyStoryBeats,
+      });
       if (generatingElapsed < MIN_GENERATING_PAGE_MS) {
         await sleep(MIN_GENERATING_PAGE_MS - generatingElapsed);
       }
@@ -630,6 +648,7 @@ const createGameUIActions = (
     await waitForNextPaint();
 
     try {
+      const sessionCreateStartedAt = Date.now();
       const [created] = await Promise.all([
         createGameSession({
           worldProfile: preparedProfiles.world,
@@ -641,6 +660,10 @@ const createGameUIActions = (
       if (runId !== startupFlowRunId) {
         return;
       }
+      setAnalyticsGameSessionId(created.sessionId);
+      track('game_session_created', {
+        durationMs: Date.now() - sessionCreateStartedAt,
+      });
 
       useGameInternalStore.setState({
         ...initialInternalState,
@@ -698,6 +721,9 @@ const createGameUIActions = (
       if (runId !== startupFlowRunId) {
         return;
       }
+      track('game_session_create_failed', {
+        errorType: errorAnalyticsType(error),
+      });
       closeActiveSessionStream();
       useGameInternalStore.setState({
         ...initialInternalState,
@@ -818,6 +844,15 @@ const createGameUIActions = (
       await submitGameSessionControl(sessionId, {
         action: nextInput,
       });
+      track('choice_submitted', {
+        round: activeRound,
+        nextRound,
+        choiceType: nextInput.type,
+        action: nextInput.action,
+        displayText: submission.displayText,
+        usedObsession: useObsession,
+        optionCount: currentRoundChoices.length,
+      });
       if (useObsession) {
         consumeObsession();
       }
@@ -912,6 +947,7 @@ const createGameUIActions = (
       const loaded = await loadGameSessionFromArchive({
         compressedArchive: archive,
       });
+      setAnalyticsGameSessionId(loaded.sessionId);
       useGameInternalStore.setState(internalStateFromSession(loaded));
       useGameValueStore.getState().resetValues(effectiveDisplayRound(loaded));
       set({
@@ -977,6 +1013,7 @@ const createGameUIActions = (
       if (restoringSessionId !== targetSessionId) {
         return;
       }
+      setAnalyticsGameSessionId(loaded.sessionId);
 
       useGameInternalStore.setState(internalStateFromSession(loaded));
       useGameValueStore.getState().resetValues(effectiveDisplayRound(loaded));
@@ -1036,6 +1073,15 @@ const createGameUIActions = (
 
       try {
         const cloned = await cloneGameSession(targetSessionId);
+        setAnalyticsGameSessionId(cloned.sessionId);
+        track('share_clone_session_created', {
+          sourceSessionId: targetSessionId,
+          clonedSessionId: cloned.sessionId,
+          sourceSessionIdFromAttribution: getAnalyticsSourceSessionId(),
+          sourceRound: cloned.worldState.round,
+          sourceEndingType: cloned.worldState.endingType ?? null,
+          isEnding: cloned.worldState.isEnding,
+        });
 
         useGameInternalStore.setState(internalStateFromSession(cloned));
         useGameValueStore.getState().resetValues(effectiveDisplayRound(cloned));
@@ -1080,6 +1126,7 @@ const createGameUIActions = (
   resetGame: () => {
     closeActiveSessionStream();
     clearStartupStageTimer();
+    setAnalyticsGameSessionId(null);
     useGameInternalStore.setState({
       ...initialInternalState,
     });

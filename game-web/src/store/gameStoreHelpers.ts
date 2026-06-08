@@ -101,6 +101,7 @@ export function toChoiceFromSession(choice: PendingProtagonistChoice): Choice {
 
 export function taskLabel(kind: string): string {
   switch (kind) {
+    case 'simulation':
     case 'fate_planning':
       return '命运编织中...';
     case 'narration':

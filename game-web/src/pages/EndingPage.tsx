@@ -17,6 +17,7 @@ import {
   StoryFrame,
 } from '../components/AkashicUI';
 import { appRoutes } from '../lib/appRoutes';
+import { track } from '../lib/analytics';
 import { useGameInternalStore } from '../store/gameStore';
 import { useGameUIStore } from '../store/gameUIStore';
 
@@ -135,6 +136,14 @@ const EndingPage: React.FC = () => {
   ), [roundStates]);
   const lastNarration = lastRound?.narrationText?.trim() || stateView?.latestHistory?.trim() || '最后一段余音还停留在风里。';
   const lastChoice = lastRound?.selectedChoiceText?.trim() || '你走到了命运为你收束的这一刻。';
+
+  React.useEffect(() => {
+    track('ending_viewed', {
+      endingType: stateView?.endingType ?? null,
+      round: stateView?.turnIndex ?? null,
+      scene: stateView?.currentScene ?? null,
+    });
+  }, [stateView?.currentScene, stateView?.endingType, stateView?.turnIndex]);
 
   const handleSave = async () => {
     try {
