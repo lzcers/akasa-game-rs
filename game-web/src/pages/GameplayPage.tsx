@@ -81,6 +81,7 @@ const GameplayPage: React.FC = () => {
   });
   const [feedback, setFeedback] = useState<string | null>(null);
   const autoChoiceKeyRef = useRef<string | null>(null);
+  const reachedRoundKeyRef = useRef<string | null>(null);
 
   const currentRound = Math.max(displayRound || turnIndex || 1, 1);
   const narrationHistory = useMemo<NarrationRoundEntry[]>(() => (
@@ -166,6 +167,22 @@ const GameplayPage: React.FC = () => {
     window.localStorage.setItem(AUTO_CHOICE_STORAGE_KEY, autoChoiceEnabled ? '1' : '0');
   }, [autoChoiceEnabled]);
 
+  useEffect(() => {
+    if (!sessionId || !hasChoices || isNarrationStreaming) {
+      return;
+    }
+
+    const reachedRoundKey = `${sessionId}:${currentRound}`;
+    if (reachedRoundKeyRef.current === reachedRoundKey) {
+      return;
+    }
+
+    reachedRoundKeyRef.current = reachedRoundKey;
+    track('round_reached', {
+      round: currentRound,
+    });
+  }, [currentRound, hasChoices, isNarrationStreaming, sessionId]);
+
   const handleTypewriterComplete = useCallback(() => {
     setCompletedTypingKey(typingKey);
   }, [typingKey]);
@@ -198,11 +215,7 @@ const GameplayPage: React.FC = () => {
         throw new Error('这个选项暂时没有可窥见的命运碎片。');
       }
       consumeIntuition();
-      track('intuition_preview_used', {
-        round: currentRound,
-        choiceId: choice.id,
-        previewText: motivationAndRisk,
-      });
+      track('intuition_preview_used');
 
       setRoundControls((prev) => ({
         round: currentRound,
@@ -297,10 +310,6 @@ const GameplayPage: React.FC = () => {
         },
         displayText: actionText,
       }, true);
-      track('obsession_action_submitted', {
-        round: currentRound,
-        actionText: actionText.trim(),
-      });
       setRoundControls({
         round: currentRound,
         activeObsession: false,

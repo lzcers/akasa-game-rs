@@ -25,17 +25,18 @@ const LobbyPage: React.FC = () => {
   };
 
   return (
-    <ScreenShell>
-      <StoryFrame className="overflow-hidden p-6 md:p-8">
+    <ScreenShell className="items-center">
+      <StoryFrame className="overflow-hidden p-5 sm:p-6 md:p-8">
         <div
-          className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-20"
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-28"
           style={{
             backgroundImage:
               'url("https://coresg-normal.trae.ai/api/ide/v1/text_to_image?prompt=A%20mystical%20ancient%20archive%20with%20rainy%20blue%20atmosphere%2C%20dark%20fantasy%20ui%20background%2C%20cinematic%20concept%20art&image_size=landscape_16_9")',
           }}
         />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_18%,rgba(240,223,194,0.18),transparent_28%),linear-gradient(135deg,rgba(8,14,26,0.28),rgba(8,14,26,0.86)_62%,rgba(3,7,14,0.95))]" />
         <div className="relative z-10">
-          <div className="space-y-6">
+          <div className="mx-auto max-w-3xl space-y-6">
             <PageTitle title="阿卡夏·回响" subtitle="" />
             {error ? (
               <StatusPill
@@ -46,10 +47,20 @@ const LobbyPage: React.FC = () => {
                 {error}
               </StatusPill>
             ) : null}
-            <SectionCard>
-              <p className="text-base leading-8 text-[#d3d9e5]">
-                从一个名字、一段烙印开始，写下属于你的命运。
-              </p>
+            <SectionCard className="space-y-5">
+              <div className="space-y-3 text-center">
+                <p className="text-lg font-semibold leading-8 text-[#f6eddc] sm:text-xl">
+                  写下你是谁，世界便从记录中醒来。
+                </p>
+                <p className="mx-auto max-w-2xl text-sm leading-7 text-[#b9c3d4] sm:text-base">
+                  阿卡夏会读取你的名字、性别与命运烙印，显化出一段只属于这次游玩的开局。你做出的每个选择，都会影响故事的走向。
+                </p>
+              </div>
+              <div className="rounded-xl border border-[#6f6655]/35 bg-[#0c1424]/56 px-4 py-3 text-center">
+                <p className="text-sm font-medium leading-7 text-[#e4d7bd] sm:text-base">
+                  记录生出世界，烙印牵引冲突，选择留下代价。
+                </p>
+              </div>
             </SectionCard>
             <div className="flex flex-col gap-3 sm:flex-row">
               <PrimaryButton
@@ -58,7 +69,7 @@ const LobbyPage: React.FC = () => {
                 className="flex-1"
               >
                 <Play className="h-4 w-4" />
-                进入回响
+                显化命运
               </PrimaryButton>
               <SecondaryButton
                 onClick={() => navigate(appRoutes.archives)}
@@ -66,7 +77,7 @@ const LobbyPage: React.FC = () => {
                 className="flex-1"
               >
                 <Library className="h-4 w-4" />
-                存档与导入
+                继续旧日回响
               </SecondaryButton>
             </div>
           </div>

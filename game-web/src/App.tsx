@@ -80,9 +80,6 @@ function SessionCloneGate({ sourceSessionId }: { sourceSessionId: string }) {
   const navigate = useNavigate();
 
   useEffect(() => {
-    track('share_clone_opened', {
-      sourceSessionId,
-    });
     void cloneSharedSession(sourceSessionId)
       .then((cloned) => {
         navigate(

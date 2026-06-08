@@ -489,17 +489,22 @@ function applyStreamTaskToStores(task: TaskView, boundRound?: number | null) {
       }
 
       const nextProtagonistAction = protagonistActionText(task);
-      if (
-        stateView
-        && nextProtagonistAction
-        && stateView.latestProtagonistAction !== nextProtagonistAction
-      ) {
-        nextUIState = {
-          stateView: {
-            ...stateView,
-            latestProtagonistAction: nextProtagonistAction,
-          },
-        };
+      if (stateView) {
+        const nextPhase = task.status === 'done' && nextChoices
+          ? 'awaiting_player'
+          : stateView.phase;
+        if (
+          (nextProtagonistAction && stateView.latestProtagonistAction !== nextProtagonistAction)
+          || stateView.phase !== nextPhase
+        ) {
+          nextUIState = {
+            stateView: {
+              ...stateView,
+              phase: nextPhase,
+              latestProtagonistAction: nextProtagonistAction ?? stateView.latestProtagonistAction,
+            },
+          };
+        }
       }
       break;
     }
@@ -576,14 +581,7 @@ const createGameUIActions = (
       const generatingStartedAt = Date.now();
       generatedProfiles = await generateProfiles(character, world);
       const generatingElapsed = Date.now() - generatingStartedAt;
-      track('profile_generate_completed', {
-        durationMs: generatingElapsed,
-        characterInput: character,
-        worldInput: world,
-        generatedProtagonistProfile: generatedProfiles.protagonist,
-        generatedWorldProfile: generatedProfiles.world,
-        generatedKeyStoryBeats: generatedProfiles.keyStoryBeats,
-      });
+      track('profile_generate_completed');
       if (generatingElapsed < MIN_GENERATING_PAGE_MS) {
         await sleep(MIN_GENERATING_PAGE_MS - generatingElapsed);
       }
@@ -648,7 +646,6 @@ const createGameUIActions = (
     await waitForNextPaint();
 
     try {
-      const sessionCreateStartedAt = Date.now();
       const [created] = await Promise.all([
         createGameSession({
           worldProfile: preparedProfiles.world,
@@ -661,9 +658,6 @@ const createGameUIActions = (
         return;
       }
       setAnalyticsGameSessionId(created.sessionId);
-      track('game_session_created', {
-        durationMs: Date.now() - sessionCreateStartedAt,
-      });
 
       useGameInternalStore.setState({
         ...initialInternalState,
@@ -844,15 +838,17 @@ const createGameUIActions = (
       await submitGameSessionControl(sessionId, {
         action: nextInput,
       });
-      track('choice_submitted', {
-        round: activeRound,
-        nextRound,
-        choiceType: nextInput.type,
-        action: nextInput.action,
-        displayText: submission.displayText,
-        usedObsession: useObsession,
-        optionCount: currentRoundChoices.length,
-      });
+      track(
+        'choice_submitted',
+        nextInput.type === 'free_text'
+          ? {
+            choiceType: nextInput.type,
+            actionText: nextInput.action,
+          }
+          : {
+            choiceType: nextInput.type,
+          },
+      );
       if (useObsession) {
         consumeObsession();
       }

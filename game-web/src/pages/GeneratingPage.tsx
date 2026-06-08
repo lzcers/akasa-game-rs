@@ -13,6 +13,7 @@ import {
   StoryFrame,
 } from "../components/AkashicUI";
 import { useGameInternalStore } from "../store/gameStore";
+import { track } from "../lib/analytics";
 
 type StepStatus = "pending" | "active" | "done";
 
@@ -219,6 +220,17 @@ const GeneratingPage: React.FC = () => {
   const selectedProfileStep = selectedProfileOverride?.stageKey === stageKey
     ? selectedProfileOverride.key
     : profileStepFromStage(stageKey);
+
+  const handleEnterWorld = () => {
+    if (preparedProfiles) {
+      track("generated_profiles_accepted", {
+        generatedWorldProfile: preparedProfiles.world,
+        generatedProtagonistProfile: preparedProfiles.protagonist,
+        generatedKeyStoryBeats: preparedProfiles.keyStoryBeats,
+      });
+    }
+    void enterWorld();
+  };
   const profilePanels = useMemo(() => {
     if (!preparedProfiles) {
       return null;
@@ -400,7 +412,7 @@ const GeneratingPage: React.FC = () => {
                 重新编织
               </SecondaryButton>
               <PrimaryButton
-                onClick={() => void enterWorld()}
+                onClick={handleEnterWorld}
                 disabled={!canEnterWorld && isLoading}
                 className="min-w-44"
               >
