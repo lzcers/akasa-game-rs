@@ -10,5 +10,6 @@ nul
 .omx
 node_modules
 *.txt
-/db-data
+db-data/*.sqlite3
 .DS_Store
+server/db-data/analytics.sqlite3
