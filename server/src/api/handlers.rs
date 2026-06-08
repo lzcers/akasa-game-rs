@@ -13,7 +13,9 @@ use axum::{
 };
 use futures::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
-use story_engine::resources::agent_task::{TaskChunkKind, TaskKind, TaskStatus, TaskUpdate};
+#[cfg(test)]
+use story_engine::resources::agent_task::TaskUpdate;
+use story_engine::resources::agent_task::{TaskChunkKind, TaskKind, TaskStatus};
 use story_engine::utils::{build_chat_model, parse_json_response};
 use tokio::sync::broadcast;
 

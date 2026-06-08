@@ -9,8 +9,10 @@ use crate::{
     components::{
         agent::{Agent, AgentOutputType, Applicator, PendingReasoning},
         flow::ApplicationCompleted,
+        session::StorySession,
         turn_flow::{TurnFlow, TurnStage},
     },
+    engine::RuntimeDebugObserverResource,
     resources::{
         agent_task::{AgentTaskManager, TaskStatus},
         protagonist_action::{ProtagonistDecisionState, ProtagonistOptions},
@@ -53,13 +55,19 @@ pub fn protagonist_dispatch_system(
 #[allow(clippy::type_complexity)]
 pub fn protagonist_apply_system(
     mut commands: Commands,
-    mut sessions: Query<(Entity, &mut TurnFlow, &mut ProtagonistDecisionState)>,
+    mut sessions: Query<(
+        Entity,
+        Option<&StorySession>,
+        &mut TurnFlow,
+        &mut ProtagonistDecisionState,
+    )>,
     mut agents: Query<(Entity, &mut Agent, &ChildOf), With<Applicator>>,
     mut agent_tasks: ResMut<AgentTaskManager>,
+    debug_observer: Option<Res<RuntimeDebugObserverResource>>,
 ) {
-    for (session_entity, mut flow, mut decision_state) in sessions
+    for (session_entity, session, mut flow, mut decision_state) in sessions
         .iter_mut()
-        .filter(|(_, flow, _)| flow.stage == TurnStage::Application)
+        .filter(|(_, _, flow, _)| flow.stage == TurnStage::Application)
     {
         for (entity, mut agent, _) in agents.iter_mut().filter(|(_, agent, owner)| {
             owner.parent() == session_entity && agent.output_type == AgentOutputType::Json
@@ -85,6 +93,20 @@ pub fn protagonist_apply_system(
                         break;
                     }
                     agent.append_assistant_message(&output);
+                    if let (Some(session), Some(observer)) = (
+                        session,
+                        debug_observer
+                            .as_ref()
+                            .and_then(|debug| debug.observer.as_ref()),
+                    ) {
+                        observer.on_agent_context_updated(
+                            &session.id,
+                            flow.turn_index,
+                            flow.active_turn_id,
+                            &agent.name,
+                            &agent.context,
+                        );
+                    }
                     decision_state.replace_with_options(options);
                     commands.entity(entity).insert(ApplicationCompleted {
                         turn_id: flow.active_turn_id,

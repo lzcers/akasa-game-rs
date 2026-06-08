@@ -2,21 +2,23 @@ use bevy_ecs::{
     entity::Entity,
     hierarchy::ChildOf,
     query::With,
-    system::{Commands, Query, ResMut},
+    system::{Commands, Query, Res, ResMut},
 };
 
 use crate::{
     components::{
         agent::{Agent, AgentOutputType, Applicator, PendingReasoning, Player, Simulator},
+        session::StorySession,
         turn_flow::TurnFlow,
     },
+    engine::RuntimeDebugObserverResource,
     resources::{
         agent_task::{AgentTaskManager, TaskKind},
         export::ExportState,
     },
 };
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn agent_task_system(
     mut commands: Commands,
     mut agent_tasks: ResMut<AgentTaskManager>,
@@ -24,7 +26,8 @@ pub fn agent_task_system(
     pending_applicators: Query<(Entity, &Agent), (With<PendingReasoning>, With<Applicator>)>,
     pending_players: Query<Entity, (With<PendingReasoning>, With<Player>)>,
     agent_owners: Query<&ChildOf>,
-    sessions: Query<(&ExportState, &TurnFlow)>,
+    sessions: Query<(&ExportState, &TurnFlow, &StorySession)>,
+    debug_observer: Res<RuntimeDebugObserverResource>,
 ) {
     for (entity, agent) in pending_simulators.iter() {
         agent_tasks.spawn_task(entity, TaskKind::Simulation, &agent.context);
@@ -49,9 +52,13 @@ pub fn agent_task_system(
         let Ok(owner) = agent_owners.get(agent_entity) else {
             continue;
         };
-        let Ok((export_state, flow)) = sessions.get(owner.parent()) else {
+        let Ok((export_state, flow, session)) = sessions.get(owner.parent()) else {
             continue;
         };
-        export_state.publish_task_update(flow.active_turn_id.max(1), update);
+        let round = flow.active_turn_id.max(1);
+        if let Some(observer) = &debug_observer.observer {
+            observer.on_task_update(&session.id, round, &update);
+        }
+        export_state.publish_task_update(round, update);
     }
 }

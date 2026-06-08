@@ -1,16 +1,9 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    env,
-    error::Error,
-    io::{self, Write},
-    time::Duration,
-};
+use std::{env, error::Error, sync::Arc, time::Duration};
 
 use story_engine::{
-    AkashicEngine,
+    AkashicEngine, RuntimeDebugObserver,
+    debug::LocalDebugObserver,
     resources::{
-        agent_task::{TaskChunkKind, TaskKind, TaskStatus, TaskUpdate},
-        export::TaskEvent,
         protagonist_action::{PlayerActionInput, PlayerActionType},
         turn_state::TurnPhase,
     },
@@ -27,24 +20,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let max_turns = env_usize("AKASHIC_STORY_ENGINE_MAX_TURNS", 200);
     let poll_interval = Duration::from_millis(env_u64("AKASHIC_STORY_ENGINE_POLL_MS", 100));
+    let local_debug = local_debug_enabled();
 
-    let engine = AkashicEngine::new();
+    let engine = AkashicEngine::new_with_debug_observer(local_debug.then(|| {
+        Arc::new(LocalDebugObserver::for_workspace_root()) as Arc<dyn RuntimeDebugObserver>
+    }));
     let session = engine.create_default_session("story-engine-main").await?;
-    let mut task_events = session.subscribe_events();
-    tokio::spawn(async move {
-        let mut streams = OrderedTaskStreams::default();
-
-        while let Ok(TaskEvent::TaskUpdated { update, .. }) = task_events.recv().await {
-            streams.handle(update);
-        }
-    });
     session.start_next_turn()?;
 
     println!("== Akashic Story Engine ==");
     println!(
-        "[api] story_engine main loop started, max_turns={}, poll_ms={}",
+        "[api] story_engine main loop started, max_turns={}, poll_ms={}, local_debug={}",
         max_turns,
-        poll_interval.as_millis()
+        poll_interval.as_millis(),
+        local_debug
     );
 
     let mut frame = 0;
@@ -108,82 +97,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct TaskStreamKey {
-    entity: String,
-    kind: TaskKind,
-}
-
-#[derive(Default)]
-struct BufferedTaskStream {
-    chunks: VecDeque<(TaskChunkKind, String)>,
-    printed_kind: Option<TaskChunkKind>,
-    completed: bool,
-}
-
-#[derive(Default)]
-struct OrderedTaskStreams {
-    order: VecDeque<TaskStreamKey>,
-    streams: HashMap<TaskStreamKey, BufferedTaskStream>,
-}
-
-impl OrderedTaskStreams {
-    fn handle(&mut self, update: TaskUpdate) {
-        let key = TaskStreamKey {
-            entity: update.entity,
-            kind: update.kind,
-        };
-
-        if !self.streams.contains_key(&key) {
-            self.order.push_back(key.clone());
-            self.streams
-                .insert(key.clone(), BufferedTaskStream::default());
-        }
-
-        let stream = self
-            .streams
-            .get_mut(&key)
-            .expect("task stream must exist after insertion");
-        if let (Some(kind), Some(chunk)) = (update.chunk_kind, update.chunk) {
-            stream.chunks.push_back((kind, chunk));
-        }
-        stream.completed = matches!(update.status, TaskStatus::Done | TaskStatus::Error);
-
-        self.flush();
-    }
-
-    fn flush(&mut self) {
-        while let Some(key) = self.order.front().cloned() {
-            let Some(stream) = self.streams.get_mut(&key) else {
-                self.order.pop_front();
-                continue;
-            };
-
-            while let Some((chunk_kind, chunk)) = stream.chunks.pop_front() {
-                if stream.printed_kind != Some(chunk_kind) {
-                    if stream.printed_kind.is_some() {
-                        println!();
-                    }
-                    println!("\n[stream {:?} {} {:?}]", key.kind, key.entity, chunk_kind);
-                    stream.printed_kind = Some(chunk_kind);
-                }
-                print!("{chunk}");
-                let _ = io::stdout().flush();
-            }
-
-            if !stream.completed {
-                break;
-            }
-
-            if stream.printed_kind.is_some() {
-                println!();
-            }
-            self.streams.remove(&key);
-            self.order.pop_front();
-        }
-    }
-}
-
 fn print_frame_status(frame: usize, snapshot: &story_engine::Session) {
     println!(
         "[frame {frame:03}] phase={:?} turn_index={} active_turn_id={}",
@@ -218,4 +131,22 @@ fn env_u64(key: &str, default: u64) -> u64 {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(default)
+}
+
+fn local_debug_enabled() -> bool {
+    env_flag("AKASA_LOCAL_DEBUG")
+        || env_flag("AKASA_STORY_ENGINE_LOCAL_DEBUG")
+        || env::args().skip(1).any(|arg| arg == "--local-debug")
+}
+
+fn env_flag(key: &str) -> bool {
+    env::var(key)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }

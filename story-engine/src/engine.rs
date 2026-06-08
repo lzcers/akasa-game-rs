@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use agent::{agent::Context, models::ChatModel};
 use bevy_ecs::{
@@ -20,7 +20,7 @@ use crate::{
     },
     profile::{DEFAULT_KEY_STORY_BEATS, DEFAULT_PROTAGONIST_PROFILE, DEFAULT_WORLD_PROFILE},
     resources::{
-        agent_task::AgentTaskManager,
+        agent_task::{AgentTaskManager, TaskUpdate},
         export::{ExportHandle, ExportState, SessionSnapshot, TaskEvent, TaskView},
         history::{RoundHistoryEntry, SessionHistoryLog},
         player_input::PlayerInputConfig,
@@ -37,7 +37,6 @@ use crate::{
             player_sys::player_input_consume_system,
             protagonist_sys::{protagonist_apply_system, protagonist_dispatch_system},
         },
-        context_export_sys::context_export_system,
         export_sys::export_system,
         flow::{agent_task_system, cleanup_previous_turn_outcomes_system, flow_progress_system},
         history_sys::history_sys,
@@ -47,6 +46,23 @@ use crate::{
 };
 
 const DEFAULT_RUNTIME_TICK_INTERVAL: Duration = Duration::from_millis(20);
+
+pub trait RuntimeDebugObserver: Send + Sync {
+    fn on_task_update(&self, session_id: &str, round: u64, update: &TaskUpdate);
+    fn on_agent_context_updated(
+        &self,
+        session_id: &str,
+        turn_index: u64,
+        active_turn_id: u64,
+        agent_name: &str,
+        context: &Context,
+    );
+}
+
+#[derive(Resource, Clone, Default)]
+pub struct RuntimeDebugObserverResource {
+    pub(crate) observer: Option<Arc<dyn RuntimeDebugObserver>>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -133,10 +149,24 @@ impl AkashicEngine {
         Self::with_model(build_chat_model())
     }
 
+    pub fn new_with_debug_observer(observer: Option<Arc<dyn RuntimeDebugObserver>>) -> Self {
+        Self::with_model_and_debug_observer(build_chat_model(), observer)
+    }
+
     pub fn with_model(model: ChatModel) -> Self {
+        Self::with_model_and_debug_observer(model, None)
+    }
+
+    pub fn with_model_and_debug_observer(
+        model: ChatModel,
+        observer: Option<Arc<dyn RuntimeDebugObserver>>,
+    ) -> Self {
         let mut world = World::new();
         world.insert_resource(AgentTaskManager::new(model));
         world.insert_resource(Messages::<PlayerCommand>::default());
+        world.insert_resource(RuntimeDebugObserverResource {
+            observer: observer.clone(),
+        });
         world.init_resource::<SessionRegistry>();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         SessionRuntime::spawn(world, build_schedule(), command_tx.clone(), command_rx);
@@ -630,6 +660,13 @@ impl SessionRuntime {
         let entity = self
             .session_entity(session_id)
             .ok_or_else(|| format!("未找到会话 `{session_id}`"))?;
+        self.export_archive_state_for_entity(entity)
+    }
+
+    fn export_archive_state_for_entity(
+        &mut self,
+        entity: Entity,
+    ) -> Result<SessionArchiveState, String> {
         let flow = *self
             .world
             .get::<TurnFlow>(entity)
@@ -779,7 +816,6 @@ fn build_schedule() -> Schedule {
         (
             history_sys,
             export_system,
-            context_export_system,
             cleanup_previous_turn_outcomes_system,
             message_update_system,
         )

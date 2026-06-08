@@ -17,7 +17,7 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
 
     let options = ServerOptions::from_env_and_args();
-    let state = AppState::new(default_analytics_events_path(), options.print_stream_chunks);
+    let state = AppState::new(default_analytics_events_path(), options.local_debug);
 
     let app = build_router(state)
         .layer(CorsLayer::permissive())
@@ -25,8 +25,8 @@ async fn main() -> anyhow::Result<()> {
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3001));
     info!("akashic-server listening on {}", addr);
-    if options.print_stream_chunks {
-        info!("task stream chunk printing enabled");
+    if options.local_debug {
+        info!("local debug enabled: stream chunk printing and context export are active");
     }
 
     let listener = tokio::net::TcpListener::bind(addr)
@@ -60,19 +60,19 @@ fn default_analytics_events_path() -> PathBuf {
 
 #[derive(Debug, Default)]
 struct ServerOptions {
-    print_stream_chunks: bool,
+    local_debug: bool,
 }
 
 impl ServerOptions {
     fn from_env_and_args() -> Self {
         let mut options = Self {
-            print_stream_chunks: env_flag("AKASA_SERVER_PRINT_STREAM_CHUNKS"),
+            local_debug: env_flag("AKASA_LOCAL_DEBUG") || env_flag("AKASA_SERVER_LOCAL_DEBUG"),
         };
 
         for arg in env::args().skip(1) {
             match arg.as_str() {
-                "--print-stream-chunks" => options.print_stream_chunks = true,
-                "--no-print-stream-chunks" => options.print_stream_chunks = false,
+                "--local-debug" => options.local_debug = true,
+                "--no-local-debug" => options.local_debug = false,
                 _ => {}
             }
         }

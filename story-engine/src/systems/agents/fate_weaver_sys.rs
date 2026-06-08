@@ -11,8 +11,10 @@ use crate::{
         agent::{Agent, AgentOutputType, PendingReasoning, Simulator},
         flow::{FlowEnd, SimulationCompleted},
         outcome::SimulationOutcome,
+        session::StorySession,
         turn_flow::{TurnFlow, TurnStage},
     },
+    engine::RuntimeDebugObserverResource,
     resources::{
         agent_task::{AgentTaskManager, TaskStatus},
         protagonist_action::ProtagonistDecisionState,
@@ -63,13 +65,19 @@ pub fn fate_weaver_dispatch_system(
 #[allow(clippy::type_complexity)]
 pub fn fate_weaver_apply_system(
     mut commands: Commands,
-    mut sessions: Query<(Entity, &mut TurnFlow, &mut WorldSnapshot)>,
+    mut sessions: Query<(
+        Entity,
+        Option<&StorySession>,
+        &mut TurnFlow,
+        &mut WorldSnapshot,
+    )>,
     mut agents: Query<(Entity, &mut Agent, &ChildOf), With<Simulator>>,
     mut agent_tasks: ResMut<AgentTaskManager>,
+    debug_observer: Option<Res<RuntimeDebugObserverResource>>,
 ) {
-    for (session_entity, mut flow, mut world_snapshot) in sessions
+    for (session_entity, session, mut flow, mut world_snapshot) in sessions
         .iter_mut()
-        .filter(|(_, flow, _)| flow.stage == TurnStage::Simulation)
+        .filter(|(_, _, flow, _)| flow.stage == TurnStage::Simulation)
     {
         for (entity, mut agent, _) in agents
             .iter_mut()
@@ -100,6 +108,20 @@ pub fn fate_weaver_apply_system(
                         *world_snapshot = snapshot;
                     }
                     agent.append_assistant_message(&output);
+                    if let (Some(session), Some(observer)) = (
+                        session,
+                        debug_observer
+                            .as_ref()
+                            .and_then(|debug| debug.observer.as_ref()),
+                    ) {
+                        observer.on_agent_context_updated(
+                            &session.id,
+                            flow.turn_index,
+                            flow.active_turn_id,
+                            &agent.name,
+                            &agent.context,
+                        );
+                    }
                     commands
                         .entity(entity)
                         .insert(SimulationOutcome {
