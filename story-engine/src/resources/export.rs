@@ -44,7 +44,7 @@ pub struct TaskView {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TaskEvent {
-    TaskUpdated { update: TaskUpdate },
+    TaskUpdated { round: u64, update: TaskUpdate },
 }
 
 #[derive(Component)]
@@ -87,8 +87,8 @@ impl ExportState {
         self.snapshot_tx.send_replace(snapshot);
     }
 
-    pub fn publish_task_update(&self, update: TaskUpdate) {
-        let _ = self.event_tx.send(TaskEvent::TaskUpdated { update });
+    pub fn publish_task_update(&self, round: u64, update: TaskUpdate) {
+        let _ = self.event_tx.send(TaskEvent::TaskUpdated { round, update });
     }
 
     pub fn current_snapshot(&self) -> SessionSnapshot {

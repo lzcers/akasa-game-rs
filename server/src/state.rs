@@ -40,12 +40,18 @@ pub struct AppState {
 struct SessionRecord {
     session_id: String,
     engine: AkashicSessionEngine,
-    events_tx: broadcast::Sender<TaskUpdate>,
+    events_tx: broadcast::Sender<LiveTaskUpdate>,
 }
 
 pub struct LiveSessionStream {
     pub session_id: String,
-    pub event_rx: broadcast::Receiver<TaskUpdate>,
+    pub event_rx: broadcast::Receiver<LiveTaskUpdate>,
+}
+
+#[derive(Clone, Debug)]
+pub struct LiveTaskUpdate {
+    pub round: u64,
+    pub update: TaskUpdate,
 }
 
 const EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -293,11 +299,11 @@ fn build_session_record(
         let mut streams = print_stream_chunks.then(OrderedTaskStreams::default);
 
         while let Ok(event) = event_rx.recv().await {
-            let TaskEvent::TaskUpdated { update } = event;
+            let TaskEvent::TaskUpdated { round, update } = event;
             if let Some(streams) = streams.as_mut() {
                 streams.handle(&stream_session_id, update.clone());
             }
-            let _ = events_tx_for_task.send(update);
+            let _ = events_tx_for_task.send(LiveTaskUpdate { round, update });
         }
     });
 

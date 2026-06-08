@@ -214,11 +214,11 @@ export type GameSessionControlInput =
 
 export interface TaskUpdatedEvent {
   eventId?: number;
+  round: number;
   entity: string;
   kind: string;
   status: 'pending' | 'running' | 'done' | 'error';
   chunk?: string | null;
-  output?: string | null;
   error?: string | null;
 }
 

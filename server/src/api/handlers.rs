@@ -17,7 +17,10 @@ use story_engine::resources::agent_task::{TaskChunkKind, TaskKind, TaskStatus, T
 use story_engine::utils::{build_chat_model, parse_json_response};
 use tokio::sync::broadcast;
 
-use crate::{error::AppError, state::AppState};
+use crate::{
+    error::AppError,
+    state::{AppState, LiveTaskUpdate},
+};
 
 use super::dto::{
     AnalyticsBatchData, AnalyticsBatchRequest, ApiResponse, ControlGameSessionData,
@@ -62,12 +65,12 @@ pub struct StreamQuery {
 #[serde(rename_all = "camelCase")]
 struct TaskUpdateData {
     event_id: Option<u64>,
+    round: u64,
     entity: String,
     kind: TaskKind,
     status: TaskStatus,
     chunk_kind: Option<TaskChunkKind>,
     chunk: Option<String>,
-    output: Option<String>,
     error: Option<String>,
 }
 
@@ -368,7 +371,7 @@ pub async fn stream_game_session(
         .into_response())
 }
 
-fn task_updated_sse(event_id: Option<u64>, update: TaskUpdate) -> Event {
+fn task_updated_sse(event_id: Option<u64>, update: LiveTaskUpdate) -> Event {
     let update = task_update_from_delta(event_id, update);
     let event = sse_json_event("task.updated", update);
     match event_id {
@@ -377,16 +380,17 @@ fn task_updated_sse(event_id: Option<u64>, update: TaskUpdate) -> Event {
     }
 }
 
-fn task_update_from_delta(event_id: Option<u64>, update: TaskUpdate) -> TaskUpdateData {
+fn task_update_from_delta(event_id: Option<u64>, update: LiveTaskUpdate) -> TaskUpdateData {
+    let task_update = update.update;
     TaskUpdateData {
         event_id,
-        entity: update.entity,
-        kind: update.kind,
-        status: update.status,
-        chunk_kind: update.chunk_kind,
-        chunk: update.chunk,
-        output: update.output,
-        error: update.error,
+        round: update.round,
+        entity: task_update.entity,
+        kind: task_update.kind,
+        status: task_update.status,
+        chunk_kind: task_update.chunk_kind,
+        chunk: task_update.chunk,
+        error: task_update.error,
     }
 }
 
@@ -463,5 +467,38 @@ mod tests {
         let error = parse_story_summary(r#"{"summary":"   "}"#).expect_err("summary should fail");
 
         assert_eq!(error, "`summary` 不能为空。");
+    }
+
+    #[test]
+    fn task_update_from_delta_omits_output() {
+        let update = LiveTaskUpdate {
+            round: 7,
+            update: TaskUpdate {
+                entity: "2v0".to_string(),
+                kind: TaskKind::Narration,
+                status: TaskStatus::Done,
+                chunk_kind: None,
+                chunk: None,
+                output: Some("完成文本已经通过 chunk 流式传输。".to_string()),
+                error: None,
+            },
+        };
+
+        let dto = task_update_from_delta(Some(42), update);
+        let value = serde_json::to_value(dto).expect("task update dto should serialize");
+
+        assert_eq!(
+            value.get("eventId").and_then(serde_json::Value::as_u64),
+            Some(42)
+        );
+        assert_eq!(
+            value.get("status").and_then(serde_json::Value::as_str),
+            Some("done")
+        );
+        assert_eq!(
+            value.get("round").and_then(serde_json::Value::as_u64),
+            Some(7)
+        );
+        assert!(value.get("output").is_none());
     }
 }

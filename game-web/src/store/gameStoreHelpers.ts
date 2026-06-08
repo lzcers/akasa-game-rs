@@ -374,10 +374,6 @@ export function applyTaskUpdate(tasks: Map<string, TaskView>, update: TaskUpdate
     nextTask.chunks.push(update.chunk);
   }
 
-  if (update.output !== undefined) {
-    nextTask.output = update.output;
-  }
-
   if (update.error !== undefined) {
     nextTask.error = update.error;
     nextTask.lastError = update.error;

@@ -6,7 +6,10 @@ use bevy_ecs::{
 };
 
 use crate::{
-    components::agent::{Agent, AgentOutputType, Applicator, PendingReasoning, Player, Simulator},
+    components::{
+        agent::{Agent, AgentOutputType, Applicator, PendingReasoning, Player, Simulator},
+        turn_flow::TurnFlow,
+    },
     resources::{
         agent_task::{AgentTaskManager, TaskKind},
         export::ExportState,
@@ -21,7 +24,7 @@ pub fn agent_task_system(
     pending_applicators: Query<(Entity, &Agent), (With<PendingReasoning>, With<Applicator>)>,
     pending_players: Query<Entity, (With<PendingReasoning>, With<Player>)>,
     agent_owners: Query<&ChildOf>,
-    export_states: Query<&ExportState>,
+    sessions: Query<(&ExportState, &TurnFlow)>,
 ) {
     for (entity, agent) in pending_simulators.iter() {
         agent_tasks.spawn_task(entity, TaskKind::Simulation, &agent.context);
@@ -46,9 +49,9 @@ pub fn agent_task_system(
         let Ok(owner) = agent_owners.get(agent_entity) else {
             continue;
         };
-        let Ok(export_state) = export_states.get(owner.parent()) else {
+        let Ok((export_state, flow)) = sessions.get(owner.parent()) else {
             continue;
         };
-        export_state.publish_task_update(update);
+        export_state.publish_task_update(flow.active_turn_id.max(1), update);
     }
 }

@@ -34,7 +34,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     tokio::spawn(async move {
         let mut streams = OrderedTaskStreams::default();
 
-        while let Ok(TaskEvent::TaskUpdated { update }) = task_events.recv().await {
+        while let Ok(TaskEvent::TaskUpdated { update, .. }) = task_events.recv().await {
             streams.handle(update);
         }
     });

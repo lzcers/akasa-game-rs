@@ -292,17 +292,8 @@ function connectSessionStream(sessionId: string) {
           return;
         }
         lastStreamEventId = lastEventId || lastStreamEventId;
-        if (
-          event.status === 'pending'
-          && (event.kind === 'narration' || event.kind === 'protagonist_action')
-        ) {
-          const internalState = useGameInternalStore.getState();
-          const stateView = useGameUIStore.getState().stateView;
-          const boundRound = Math.max(
-            internalState.displayRound || stateView?.activeTurnId || stateView?.turnIndex || 1,
-            1,
-          );
-          activeStreamTaskRounds.set(event.entity, boundRound);
+        if (event.kind === 'narration' || event.kind === 'protagonist_action') {
+          activeStreamTaskRounds.set(event.entity, Math.max(event.round, 1));
         }
         const nextTask = applyTaskUpdate(activeStreamTasks, event);
         applyStreamTaskToStores(nextTask, activeStreamTaskRounds.get(event.entity));

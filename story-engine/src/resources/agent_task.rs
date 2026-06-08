@@ -282,6 +282,11 @@ impl AgentTaskManager {
         std::mem::take(&mut self.emitted_updates)
     }
 
+    #[cfg(test)]
+    pub fn set_result_for_test(&mut self, entity: Entity, result: TaskResult) {
+        self.results.insert(entity, result);
+    }
+
     fn spawn_runtime_task(model: ChatModel, msgs: Vec<Message>) -> TaskRuntime {
         let (tx, rx) = mpsc::unbounded_channel();
         let handle = tokio::spawn(async move {
