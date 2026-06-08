@@ -1,0 +1,27 @@
+[package]
+name = "akasa-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+agent = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+story-engine = { package = "story-engine", path = "../story-engine" }
+anyhow = "1.0.102"
+axum = "0.8.8"
+base64 = "0.22.1"
+chrono = { version = "0.4.42", default-features = false, features = ["clock"] }
+flate2 = "1.1.9"
+rusqlite = { version = "0.38.0", features = ["bundled"] }
+tower-http = { version = "0.6.8", features = ["cors", "trace"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = [
+    "env-filter",
+    "json",
+    "time",
+    "local-time",
+] }
+uuid = { version = "1.18.1", features = ["v4"] }

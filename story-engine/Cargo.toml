@@ -1,0 +1,14 @@
+[package]
+name = "story-engine"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+agent = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+bevy_ecs = { version = "0.18.1", features = ["debug"] }
+jsonrepair-rs = "0.2.0"
+dotenv = "0.15.0"
