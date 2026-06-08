@@ -1,6 +1,11 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    io::{self, Write},
+    sync::Arc,
+};
 
 use chrono::Utc;
+use story_engine::resources::agent_task::{TaskChunkKind, TaskKind, TaskStatus};
 use story_engine::{
     engine::{AkashicEngine, AkashicSessionEngine, Session},
     profile::DEFAULT_KEY_STORY_BEATS,
@@ -29,6 +34,7 @@ pub struct AppState {
     sessions: Arc<Mutex<HashMap<String, SessionRecord>>>,
     analytics_repo: AnalyticsRepository,
     engine: AkashicEngine,
+    print_stream_chunks: bool,
 }
 
 struct SessionRecord {
@@ -45,11 +51,15 @@ pub struct LiveSessionStream {
 const EVENT_CHANNEL_CAPACITY: usize = 256;
 
 impl AppState {
-    pub fn new(analytics_events_path: impl Into<std::path::PathBuf>) -> Self {
+    pub fn new(
+        analytics_events_path: impl Into<std::path::PathBuf>,
+        print_stream_chunks: bool,
+    ) -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             analytics_repo: AnalyticsRepository::new(analytics_events_path),
             engine: AkashicEngine::new(),
+            print_stream_chunks,
         }
     }
 
@@ -102,7 +112,7 @@ impl AppState {
             )
             .await
             .map_err(AppError::internal)?;
-        let session = build_session_record(session_id.clone(), engine);
+        let session = build_session_record(session_id.clone(), engine, self.print_stream_chunks);
 
         self.sessions
             .lock()
@@ -156,7 +166,7 @@ impl AppState {
             .wait_until_ready()
             .await
             .map_err(AppError::internal)?;
-        let session = build_session_record(session_id.clone(), engine);
+        let session = build_session_record(session_id.clone(), engine, self.print_stream_chunks);
         let snapshot = session.engine.get_game_session();
         let state_view = world_state_from_session(&session, &snapshot);
 
@@ -209,7 +219,8 @@ impl AppState {
             .wait_until_ready()
             .await
             .map_err(AppError::internal)?;
-        let session = build_session_record(clone_session_id.clone(), engine);
+        let session =
+            build_session_record(clone_session_id.clone(), engine, self.print_stream_chunks);
         let snapshot = session.engine.get_game_session();
         let state_view = world_state_from_session(&session, &snapshot);
 
@@ -269,13 +280,23 @@ impl AppState {
     }
 }
 
-fn build_session_record(session_id: String, engine: AkashicSessionEngine) -> SessionRecord {
+fn build_session_record(
+    session_id: String,
+    engine: AkashicSessionEngine,
+    print_stream_chunks: bool,
+) -> SessionRecord {
     let mut event_rx = engine.subscribe_events();
     let (events_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let events_tx_for_task = events_tx.clone();
+    let stream_session_id = session_id.clone();
     tokio::spawn(async move {
+        let mut streams = print_stream_chunks.then(OrderedTaskStreams::default);
+
         while let Ok(event) = event_rx.recv().await {
             let TaskEvent::TaskUpdated { update } = event;
+            if let Some(streams) = streams.as_mut() {
+                streams.handle(&stream_session_id, update.clone());
+            }
             let _ = events_tx_for_task.send(update);
         }
     });
@@ -284,6 +305,85 @@ fn build_session_record(session_id: String, engine: AkashicSessionEngine) -> Ses
         session_id,
         engine,
         events_tx,
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct TaskStreamKey {
+    entity: String,
+    kind: TaskKind,
+}
+
+#[derive(Default)]
+struct BufferedTaskStream {
+    chunks: VecDeque<(TaskChunkKind, String)>,
+    printed_kind: Option<TaskChunkKind>,
+    completed: bool,
+}
+
+#[derive(Default)]
+struct OrderedTaskStreams {
+    order: VecDeque<TaskStreamKey>,
+    streams: HashMap<TaskStreamKey, BufferedTaskStream>,
+}
+
+impl OrderedTaskStreams {
+    fn handle(&mut self, session_id: &str, update: TaskUpdate) {
+        let key = TaskStreamKey {
+            entity: update.entity,
+            kind: update.kind,
+        };
+
+        if !self.streams.contains_key(&key) {
+            self.order.push_back(key.clone());
+            self.streams
+                .insert(key.clone(), BufferedTaskStream::default());
+        }
+
+        let stream = self
+            .streams
+            .get_mut(&key)
+            .expect("task stream must exist after insertion");
+        if let (Some(kind), Some(chunk)) = (update.chunk_kind, update.chunk) {
+            stream.chunks.push_back((kind, chunk));
+        }
+        stream.completed = matches!(update.status, TaskStatus::Done | TaskStatus::Error);
+
+        self.flush(session_id);
+    }
+
+    fn flush(&mut self, session_id: &str) {
+        while let Some(key) = self.order.front().cloned() {
+            let Some(stream) = self.streams.get_mut(&key) else {
+                self.order.pop_front();
+                continue;
+            };
+
+            while let Some((chunk_kind, chunk)) = stream.chunks.pop_front() {
+                if stream.printed_kind != Some(chunk_kind) {
+                    if stream.printed_kind.is_some() {
+                        println!();
+                    }
+                    println!(
+                        "\n[stream {session_id} {:?} {} {:?}]",
+                        key.kind, key.entity, chunk_kind
+                    );
+                    stream.printed_kind = Some(chunk_kind);
+                }
+                print!("{chunk}");
+                let _ = io::stdout().flush();
+            }
+
+            if !stream.completed {
+                break;
+            }
+
+            if stream.printed_kind.is_some() {
+                println!();
+            }
+            self.streams.remove(&key);
+            self.order.pop_front();
+        }
     }
 }
 
@@ -443,10 +543,13 @@ mod tests {
     };
 
     fn test_state() -> AppState {
-        AppState::new(std::env::temp_dir().join(format!(
-            "akasa-analytics-{}.sqlite3",
-            Uuid::new_v4().simple()
-        )))
+        AppState::new(
+            std::env::temp_dir().join(format!(
+                "akasa-analytics-{}.sqlite3",
+                Uuid::new_v4().simple()
+            )),
+            false,
+        )
     }
 
     #[tokio::test]

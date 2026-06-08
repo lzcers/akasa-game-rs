@@ -333,9 +333,7 @@ pub async fn stream_game_session(
     let live_stream = stream::unfold(
         Some((live_stream.event_rx, session_id)),
         |state| async move {
-            let Some((mut event_rx, session_id)) = state else {
-                return None;
-            };
+            let (mut event_rx, session_id) = state?;
 
             match event_rx.recv().await {
                 Ok(event) => Some((

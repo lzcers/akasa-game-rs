@@ -3,7 +3,7 @@ mod api;
 mod error;
 mod state;
 
-use std::{net::SocketAddr, path::PathBuf};
+use std::{env, net::SocketAddr, path::PathBuf};
 
 use anyhow::Context;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -16,7 +16,8 @@ use crate::{api::build_router, state::AppState};
 async fn main() -> anyhow::Result<()> {
     init_tracing();
 
-    let state = AppState::new(default_analytics_events_path());
+    let options = ServerOptions::from_env_and_args();
+    let state = AppState::new(default_analytics_events_path(), options.print_stream_chunks);
 
     let app = build_router(state)
         .layer(CorsLayer::permissive())
@@ -24,6 +25,9 @@ async fn main() -> anyhow::Result<()> {
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3001));
     info!("akashic-server listening on {}", addr);
+    if options.print_stream_chunks {
+        info!("task stream chunk printing enabled");
+    }
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -52,4 +56,39 @@ fn init_tracing() {
 
 fn default_analytics_events_path() -> PathBuf {
     PathBuf::from("db-data/analytics.sqlite3")
+}
+
+#[derive(Debug, Default)]
+struct ServerOptions {
+    print_stream_chunks: bool,
+}
+
+impl ServerOptions {
+    fn from_env_and_args() -> Self {
+        let mut options = Self {
+            print_stream_chunks: env_flag("AKASA_SERVER_PRINT_STREAM_CHUNKS"),
+        };
+
+        for arg in env::args().skip(1) {
+            match arg.as_str() {
+                "--print-stream-chunks" => options.print_stream_chunks = true,
+                "--no-print-stream-chunks" => options.print_stream_chunks = false,
+                _ => {}
+            }
+        }
+
+        options
+    }
+}
+
+fn env_flag(key: &str) -> bool {
+    env::var(key)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
