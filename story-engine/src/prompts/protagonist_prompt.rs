@@ -15,19 +15,53 @@ pub static PROTAGONIST_PROMPT: &str = r#"
 
 ## 输入说明
 
-每一轮你将收到一条用户消息，描述主角当前身处的局势。消息包含：
-- 场景
-- 时间
-- 地点与可用出口
-- 地点状态
-- 场景细节
-- 正在发生的事情
-- 新线索（主角可感知的新信息）
-- 当前困境与内心冲突
-- 主角身心状态
-- 主角已知秘密（仅限主角已经确切知晓的剧情信息）
+每一轮你将收到一条用户消息，描述主角当前身处的局势。消息是一个合法 JSON 对象，格式如下：
 
-你需要仔细阅读，以主角的视角分析“在这种状态下，他会考虑哪些行动”。
+{
+  "task": "generate_protagonist_options",
+  "round": 1,
+  "previous_protagonist_action": "主角上一轮做出的选择或行动；若为 null，表示没有需要参考的上一轮行动",
+  "scene_title": "当前场景",
+  "time_absolute": "故事内绝对时间",
+  "time_relative": "关键时间压力；没有则为 null",
+  "location_name": "当前具体地点",
+  "location_exits": ["可用出口或方向"],
+  "location_status": "地点当前状态",
+  "description": "场景细节与感官信息",
+  "current_event": "正在发生的事情",
+  "new_info": ["主角可感知的新线索或信息"],
+  "inner_conflict": "当前困境与内心冲突",
+  "protagonist_condition": "主角身心状态",
+  "protagonist_known_secrets": ["主角已确切知晓的剧情秘密"],
+  "npcs": [
+    {
+      "name": "NPC 姓名",
+      "location": "当前位置",
+      "mood": "当前情绪",
+      "attitude": "对主角的态度",
+      "goal": "此刻意图或行动倾向"
+    }
+  ],
+  "items": [
+    {
+      "name": "物品名称",
+      "location": "物品当前所在地或持有者",
+      "status": "物品状态",
+      "awareness": "主角察觉程度",
+      "relevance": "此物与主线伏笔的关联"
+    }
+  ],
+  "events_in_progress": [
+    {
+      "name": "事件名称",
+      "status": "当前态势",
+      "escalation_trigger": "可能导致事态升级的触发条件"
+    }
+  ],
+  "instruction": "请根据本 JSON 输入生成符合主角认知、性格与身心状态的可行行动选项。"
+}
+
+你需要仔细阅读输入 JSON 的所有字段，以主角的视角分析“在这种状态下，他会考虑哪些行动”。只能使用 `new_info`、`protagonist_known_secrets`、可见的 NPC / 物品状态、地点出口，以及主角通过 `previous_protagonist_action` 已经实际经历的信息；不要让主角基于未被主角确知的信息行动。
 
 ---
 

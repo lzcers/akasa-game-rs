@@ -1,5 +1,6 @@
 use bevy_ecs::component::Component;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::fmt::Write;
 
 /// 世界 Agent 单轮完整输出
@@ -197,207 +198,212 @@ impl WorldSnapshot {
         out
     }
 
-    /// 生成给故事 Agent 的可读创作提示。
+    /// 生成给故事 Agent 的 JSON 创作输入。
     /// `protagonist_action` 是主角上一轮的实际行动，可能为空。
     pub fn to_story_prompt(&self, protagonist_action: Option<&str>) -> String {
-        let mut out = String::new();
-
-        writeln!(out, "【本轮创作任务】").unwrap();
-        writeln!(out, "轮次：{}", self.round).unwrap();
-        writeln!(out, "场景：{}", self.scene_title).unwrap();
-        write!(out, "时间：{}", self.time_absolute).unwrap();
-        if let Some(ref rel) = self.time_relative {
-            write!(out, "，{}", rel).unwrap();
-        }
-        writeln!(out).unwrap();
-        writeln!(out, "地点：{}", self.location_name).unwrap();
-        if !self.location_exits.is_empty() {
-            writeln!(out, "可用出口：{}", self.location_exits.join("、")).unwrap();
-        }
-        writeln!(out, "地点状态：{}", self.location_status).unwrap();
-        writeln!(out, "场景细节：{}", self.description).unwrap();
-
-        if let Some(protagonist_action) = protagonist_action.filter(|action| *action != "start") {
-            writeln!(out, "主角刚刚的行动：{}", protagonist_action).unwrap();
-        }
-
-        writeln!(out, "正在发生的事情：{}", self.current_event).unwrap();
-
-        if !self.new_info.is_empty() {
-            writeln!(out, "主角注意到的新线索：").unwrap();
-            for info in &self.new_info {
-                writeln!(out, "- {}", info).unwrap();
-            }
-        }
-
-        writeln!(out, "当前困境与内心冲突：{}", self.inner_conflict).unwrap();
-
-        if !self.hard_anchors.is_empty() {
-            writeln!(out, "硬性写作要求（必须在故事中明确呈现）：").unwrap();
-            for anchor in &self.hard_anchors {
-                writeln!(out, "- {}", anchor).unwrap();
-            }
-        }
-
-        if self.is_ending {
-            writeln!(out, "结局要求：本轮已到达故事结局，必须完成叙事收束。").unwrap();
-            if let Some(ref ending_type) = self.ending_type {
-                writeln!(out, "结局基调：{}", ending_type).unwrap();
-            }
-            writeln!(
-                out,
-                "写作要求：优先回收当前冲突、未解线索与情绪张力，给出明确的终局落点，不再展开新的主线悬念。"
-            )
-            .unwrap();
-        }
-
-        writeln!(
-            out,
-            "风格参考：节奏——{}，氛围——{}",
-            self.pace, self.atmosphere
-        )
-        .unwrap();
-        if !self.focal_point.is_empty() {
-            writeln!(out, "镜头建议：{}", self.focal_point).unwrap();
-        }
-
-        writeln!(out, "主角状态：{}", self.protagonist_condition).unwrap();
-        if !self.protagonist_known_secrets.is_empty() {
-            writeln!(
-                out,
-                "主角已知秘密：{}",
-                self.protagonist_known_secrets.join("；")
-            )
-            .unwrap();
-        }
-
-        if !self.npcs.is_empty() {
-            writeln!(out, "场上角色：").unwrap();
-            for npc in &self.npcs {
-                writeln!(
-                    out,
-                    "- {}：位置={}；情绪={}；态度={}；目标={}",
-                    npc.name, npc.location, npc.mood, npc.attitude, npc.goal
-                )
-                .unwrap();
-            }
-        }
-
-        if !self.items.is_empty() {
-            writeln!(out, "关键物品：").unwrap();
-            for item in &self.items {
-                writeln!(
-                    out,
-                    "- {}：位置={}；状态={}；察觉={}；关联={}",
-                    item.name, item.location, item.status, item.awareness, item.relevance
-                )
-                .unwrap();
-            }
-        }
-
-        if !self.events_in_progress.is_empty() {
-            writeln!(out, "进行中的事件：").unwrap();
-            for ev in &self.events_in_progress {
-                writeln!(
-                    out,
-                    "- {}：{}；升级触发={}",
-                    ev.name, ev.status, ev.escalation_trigger
-                )
-                .unwrap();
-            }
-        }
-
-        if self.is_ending {
-            writeln!(
-                out,
-                "请根据以上信息写出本轮结局，保持与前文连贯，并完成情绪与事件的收束。"
-            )
-            .unwrap();
+        let previous_protagonist_action =
+            protagonist_action.filter(|action| *action != "start" && !action.trim().is_empty());
+        let npcs: Vec<_> = self
+            .npcs
+            .iter()
+            .map(|npc| {
+                json!({
+                    "name": &npc.name,
+                    "location": &npc.location,
+                    "mood": &npc.mood,
+                    "attitude": &npc.attitude,
+                    "goal": &npc.goal,
+                })
+            })
+            .collect();
+        let instruction = if self.is_ending {
+            "请根据本 JSON 输入写出本轮结局，保持与前文连贯，并完成情绪与事件的收束。"
         } else {
-            writeln!(out, "请根据以上信息编写故事，保持与你输出的文本连贯性。").unwrap();
-        }
+            "请根据本 JSON 输入编写本轮故事，保持与你输出的文本连贯性。"
+        };
 
-        out
+        serde_json::to_string_pretty(&json!({
+            "task": "write_story",
+            "round": self.round,
+            "previous_protagonist_action": previous_protagonist_action,
+            "scene_title": &self.scene_title,
+            "time_absolute": &self.time_absolute,
+            "time_relative": &self.time_relative,
+            "location_name": &self.location_name,
+            "location_exits": &self.location_exits,
+            "location_status": &self.location_status,
+            "description": &self.description,
+            "current_event": &self.current_event,
+            "new_info": &self.new_info,
+            "inner_conflict": &self.inner_conflict,
+            "hard_anchors": &self.hard_anchors,
+            "pace": &self.pace,
+            "atmosphere": &self.atmosphere,
+            "focal_point": &self.focal_point,
+            "is_ending": self.is_ending,
+            "ending_type": &self.ending_type,
+            "protagonist_condition": &self.protagonist_condition,
+            "protagonist_known_secrets": &self.protagonist_known_secrets,
+            "npcs": npcs,
+            "items": &self.items,
+            "events_in_progress": &self.events_in_progress,
+            "instruction": instruction,
+        }))
+        .expect("story prompt payload should serialize")
     }
 
-    /// 生成给主角 Agent 的决策提示文本。
+    /// 生成给主角 Agent 的 JSON 决策输入。
     pub fn to_protagonist_prompt(&self, protagonist_action: Option<&str>) -> String {
-        let mut out = String::new();
+        let previous_protagonist_action =
+            protagonist_action.filter(|action| *action != "start" && !action.trim().is_empty());
+        let npcs: Vec<_> = self
+            .npcs
+            .iter()
+            .map(|npc| {
+                json!({
+                    "name": &npc.name,
+                    "location": &npc.location,
+                    "mood": &npc.mood,
+                    "attitude": &npc.attitude,
+                    "goal": &npc.goal,
+                })
+            })
+            .collect();
 
-        writeln!(out, "轮次：{}", self.round).unwrap();
-        writeln!(out, "场景：{}", self.scene_title).unwrap();
-        write!(out, "时间：{}", self.time_absolute).unwrap();
-        if let Some(ref rel) = self.time_relative {
-            write!(out, "，{}", rel).unwrap();
+        serde_json::to_string_pretty(&json!({
+            "task": "generate_protagonist_options",
+            "round": self.round,
+            "previous_protagonist_action": previous_protagonist_action,
+            "scene_title": &self.scene_title,
+            "time_absolute": &self.time_absolute,
+            "time_relative": &self.time_relative,
+            "location_name": &self.location_name,
+            "location_exits": &self.location_exits,
+            "location_status": &self.location_status,
+            "description": &self.description,
+            "current_event": &self.current_event,
+            "new_info": &self.new_info,
+            "inner_conflict": &self.inner_conflict,
+            "protagonist_condition": &self.protagonist_condition,
+            "protagonist_known_secrets": &self.protagonist_known_secrets,
+            "npcs": npcs,
+            "items": &self.items,
+            "events_in_progress": &self.events_in_progress,
+            "instruction": "请根据本 JSON 输入生成符合主角认知、性格与身心状态的可行行动选项。",
+        }))
+        .expect("protagonist prompt payload should serialize")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::*;
+
+    fn sample_snapshot() -> WorldSnapshot {
+        WorldSnapshot {
+            round: 3,
+            scene_title: "沉星观测台".to_string(),
+            time_absolute: "第三日 凌晨两点一刻".to_string(),
+            time_relative: Some("距离穹顶自毁只剩约一炷香".to_string()),
+            location_name: "观测台主厅".to_string(),
+            location_exits: vec!["北侧舷梯".to_string(), "破损升降井".to_string()],
+            location_status: "星图开始反转，地面符文发烫".to_string(),
+            description: "蓝白色星辉压在铜制穹顶上，空气里有铁锈味。".to_string(),
+            current_event: "看守者正撞开内层闸门。".to_string(),
+            new_info: vec!["闸门裂缝里露出父亲徽记。".to_string()],
+            inner_conflict: "继续解读星图会拖慢撤离。".to_string(),
+            hard_anchors: vec!["必须写出匕首柄上的徽记。".to_string()],
+            pace: "紧迫".to_string(),
+            atmosphere: "冷光与灼热机械声交织".to_string(),
+            focal_point: "洛寒额头的汗滴落在符文上".to_string(),
+            protagonist_condition: "灵能过度消耗，面色苍白。".to_string(),
+            protagonist_known_secrets: vec!["第七封印坐标藏在反转星图中。".to_string()],
+            npcs: vec![NpcState {
+                name: "伊瑟琳".to_string(),
+                location: "控制台旁".to_string(),
+                mood: "紧张".to_string(),
+                attitude: "信赖却愧疚".to_string(),
+                goal: "拖住看守者".to_string(),
+                secrets: vec!["她认识看守者的真实身份。".to_string()],
+            }],
+            items: vec![ItemState {
+                name: "旧匕首".to_string(),
+                location: "看守者腰间".to_string(),
+                status: "半露出鞘".to_string(),
+                awareness: "刚瞥见".to_string(),
+                relevance: "与主角父亲有关".to_string(),
+            }],
+            events_in_progress: vec![OngoingEvent {
+                name: "穹顶自毁".to_string(),
+                status: "倒计时加速".to_string(),
+                escalation_trigger: "星图解读失败".to_string(),
+            }],
+            unsolved_threads: vec!["看守者身份".to_string()],
+            pacing_note: "动作强度高，下一轮需要信息揭示。".to_string(),
+            ..WorldSnapshot::default()
         }
-        writeln!(out).unwrap();
-        writeln!(out, "地点：{}", self.location_name).unwrap();
-        if !self.location_exits.is_empty() {
-            writeln!(out, "可用出口：{}", self.location_exits.join("、")).unwrap();
-        }
-        writeln!(out, "地点状态：{}", self.location_status).unwrap();
-        writeln!(out, "场景细节：{}", self.description).unwrap();
-        writeln!(out, "正在发生的事情：{}", self.current_event).unwrap();
+    }
 
-        if !self.new_info.is_empty() {
-            writeln!(out, "新线索：").unwrap();
-            for info in &self.new_info {
-                writeln!(out, "- {}", info).unwrap();
-            }
-        }
+    #[test]
+    fn story_prompt_is_json_payload() {
+        let prompt = sample_snapshot().to_story_prompt(Some("洛寒按住符文继续解读星图。"));
+        let payload: Value = serde_json::from_str(&prompt).expect("prompt should be JSON");
 
-        if let Some(protagonist_action) = protagonist_action.filter(|action| *action != "start") {
-            writeln!(out, "主角刚刚的行动：{}", protagonist_action).unwrap();
-        }
+        assert_eq!(payload["task"], "write_story");
+        assert_eq!(payload["round"], 3);
+        assert_eq!(
+            payload["previous_protagonist_action"],
+            "洛寒按住符文继续解读星图。"
+        );
+        assert_eq!(payload["scene_title"], "沉星观测台");
+        assert_eq!(payload["location_exits"][0], "北侧舷梯");
+        assert!(payload["story_context"].is_null());
+        assert!(payload["npcs"][0]["secrets"].is_null());
+        assert!(payload["unsolved_threads"].is_null());
+        assert!(payload["pacing_note"].is_null());
+    }
 
-        writeln!(out, "当前困境与内心冲突：{}", self.inner_conflict).unwrap();
-        writeln!(out, "主角身心状态：{}", self.protagonist_condition).unwrap();
+    #[test]
+    fn story_prompt_uses_ending_instruction() {
+        let mut snapshot = sample_snapshot();
+        snapshot.is_ending = true;
+        snapshot.ending_type = Some("bittersweet".to_string());
 
-        if !self.protagonist_known_secrets.is_empty() {
-            writeln!(
-                out,
-                "主角已知秘密：{}",
-                self.protagonist_known_secrets.join("；")
-            )
-            .unwrap();
-        }
+        let prompt = snapshot.to_story_prompt(Some("start"));
+        let payload: Value = serde_json::from_str(&prompt).expect("prompt should be JSON");
 
-        if !self.npcs.is_empty() {
-            writeln!(out, "相关人物：").unwrap();
-            for npc in &self.npcs {
-                writeln!(
-                    out,
-                    "- {}：位置={}；情绪={}；态度={}；目标={}",
-                    npc.name, npc.location, npc.mood, npc.attitude, npc.goal
-                )
-                .unwrap();
-            }
-        }
+        assert!(payload["previous_protagonist_action"].is_null());
+        assert_eq!(payload["is_ending"], true);
+        assert_eq!(payload["ending_type"], "bittersweet");
+        assert!(
+            payload["instruction"]
+                .as_str()
+                .expect("instruction should be a string")
+                .contains("结局")
+        );
+    }
 
-        if !self.items.is_empty() {
-            writeln!(out, "可利用物品：").unwrap();
-            for item in &self.items {
-                writeln!(
-                    out,
-                    "- {}：位置={}；状态={}；察觉={}；关联={}",
-                    item.name, item.location, item.status, item.awareness, item.relevance
-                )
-                .unwrap();
-            }
-        }
+    #[test]
+    fn protagonist_prompt_is_json_payload() {
+        let prompt = sample_snapshot().to_protagonist_prompt(Some(""));
+        let payload: Value = serde_json::from_str(&prompt).expect("prompt should be JSON");
 
-        if !self.events_in_progress.is_empty() {
-            writeln!(out, "外部压力：").unwrap();
-            for ev in &self.events_in_progress {
-                writeln!(
-                    out,
-                    "- {}：{}；升级触发={}",
-                    ev.name, ev.status, ev.escalation_trigger
-                )
-                .unwrap();
-            }
-        }
-
-        out
+        assert_eq!(payload["task"], "generate_protagonist_options");
+        assert_eq!(payload["round"], 3);
+        assert!(payload["previous_protagonist_action"].is_null());
+        assert_eq!(payload["protagonist_condition"], "灵能过度消耗，面色苍白。");
+        assert!(payload["decision_context"].is_null());
+        assert!(payload["npcs"][0]["secrets"].is_null());
+        assert!(payload["hard_anchors"].is_null());
+        assert!(payload["unsolved_threads"].is_null());
+        assert!(payload["pacing_note"].is_null());
+        assert!(
+            payload["instruction"]
+                .as_str()
+                .expect("instruction should be a string")
+                .contains("行动选项")
+        );
     }
 }
