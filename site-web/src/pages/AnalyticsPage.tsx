@@ -18,7 +18,6 @@ type AnalyticsSummary = {
   funnel: AnalyticsCount[]
   topSources: AnalyticsSourceCount[]
   topEvents: AnalyticsCount[]
-  recentEvents: AnalyticsRecentEvent[]
 }
 
 type AnalyticsCount = {
@@ -32,17 +31,6 @@ type AnalyticsSourceCount = {
   count: number
 }
 
-type AnalyticsRecentEvent = {
-  occurredAt: string
-  eventName: string
-  anonymousUserId: string
-  clientSessionId: string
-  gameSessionId: string | null
-  path: string | null
-  source: string | null
-  deviceType: string | null
-}
-
 type LoadState =
   | { status: 'loading' }
   | { status: 'ready'; summary: AnalyticsSummary }
@@ -53,19 +41,6 @@ const rangeOptions = [
   { label: '24h', hours: 24 },
   { label: '7d', hours: 24 * 7 },
 ]
-
-const eventLabels: Record<string, string> = {
-  app_opened: '打开应用',
-  creation_submitted: '提交创建',
-  profile_generate_completed: '设定生成完成',
-  generated_profiles_accepted: '接受设定',
-  round_reached: '到达回合',
-  ending_viewed: '查看结局',
-  choice_submitted: '提交选择',
-  intuition_preview_used: '使用直觉',
-  game_session_create_failed: '创建失败',
-  share_clone_session_created: '分享克隆',
-}
 
 const sourceTypeLabels: Record<string, string> = {
   utm_source: 'UTM',
@@ -79,40 +54,6 @@ function compactNumber(value: number) {
     notation: value >= 10000 ? 'compact' : 'standard',
     maximumFractionDigits: 1,
   }).format(value)
-}
-
-function eventLabel(eventName: string) {
-  return eventLabels[eventName] ?? eventName
-}
-
-function formatDate(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value
-  }
-
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date)
-}
-
-function maskId(value: string | null) {
-  if (!value) {
-    return '-'
-  }
-
-  if (value.length <= 14) {
-    return value
-  }
-
-  return `${value.slice(0, 8)}...${value.slice(-4)}`
-}
-
-function emptyText(value: string | null) {
-  return value?.trim() || '-'
 }
 
 export default function AnalyticsPage() {
@@ -233,7 +174,7 @@ export default function AnalyticsPage() {
               <MetricTile label="游戏会话" value={summary.totals.gameSessions} icon={<BarChart3 className="h-5 w-5" />} />
             </section>
 
-            <section className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(20rem,0.85fr)]">
+            <section className="grid gap-6 xl:grid-cols-3">
               <div className="game-card p-5 lg:p-6">
                 <SectionHeader title="核心漏斗" detail={`${summary.rangeHours} 小时窗口`} />
                 <div className="space-y-4">
@@ -242,7 +183,7 @@ export default function AnalyticsPage() {
                     return (
                       <div key={item.eventName}>
                         <div className="mb-2 flex items-center justify-between gap-4 text-sm">
-                          <span className="text-foreground">{eventLabel(item.eventName)}</span>
+                          <span className="min-w-0 truncate font-mono text-xs text-foreground">{item.eventName}</span>
                           <span className="font-mono text-muted-foreground">
                             {compactNumber(item.count)} / {rate}%
                           </span>
@@ -265,19 +206,17 @@ export default function AnalyticsPage() {
                   {summary.topEvents.length === 0 && <EmptyRow text="暂无事件" />}
                   {summary.topEvents.map((item) => (
                     <div key={item.eventName} className="flex items-center justify-between gap-4 rounded-md bg-background/35 px-3 py-2">
-                      <span className="truncate text-sm text-foreground">{eventLabel(item.eventName)}</span>
+                      <span className="truncate font-mono text-xs text-foreground">{item.eventName}</span>
                       <span className="font-mono text-sm text-accent">{compactNumber(item.count)}</span>
                     </div>
                   ))}
                 </div>
               </div>
-            </section>
 
-            <section className="grid gap-6 xl:grid-cols-[minmax(20rem,0.85fr)_minmax(0,1.15fr)]">
               <div className="game-card p-5 lg:p-6">
                 <SectionHeader title="来源" detail="Top 10" />
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[24rem] text-left text-sm">
+                  <table className="w-full min-w-[20rem] text-left text-sm">
                     <thead className="text-xs text-muted-foreground">
                       <tr className="border-b border-border">
                         <th className="pb-3 font-normal">类型</th>
@@ -298,43 +237,6 @@ export default function AnalyticsPage() {
                           <td className="py-3 text-muted-foreground">{sourceTypeLabels[source.sourceType] ?? source.sourceType}</td>
                           <td className="max-w-48 truncate py-3 text-foreground">{source.source}</td>
                           <td className="py-3 text-right font-mono text-accent">{compactNumber(source.count)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div className="game-card p-5 lg:p-6">
-                <SectionHeader title="最近事件" detail={`更新于 ${formatDate(summary.generatedAt)}`} />
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[44rem] text-left text-sm">
-                    <thead className="text-xs text-muted-foreground">
-                      <tr className="border-b border-border">
-                        <th className="pb-3 font-normal">时间</th>
-                        <th className="pb-3 font-normal">事件</th>
-                        <th className="pb-3 font-normal">用户</th>
-                        <th className="pb-3 font-normal">会话</th>
-                        <th className="pb-3 font-normal">来源</th>
-                        <th className="pb-3 font-normal">路径</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {summary.recentEvents.length === 0 && (
-                        <tr>
-                          <td colSpan={6}>
-                            <EmptyRow text="暂无最近事件" />
-                          </td>
-                        </tr>
-                      )}
-                      {summary.recentEvents.map((event, index) => (
-                        <tr key={`${event.occurredAt}:${event.eventName}:${index}`} className="border-b border-border/50 last:border-0">
-                          <td className="whitespace-nowrap py-3 text-muted-foreground">{formatDate(event.occurredAt)}</td>
-                          <td className="py-3 text-foreground">{eventLabel(event.eventName)}</td>
-                          <td className="py-3 font-mono text-xs text-muted-foreground">{maskId(event.anonymousUserId)}</td>
-                          <td className="py-3 font-mono text-xs text-muted-foreground">{maskId(event.gameSessionId ?? event.clientSessionId)}</td>
-                          <td className="max-w-36 truncate py-3 text-muted-foreground">{emptyText(event.source)}</td>
-                          <td className="max-w-48 truncate py-3 text-muted-foreground">{emptyText(event.path)}</td>
                         </tr>
                       ))}
                     </tbody>

@@ -24,15 +24,19 @@ pub struct CreationCharacter {
     pub name: String,
     pub gender: String,
     pub age: u16,
+    #[serde(default)]
     pub appearance: String,
     pub traits: CreationTraits,
+    #[serde(default)]
     pub background: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreationWorld {
+    #[serde(default)]
     pub era: String,
+    #[serde(default)]
     pub description: String,
 }
 

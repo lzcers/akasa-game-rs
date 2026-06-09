@@ -305,9 +305,19 @@ export function generateCreationDraft(
   character: Character,
   world: World,
 ) {
+  const requestCharacter = target === 'character'
+    ? {
+        name: character.name,
+        gender: character.gender,
+        age: character.age,
+        traits: character.traits,
+      }
+    : character;
+  const requestWorld = target === 'world' ? {} : world;
+
   return requestJson<GeneratedCreationDraft>(withApiOrigin('/api/creation/generate'), {
     method: 'POST',
-    body: JSON.stringify({ target, character, world }),
+    body: JSON.stringify({ target, character: requestCharacter, world: requestWorld }),
   });
 }
 

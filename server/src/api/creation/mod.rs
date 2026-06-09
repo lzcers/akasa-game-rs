@@ -9,6 +9,7 @@ use agent::{
 use axum::Json;
 use futures::StreamExt;
 use story_engine::utils::{build_chat_model, parse_json_response};
+use uuid::Uuid;
 
 use crate::error::AppError;
 
@@ -23,9 +24,9 @@ const CREATION_TRAIT_TOTAL: u16 = 30;
 pub async fn generate_creation_draft(
     Json(request): Json<GenerateCreationDraftRequest>,
 ) -> ApiResult<GenerateCreationDraftData> {
-    let target = request.target;
     let mut model = build_chat_model();
     model.set_output_json(true);
+    let variant_id = Uuid::new_v4().simple().to_string();
 
     let messages = vec![
         Message::system(
@@ -36,14 +37,17 @@ pub async fn generate_creation_draft(
 2. 内容用于长期互动叙事的开局表单，不是人物小传或世界百科。字段要精炼、具体、可演绎，有欲望、秘密、代价、关系张力或异常规则。
 3. 所有角色必须是成年人；不要生成露骨性内容、未成年人恋爱、现实名人、真实品牌或侵权 IP。
 4. 可以参考用户当前表单来避开重复，并让新内容与当前另一组表单能够搭配；不要照抄当前表单。
-5. 只输出一个合法 JSON 对象，不要代码块、标题、解释、注释或对象外文本。
+5. 如果用户已经填写姓名、性别或有效成年年龄，生成 character 时必须原样保留这些已填写字段，只围绕它们补全命运烙印、人物描述和属性倾向。
+6. 生成 world 时，必须让世界背景与当前人物表单相容，让世界的秩序、压力和核心矛盾能自然牵引该角色。
+7. 生成 character 时，必须让角色与当前世界表单相容，尤其要服从世界背景、世界描述中的秩序、异常机制、禁忌和冲突结构。
+8. 只输出一个合法 JSON 对象，不要代码块、标题、解释、注释或对象外文本。
 
 当 target 是 "character" 时，输出结构必须是：
 {
   "character": {
     "name": "2到4个汉字的中文名",
     "gender": "女",
-    "age": 18到38之间的整数,
+    "age": 18到80之间的整数,
     "background": "一句命运烙印，12到32个中文字符，带明确钩子",
     "appearance": "45到110个中文字符的人物描述，包含外貌、气质、弱点或行动习惯",
     "traits": {
@@ -76,7 +80,7 @@ world 约束：
 - description 要能直接填入创建页文本框，具体但不冗长。
 - 世界应天然适配女性主角与女女关系张力，但不要把所有冲突都写成恋爱。"#,
         ),
-        Message::user(build_creation_draft_prompt(&request)),
+        Message::user(build_creation_draft_prompt(&request, &variant_id)),
     ];
 
     let mut stream = std::pin::pin!(call_model(&model, &messages, None));
@@ -84,9 +88,10 @@ world 约束：
     while let Some(event) = stream.next().await {
         match event {
             CallModelEvent::Completed { content, .. } => {
-                let data = parse_generated_creation_draft(&content, target).map_err(|message| {
-                    AppError::internal(format!("模型返回的创建表单格式不符合预期：{message}"))
-                })?;
+                let data =
+                    parse_generated_creation_draft(&content, &request).map_err(|message| {
+                        AppError::internal(format!("模型返回的创建表单格式不符合预期：{message}"))
+                    })?;
                 return Ok(Json(ApiResponse::ok(data)));
             }
             CallModelEvent::Error(message) => {
@@ -99,14 +104,31 @@ world 约束：
     Err(AppError::internal("模型未返回完整创建表单。"))
 }
 
-fn build_creation_draft_prompt(request: &GenerateCreationDraftRequest) -> String {
+fn build_creation_draft_prompt(request: &GenerateCreationDraftRequest, variant_id: &str) -> String {
     let target = match request.target {
         GenerateCreationDraftTarget::Character => "character",
         GenerateCreationDraftTarget::World => "world",
     };
+    let current_background = match request.target {
+        GenerateCreationDraftTarget::Character => "未提供".to_string(),
+        GenerateCreationDraftTarget::World => empty_placeholder(&request.character.background),
+    };
+    let current_appearance = match request.target {
+        GenerateCreationDraftTarget::Character => "未提供".to_string(),
+        GenerateCreationDraftTarget::World => empty_placeholder(&request.character.appearance),
+    };
+    let current_era = match request.target {
+        GenerateCreationDraftTarget::Character => empty_placeholder(&request.world.era),
+        GenerateCreationDraftTarget::World => "未提供".to_string(),
+    };
+    let current_description = match request.target {
+        GenerateCreationDraftTarget::Character => empty_placeholder(&request.world.description),
+        GenerateCreationDraftTarget::World => "未提供".to_string(),
+    };
 
     format!(
         r#"target: {target}
+本次生成变体ID：{variant_id}
 
 [当前人物表单]
 - 姓名：{name}
@@ -120,20 +142,28 @@ fn build_creation_draft_prompt(request: &GenerateCreationDraftRequest) -> String
 - 世界背景：{era}
 - 世界描述：{description}
 
-请根据 target 只生成对应的表单片段。"#,
+请根据 target 只生成对应的表单片段。
+
+生成规则：
+- 当 target 是 character：如果当前姓名不是“未填写”，返回的 character.name 必须等于当前姓名；如果当前性别是“男”或“女”，返回的 character.gender 必须等于当前性别；如果当前年龄是 18 到 80 之间的成年人年龄，返回的 character.age 必须等于当前年龄。角色其余字段必须贴合当前世界表单。
+- character 的 background、appearance、traits 必须围绕本次生成变体ID改换方向，不得复用当前命运烙印、人物描述或完全相同的属性分布。
+- 当 target 是 world：返回的 world 必须贴合当前人物表单，尤其要能解释当前人物的命运烙印、行动倾向和关系张力如何在这个世界中被放大。
+- world 的 era、description 必须围绕本次生成变体ID改换方向，不得复用当前世界背景或当前世界描述。
+- 如果另一组表单尚未填写完整，可以自由补足，但不能与已填写内容冲突。"#,
+        variant_id = variant_id,
         name = empty_placeholder(&request.character.name),
         gender = empty_placeholder(&request.character.gender),
         age = request.character.age,
-        background = empty_placeholder(&request.character.background),
-        appearance = empty_placeholder(&request.character.appearance),
+        background = current_background,
+        appearance = current_appearance,
         intellect = request.character.traits.intellect,
         physique = request.character.traits.physique,
         endurance = request.character.traits.endurance,
         courage = request.character.traits.courage,
         rationality = request.character.traits.rationality,
         altruism = request.character.traits.altruism,
-        era = empty_placeholder(&request.world.era),
-        description = empty_placeholder(&request.world.description),
+        era = current_era,
+        description = current_description,
     )
 }
 
@@ -148,23 +178,26 @@ fn empty_placeholder(value: &str) -> String {
 
 fn parse_generated_creation_draft(
     content: &str,
-    target: GenerateCreationDraftTarget,
+    request: &GenerateCreationDraftRequest,
 ) -> Result<GenerateCreationDraftData, String> {
     let parsed = parse_json_response::<GenerateCreationDraftData>(content)?;
-    validate_generated_creation_draft(parsed, target)
+    validate_generated_creation_draft(parsed, request)
 }
 
 fn validate_generated_creation_draft(
     data: GenerateCreationDraftData,
-    target: GenerateCreationDraftTarget,
+    request: &GenerateCreationDraftRequest,
 ) -> Result<GenerateCreationDraftData, String> {
-    match target {
+    match request.target {
         GenerateCreationDraftTarget::Character => {
             let character = data
                 .character
                 .ok_or_else(|| "`character` 不能为空。".to_string())?;
             Ok(GenerateCreationDraftData {
-                character: Some(validate_creation_character(character)?),
+                character: Some(apply_locked_character_fields(
+                    validate_creation_character(character)?,
+                    &request.character,
+                )),
                 world: None,
             })
         }
@@ -201,6 +234,39 @@ fn validate_creation_world(world: CreationWorld) -> Result<CreationWorld, String
     let description = trim_required(world.description, "`world.description`")?;
 
     Ok(CreationWorld { era, description })
+}
+
+fn apply_locked_character_fields(
+    mut generated: CreationCharacter,
+    current: &CreationCharacter,
+) -> CreationCharacter {
+    if let Some(name) = locked_character_name(current) {
+        generated.name = name;
+    }
+    if let Some(gender) = locked_character_gender(current) {
+        generated.gender = gender;
+    }
+    if let Some(age) = locked_character_age(current) {
+        generated.age = age;
+    }
+    generated
+}
+
+fn locked_character_name(character: &CreationCharacter) -> Option<String> {
+    let name = character.name.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+fn locked_character_gender(character: &CreationCharacter) -> Option<String> {
+    match character.gender.trim() {
+        "男" => Some("男".to_string()),
+        "女" => Some("女".to_string()),
+        _ => None,
+    }
+}
+
+fn locked_character_age(character: &CreationCharacter) -> Option<u16> {
+    (18..=80).contains(&character.age).then_some(character.age)
 }
 
 fn normalize_creation_gender(gender: String) -> String {
@@ -278,8 +344,88 @@ fn normalize_creation_traits(traits: CreationTraits) -> CreationTraits {
 mod tests {
     use super::*;
 
+    fn creation_request(target: GenerateCreationDraftTarget) -> GenerateCreationDraftRequest {
+        GenerateCreationDraftRequest {
+            target,
+            character: CreationCharacter {
+                name: String::new(),
+                gender: String::new(),
+                age: 0,
+                appearance: String::new(),
+                background: String::new(),
+                traits: CreationTraits {
+                    intellect: 5,
+                    physique: 5,
+                    endurance: 5,
+                    courage: 5,
+                    rationality: 5,
+                    altruism: 5,
+                },
+            },
+            world: CreationWorld {
+                era: String::new(),
+                description: String::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn generate_creation_request_accepts_omitted_same_target_fields() {
+        let character_request = serde_json::from_str::<GenerateCreationDraftRequest>(
+            r#"{
+                "target": "character",
+                "character": {
+                    "name": "叶知秋",
+                    "gender": "女",
+                    "age": 28,
+                    "traits": {
+                        "intellect": 5,
+                        "physique": 5,
+                        "endurance": 5,
+                        "courage": 5,
+                        "rationality": 5,
+                        "altruism": 5
+                    }
+                },
+                "world": {
+                    "era": "都市异能",
+                    "description": "所有异能都由情绪债务触发。"
+                }
+            }"#,
+        )
+        .expect("character request should allow omitted generated fields");
+        assert!(character_request.character.background.is_empty());
+        assert!(character_request.character.appearance.is_empty());
+
+        let world_request = serde_json::from_str::<GenerateCreationDraftRequest>(
+            r#"{
+                "target": "world",
+                "character": {
+                    "name": "叶知秋",
+                    "gender": "女",
+                    "age": 28,
+                    "appearance": "短发，习惯在雨夜独行。",
+                    "background": "被冷艳继承者认作宿命例外的人",
+                    "traits": {
+                        "intellect": 5,
+                        "physique": 5,
+                        "endurance": 5,
+                        "courage": 5,
+                        "rationality": 5,
+                        "altruism": 5
+                    }
+                },
+                "world": {}
+            }"#,
+        )
+        .expect("world request should allow omitted generated fields");
+        assert!(world_request.world.era.is_empty());
+        assert!(world_request.world.description.is_empty());
+    }
+
     #[test]
     fn parse_generated_creation_character_trims_and_accepts_valid_traits() {
+        let request = creation_request(GenerateCreationDraftTarget::Character);
         let parsed = parse_generated_creation_draft(
             r#"{
                 "character": {
@@ -298,7 +444,7 @@ mod tests {
                     }
                 }
             }"#,
-            GenerateCreationDraftTarget::Character,
+            &request,
         )
         .expect("character draft should parse");
 
@@ -310,6 +456,7 @@ mod tests {
 
     #[test]
     fn parse_generated_creation_character_normalizes_trait_total() {
+        let request = creation_request(GenerateCreationDraftTarget::Character);
         let parsed = parse_generated_creation_draft(
             r#"{
                 "character": {
@@ -328,7 +475,7 @@ mod tests {
                     }
                 }
             }"#,
-            GenerateCreationDraftTarget::Character,
+            &request,
         )
         .expect("character draft should be normalized");
 
@@ -359,7 +506,73 @@ mod tests {
     }
 
     #[test]
+    fn parse_generated_creation_character_preserves_locked_identity_fields() {
+        let mut request = creation_request(GenerateCreationDraftTarget::Character);
+        request.character.name = " 叶知秋 ".to_string();
+        request.character.gender = "男".to_string();
+        request.character.age = 31;
+
+        let parsed = parse_generated_creation_draft(
+            r#"{
+                "character": {
+                    "name": "林昼雪",
+                    "gender": "女",
+                    "age": 24,
+                    "appearance": "黑色齐肩发，习惯把工牌藏进外套口袋。",
+                    "background": "与霸道女总裁签下隐婚契约的普通女孩",
+                    "traits": {
+                        "intellect": 8,
+                        "physique": 3,
+                        "endurance": 4,
+                        "courage": 5,
+                        "rationality": 6,
+                        "altruism": 4
+                    }
+                }
+            }"#,
+            &request,
+        )
+        .expect("character draft should parse");
+
+        let character = parsed.character.expect("character payload");
+        assert_eq!(character.name, "叶知秋");
+        assert_eq!(character.gender, "男");
+        assert_eq!(character.age, 31);
+    }
+
+    #[test]
+    fn build_creation_draft_prompt_includes_cross_form_constraints() {
+        let mut character_request = creation_request(GenerateCreationDraftTarget::Character);
+        character_request.world.era = "都市异能".to_string();
+        character_request.world.description = "所有异能都由情绪债务触发。".to_string();
+        character_request.character.background = "旧角色烙印不应进入角色生成提示".to_string();
+        character_request.character.appearance = "旧角色描述不应进入角色生成提示".to_string();
+        let character_prompt = build_creation_draft_prompt(&character_request, "variant-character");
+        assert!(character_prompt.contains("角色其余字段必须贴合当前世界表单"));
+        assert!(character_prompt.contains("本次生成变体ID：variant-character"));
+        assert!(character_prompt.contains("不得复用当前命运烙印、人物描述或完全相同的属性分布"));
+        assert!(!character_prompt.contains("旧角色烙印不应进入角色生成提示"));
+        assert!(!character_prompt.contains("旧角色描述不应进入角色生成提示"));
+        assert!(character_prompt.contains("都市异能"));
+        assert!(character_prompt.contains("所有异能都由情绪债务触发。"));
+
+        let mut world_request = creation_request(GenerateCreationDraftTarget::World);
+        world_request.character.name = "叶知秋".to_string();
+        world_request.character.background = "被冷艳继承者认作宿命例外的人".to_string();
+        world_request.world.era = "旧世界背景不应进入世界生成提示".to_string();
+        world_request.world.description = "旧世界描述不应进入世界生成提示".to_string();
+        let world_prompt = build_creation_draft_prompt(&world_request, "variant-world");
+        assert!(world_prompt.contains("world 必须贴合当前人物表单"));
+        assert!(world_prompt.contains("本次生成变体ID：variant-world"));
+        assert!(world_prompt.contains("不得复用当前世界背景或当前世界描述"));
+        assert!(world_prompt.contains("被冷艳继承者认作宿命例外的人"));
+        assert!(!world_prompt.contains("旧世界背景不应进入世界生成提示"));
+        assert!(!world_prompt.contains("旧世界描述不应进入世界生成提示"));
+    }
+
+    #[test]
     fn parse_generated_creation_world_trims_visible_fields() {
+        let request = creation_request(GenerateCreationDraftTarget::World);
         let parsed = parse_generated_creation_draft(
             r#"{
                 "world": {
@@ -367,7 +580,7 @@ mod tests {
                     "description": " 雨夜高楼间藏着古老结界，女巫与财阀共同维持秘密秩序。 "
                 }
             }"#,
-            GenerateCreationDraftTarget::World,
+            &request,
         )
         .expect("world draft should parse");
 
