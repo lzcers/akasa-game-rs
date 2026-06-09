@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
 
 use chrono::Utc;
 use story_engine::{
@@ -36,20 +39,30 @@ struct SessionRecord {
     session_id: String,
     engine: AkashicSessionEngine,
     events_tx: broadcast::Sender<LiveTaskUpdate>,
+    live_events: Arc<Mutex<LiveEventLog>>,
 }
 
 pub struct LiveSessionStream {
     pub session_id: String,
+    pub replayed_events: Vec<LiveTaskUpdate>,
     pub event_rx: broadcast::Receiver<LiveTaskUpdate>,
 }
 
 #[derive(Clone, Debug)]
 pub struct LiveTaskUpdate {
+    pub event_id: u64,
     pub round: u64,
     pub update: TaskUpdate,
 }
 
+#[derive(Default)]
+struct LiveEventLog {
+    next_event_id: u64,
+    history: VecDeque<LiveTaskUpdate>,
+}
+
 const EVENT_CHANNEL_CAPACITY: usize = 256;
+const EVENT_HISTORY_CAPACITY: usize = 1024;
 
 impl AppState {
     pub fn new(analytics_events_path: impl Into<std::path::PathBuf>, local_debug: bool) -> Self {
@@ -265,27 +278,62 @@ impl AppState {
     pub async fn open_game_session_stream(
         &self,
         session_id: &str,
-        _since: Option<u64>,
+        since: Option<u64>,
     ) -> Result<LiveSessionStream, AppError> {
-        let mut sessions = self.sessions.lock().await;
-        let session = sessions
-            .get_mut(session_id)
-            .ok_or_else(|| AppError::not_found(format!("未找到会话 `{session_id}`")))?;
+        let (events_tx, live_events) = {
+            let mut sessions = self.sessions.lock().await;
+            let session = sessions
+                .get_mut(session_id)
+                .ok_or_else(|| AppError::not_found(format!("未找到会话 `{session_id}`")))?;
+            (session.events_tx.clone(), Arc::clone(&session.live_events))
+        };
+        let live_events = live_events.lock().await;
+        let event_rx = events_tx.subscribe();
+        let replayed_events = live_events
+            .history
+            .iter()
+            .filter(|event| since.is_none_or(|event_id| event.event_id > event_id))
+            .cloned()
+            .collect();
+
         Ok(LiveSessionStream {
             session_id: session_id.to_string(),
-            event_rx: session.events_tx.subscribe(),
+            replayed_events,
+            event_rx,
         })
+    }
+}
+
+impl LiveEventLog {
+    fn push(&mut self, round: u64, update: TaskUpdate) -> LiveTaskUpdate {
+        self.next_event_id += 1;
+        let event = LiveTaskUpdate {
+            event_id: self.next_event_id,
+            round,
+            update,
+        };
+        self.history.push_back(event.clone());
+        while self.history.len() > EVENT_HISTORY_CAPACITY {
+            self.history.pop_front();
+        }
+        event
     }
 }
 
 fn build_session_record(session_id: String, engine: AkashicSessionEngine) -> SessionRecord {
     let mut event_rx = engine.subscribe_events();
     let (events_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+    let live_events = Arc::new(Mutex::new(LiveEventLog::default()));
     let events_tx_for_task = events_tx.clone();
+    let live_events_for_task = Arc::clone(&live_events);
     tokio::spawn(async move {
         while let Ok(event) = event_rx.recv().await {
             let TaskEvent::TaskUpdated { round, update } = event;
-            let _ = events_tx_for_task.send(LiveTaskUpdate { round, update });
+            let event = {
+                let mut live_events = live_events_for_task.lock().await;
+                live_events.push(round, update)
+            };
+            let _ = events_tx_for_task.send(event);
         }
     });
 
@@ -293,6 +341,7 @@ fn build_session_record(session_id: String, engine: AkashicSessionEngine) -> Ses
         session_id,
         engine,
         events_tx,
+        live_events,
     }
 }
 

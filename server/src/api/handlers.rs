@@ -95,6 +95,13 @@ fn sse_done_event(route: &'static str, session_id: Option<String>) -> Event {
     sse_json_event(route, StreamDoneData { route, session_id })
 }
 
+fn last_event_id_from_headers(headers: &HeaderMap) -> Option<u64> {
+    headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse().ok())
+}
+
 pub async fn create_game_session(
     State(state): State<AppState>,
     Json(request): Json<CreateGameSessionRequest>,
@@ -321,11 +328,11 @@ pub async fn stream_game_session(
     Query(query): Query<StreamQuery>,
     headers: HeaderMap,
 ) -> StorySseResult {
+    let since = query.since.or_else(|| last_event_id_from_headers(&headers));
     let live_stream = state
-        .open_game_session_stream(&path.session_id, query.since)
+        .open_game_session_stream(&path.session_id, since)
         .await?;
     let session_id = live_stream.session_id.clone();
-    let _ = headers;
 
     let handshake_stream = stream::iter([Ok::<_, Infallible>(sse_json_event(
         "stream.handshake",
@@ -335,16 +342,19 @@ pub async fn stream_game_session(
             note: "subscribed",
         },
     ))]);
+    let replay_stream = stream::iter(
+        live_stream
+            .replayed_events
+            .into_iter()
+            .map(|event| Ok::<_, Infallible>(task_updated_sse(event))),
+    );
     let live_stream = stream::unfold(
         Some((live_stream.event_rx, session_id)),
         |state| async move {
             let (mut event_rx, session_id) = state?;
 
             match event_rx.recv().await {
-                Ok(event) => Some((
-                    Ok(task_updated_sse(None, event)),
-                    Some((event_rx, session_id)),
-                )),
+                Ok(event) => Some((Ok(task_updated_sse(event)), Some((event_rx, session_id)))),
                 Err(broadcast::error::RecvError::Lagged(skipped)) => Some((
                     Ok(sse_json_event(
                         "stream.warning",
@@ -364,28 +374,26 @@ pub async fn stream_game_session(
         },
     );
 
-    Ok(Sse::new(handshake_stream.chain(live_stream))
-        .keep_alive(
-            KeepAlive::new()
-                .interval(Duration::from_secs(15))
-                .text("keep-alive"),
-        )
-        .into_response())
+    Ok(
+        Sse::new(handshake_stream.chain(replay_stream).chain(live_stream))
+            .keep_alive(
+                KeepAlive::new()
+                    .interval(Duration::from_secs(15))
+                    .text("keep-alive"),
+            )
+            .into_response(),
+    )
 }
 
-fn task_updated_sse(event_id: Option<u64>, update: LiveTaskUpdate) -> Event {
-    let update = task_update_from_delta(event_id, update);
-    let event = sse_json_event("task.updated", update);
-    match event_id {
-        Some(value) => event.id(value.to_string()),
-        None => event,
-    }
+fn task_updated_sse(update: LiveTaskUpdate) -> Event {
+    let event_id = update.event_id;
+    sse_json_event("task.updated", task_update_from_delta(update)).id(event_id.to_string())
 }
 
-fn task_update_from_delta(event_id: Option<u64>, update: LiveTaskUpdate) -> TaskUpdateData {
+fn task_update_from_delta(update: LiveTaskUpdate) -> TaskUpdateData {
     let task_update = update.update;
     TaskUpdateData {
-        event_id,
+        event_id: Some(update.event_id),
         round: update.round,
         entity: task_update.entity,
         kind: task_update.kind,
@@ -472,8 +480,17 @@ mod tests {
     }
 
     #[test]
+    fn last_event_id_from_headers_parses_eventsource_resume_id() {
+        let mut headers = HeaderMap::new();
+        headers.insert("Last-Event-ID", "17".parse().expect("valid header"));
+
+        assert_eq!(last_event_id_from_headers(&headers), Some(17));
+    }
+
+    #[test]
     fn task_update_from_delta_omits_output() {
         let update = LiveTaskUpdate {
+            event_id: 42,
             round: 7,
             update: TaskUpdate {
                 entity: "2v0".to_string(),
@@ -486,7 +503,7 @@ mod tests {
             },
         };
 
-        let dto = task_update_from_delta(Some(42), update);
+        let dto = task_update_from_delta(update);
         let value = serde_json::to_value(dto).expect("task update dto should serialize");
 
         assert_eq!(

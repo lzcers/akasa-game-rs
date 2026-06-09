@@ -11,6 +11,7 @@ use serde::Serialize;
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, error::TryRecvError},
     task::JoinHandle,
+    time::{Duration, timeout},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
@@ -91,6 +92,8 @@ enum TaskRuntimeEvent {
     Completed(String),
     Failed(String),
 }
+
+const MODEL_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 
 impl AgentTaskManager {
     pub fn new(model: ChatModel) -> Self {
@@ -291,7 +294,24 @@ impl AgentTaskManager {
         let (tx, rx) = mpsc::unbounded_channel();
         let handle = tokio::spawn(async move {
             let mut stream = Box::pin(call_model(&model, &msgs, None));
-            while let Some(event) = stream.next().await {
+            loop {
+                let event = match timeout(MODEL_STREAM_IDLE_TIMEOUT, stream.next()).await {
+                    Ok(Some(event)) => event,
+                    Ok(None) => {
+                        let _ = tx.send(TaskRuntimeEvent::Failed(
+                            "task ended without completion".to_string(),
+                        ));
+                        return;
+                    }
+                    Err(_) => {
+                        let _ = tx.send(TaskRuntimeEvent::Failed(format!(
+                            "model stream produced no events for {} seconds",
+                            MODEL_STREAM_IDLE_TIMEOUT.as_secs()
+                        )));
+                        return;
+                    }
+                };
+
                 match event {
                     CallModelEvent::TextChunk(content) => {
                         let _ = tx.send(TaskRuntimeEvent::Chunk {
@@ -315,10 +335,6 @@ impl AgentTaskManager {
                     }
                 }
             }
-
-            let _ = tx.send(TaskRuntimeEvent::Failed(
-                "task ended without completion".to_string(),
-            ));
         });
 
         TaskRuntime { rx, handle }
