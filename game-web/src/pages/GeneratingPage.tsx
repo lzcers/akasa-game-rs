@@ -150,7 +150,9 @@ function stageHeadline(
   }
 }
 
-function profileStepFromStage(stage: Exclude<StartupStage, "idle">): ProfileStepKey {
+function profileStepFromStage(
+  stage: Exclude<StartupStage, "idle">,
+): ProfileStepKey {
   return stage === "generating_world" || stage === "generating_protagonist"
     ? stage
     : "creating_session";
@@ -210,16 +212,18 @@ const GeneratingPage: React.FC = () => {
   }, [canEnterWorld, stageKey]);
   const messageKey = currentMessages.join("||");
   const [messageCursor, setMessageCursor] = useState({ key: "", index: 0 });
-  const messageIndex = messageCursor.key === messageKey
-    ? Math.min(messageCursor.index, Math.max(currentMessages.length - 1, 0))
-    : 0;
+  const messageIndex =
+    messageCursor.key === messageKey
+      ? Math.min(messageCursor.index, Math.max(currentMessages.length - 1, 0))
+      : 0;
   const [selectedProfileOverride, setSelectedProfileOverride] = useState<{
     stageKey: Exclude<StartupStage, "idle">;
     key: ProfileStepKey;
   } | null>(null);
-  const selectedProfileStep = selectedProfileOverride?.stageKey === stageKey
-    ? selectedProfileOverride.key
-    : profileStepFromStage(stageKey);
+  const selectedProfileStep =
+    selectedProfileOverride?.stageKey === stageKey
+      ? selectedProfileOverride.key
+      : profileStepFromStage(stageKey);
 
   const handleEnterWorld = () => {
     if (preparedProfiles) {
@@ -335,11 +339,15 @@ const GeneratingPage: React.FC = () => {
                   <button
                     type="button"
                     key={step.key}
-                      onClick={
-                        profilePanels
-                          ? () => setSelectedProfileOverride({ stageKey, key: step.key })
-                          : undefined
-                      }
+                    onClick={
+                      profilePanels
+                        ? () =>
+                            setSelectedProfileOverride({
+                              stageKey,
+                              key: step.key,
+                            })
+                        : undefined
+                    }
                     className={`rounded-[1.1rem] border px-4 py-4 transition-colors md:px-5 ${
                       status === "active"
                         ? "border-[#60a5fa]/40 bg-[#101a2c]/92"
@@ -380,7 +388,9 @@ const GeneratingPage: React.FC = () => {
                       key={key}
                       type="button"
                       aria-label={`切换到${profilePanels[key].eyebrow}`}
-                      onClick={() => setSelectedProfileOverride({ stageKey, key })}
+                      onClick={() =>
+                        setSelectedProfileOverride({ stageKey, key })
+                      }
                       className={`h-2.5 w-2.5 rounded-full transition-colors ${selectedProfileStep === key ? "bg-[#d8c58a]" : "bg-white/18 hover:bg-white/35"}`}
                     />
                   ))}
@@ -404,7 +414,7 @@ const GeneratingPage: React.FC = () => {
           ) : null}
 
           {preparedProfiles ? (
-            <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <div className="flex flex-row items-center justify-center gap-3 sm:flex-row">
               <SecondaryButton
                 onClick={() => void startGame()}
                 className="min-w-44"

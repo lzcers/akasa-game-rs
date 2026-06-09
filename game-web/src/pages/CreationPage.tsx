@@ -343,10 +343,10 @@ const CreationPage: React.FC = () => {
   }));
   const totalAllocatedPoints = traitRows.reduce((sum, trait) => sum + trait.value, 0);
   const remainingPoints = ATTRIBUTE_TOTAL - totalAllocatedPoints;
-  const radarSize = 240;
+  const radarSize = 196;
   const radarCenter = radarSize / 2;
-  const radarRadius = 72;
-  const radarLabelRadius = 96;
+  const radarRadius = 58;
+  const radarLabelRadius = 80;
   const radarAngles = traitRows.map((_, index) => (-Math.PI / 2) + ((Math.PI * 2 * index) / traitRows.length));
   const radarShapePoints = traitRows.map((trait, index) => {
     const ratio = trait.value / ATTRIBUTE_MAX;
@@ -365,6 +365,15 @@ const CreationPage: React.FC = () => {
     updateCharacter(initialDraft.character);
     updateWorld(initialDraft.world);
   }, [initialDraft, updateCharacter, updateWorld]);
+
+  React.useEffect(() => {
+    if (!draftFeedback) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => setDraftFeedback(null), 2200);
+    return () => window.clearTimeout(timer);
+  }, [draftFeedback]);
 
   const handleStartGame = async () => {
     track('creation_submitted', {
@@ -426,12 +435,6 @@ const CreationPage: React.FC = () => {
               {error}
             </StatusPill>
           ) : null}
-          {draftFeedback ? (
-            <StatusPill icon={null} className="border-[#3d5f82]/45 bg-[#102033]/82 text-[#d7e5ff]">
-              {draftFeedback}
-            </StatusPill>
-          ) : null}
-
           <section className="space-y-3">
             <div className="space-y-1.5">
               <div className="flex flex-wrap items-baseline gap-3">
@@ -534,8 +537,8 @@ const CreationPage: React.FC = () => {
 
             </SectionCard>
 
-            <SectionCard className="space-y-4 p-3.5 md:p-4">
-              <div className="flex flex-col gap-2.5 md:flex-row md:items-center md:justify-between">
+            <SectionCard className="space-y-3 p-3 md:p-3.5">
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                 <div className="space-y-1">
                   <FieldLabel hint="">人物属性</FieldLabel>
 
@@ -545,8 +548,8 @@ const CreationPage: React.FC = () => {
                 </StatusPill>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-[248px_minmax(0,1fr)] md:items-start">
-                <div className="mx-auto w-full max-w-[248px]">
+              <div className="grid gap-3 md:grid-cols-[204px_minmax(0,1fr)] md:items-start">
+                <div className="mx-auto w-full max-w-[204px]">
                   <svg viewBox={`0 0 ${radarSize} ${radarSize}`} className="h-auto w-full">
                     {[0.25, 0.5, 0.75, 1].map((ratio) => (
                       <polygon
@@ -580,7 +583,7 @@ const CreationPage: React.FC = () => {
                             x={labelX}
                             y={labelY}
                             fill="#efe4cd"
-                            fontSize="11"
+                            fontSize="10"
                             textAnchor={labelX < radarCenter - 8 ? 'end' : labelX > radarCenter + 8 ? 'start' : 'middle'}
                             dominantBaseline="middle"
                           >
@@ -604,15 +607,15 @@ const CreationPage: React.FC = () => {
                   </svg>
                 </div>
 
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {traitRows.map((trait) => (
-                    <div key={trait.key} className="rounded-xl border border-white/8 bg-[#0c1422]/58 p-2.5 md:p-3">
-                      <div className="mb-1.5 flex items-center justify-between gap-2.5 text-[#efe4cd]">
+                    <div key={trait.key} className="rounded-lg border border-white/8 bg-[#0c1422]/58 p-2">
+                      <div className="mb-1 flex items-center justify-between gap-2 text-[#efe4cd]">
                         <div>
-                          <p className="text-sm font-semibold md:text-base">{trait.label}</p>
-                          <p className="text-[11px] leading-3.5 text-[#9ca7be] md:text-xs">{trait.hint}</p>
+                          <p className="text-sm font-semibold">{trait.label}</p>
+                          <p className="text-[10px] leading-3.5 text-[#9ca7be] md:text-[11px]">{trait.hint}</p>
                         </div>
-                        <span className="text-base font-semibold text-[#d8c7aa] md:text-lg">{trait.value}</span>
+                        <span className="text-sm font-semibold text-[#d8c7aa] md:text-base">{trait.value}</span>
                       </div>
                       <input
                         type="range"
@@ -623,7 +626,7 @@ const CreationPage: React.FC = () => {
                         onChange={(e) => handleTraitChange(trait.key, parseInt(e.target.value, 10))}
                         className="akashic-range"
                         style={{
-                          background: `linear-gradient(90deg, #1273ff 0%, #1273ff ${((trait.value - ATTRIBUTE_MIN) / (ATTRIBUTE_MAX - ATTRIBUTE_MIN)) * 100}%, rgba(255,255,255,0.92) ${((trait.value - ATTRIBUTE_MIN) / (ATTRIBUTE_MAX - ATTRIBUTE_MIN)) * 100}%, rgba(255,255,255,0.92) 100%)`,
+                          background: `linear-gradient(90deg, #d8c18f 0%, #c4a875 ${((trait.value - ATTRIBUTE_MIN) / (ATTRIBUTE_MAX - ATTRIBUTE_MIN)) * 100}%, rgba(69,64,57,0.92) ${((trait.value - ATTRIBUTE_MIN) / (ATTRIBUTE_MAX - ATTRIBUTE_MIN)) * 100}%, rgba(69,64,57,0.92) 100%)`,
                         }}
                       />
                     </div>
@@ -662,20 +665,27 @@ const CreationPage: React.FC = () => {
             </SectionCard>
           </section>
 
-          <div className="sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-20 mt-2 flex touch-pan-y flex-col gap-2 rounded-xl border border-[#6f6655]/50 bg-[#0a1222]/94 p-1.5 shadow-[0_12px_28px_rgba(2,8,18,0.44)] backdrop-blur-xl sm:static sm:inset-auto sm:mt-1 sm:flex-row sm:justify-end sm:rounded-none sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">
-            <SecondaryButton onClick={() => navigate(appRoutes.lobby)} className="min-h-10 w-full px-3.5 py-2 text-sm sm:w-auto md:min-h-11 md:px-4 md:py-2.5">
-              返回大厅
+          <div className="sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-20 mt-2 grid touch-pan-y grid-cols-4 gap-1.5 rounded-xl border border-[#6f6655]/50 bg-[#0a1222]/94 p-1.5 shadow-[0_12px_28px_rgba(2,8,18,0.44)] backdrop-blur-xl sm:static sm:inset-auto sm:mt-1 sm:flex sm:flex-row sm:items-center sm:justify-end sm:gap-2 sm:rounded-none sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">
+            <div className="col-span-4 flex min-h-5 items-center px-1 sm:min-h-10 sm:min-w-56 sm:flex-1 sm:px-0">
+              {draftFeedback ? (
+                <span className="text-xs font-semibold leading-5 text-[#f6eddc] drop-shadow-[0_0_10px_rgba(246,237,220,0.24)] sm:text-sm">
+                  {draftFeedback}
+                </span>
+              ) : null}
+            </div>
+            <SecondaryButton onClick={() => navigate(appRoutes.lobby)} className="min-h-8 w-full whitespace-nowrap rounded-lg px-1 py-0.5 text-[11px] leading-4 sm:min-h-10 sm:w-auto sm:rounded-full sm:px-3.5 sm:py-2 sm:text-sm md:min-h-11 md:px-4 md:py-2.5">
+              返回
             </SecondaryButton>
-            <SecondaryButton onClick={handleResetDraft} disabled={isLoading} className="flex min-h-10 w-full items-center justify-center gap-2 px-3.5 py-2 text-sm sm:w-auto md:min-h-11 md:px-4 md:py-2.5">
-              <RotateCcw className="h-4 w-4" />
+            <SecondaryButton onClick={handleResetDraft} disabled={isLoading} className="flex min-h-8 w-full items-center justify-center gap-0.5 whitespace-nowrap rounded-lg px-1 py-0.5 text-[11px] leading-4 sm:min-h-10 sm:w-auto sm:gap-2 sm:rounded-full sm:px-3.5 sm:py-2 sm:text-sm md:min-h-11 md:px-4 md:py-2.5">
+              <RotateCcw className="h-3 w-3 sm:h-4 sm:w-4" />
               重置
             </SecondaryButton>
-            <SecondaryButton onClick={handleSaveDraft} disabled={isLoading} className="flex min-h-10 w-full items-center justify-center gap-2 px-3.5 py-2 text-sm sm:w-auto md:min-h-11 md:px-4 md:py-2.5">
-              <Save className="h-4 w-4" />
-              保存草稿
+            <SecondaryButton onClick={handleSaveDraft} disabled={isLoading} className="flex min-h-8 w-full items-center justify-center gap-0.5 whitespace-nowrap rounded-lg px-1 py-0.5 text-[11px] leading-4 sm:min-h-10 sm:w-auto sm:gap-2 sm:rounded-full sm:px-3.5 sm:py-2 sm:text-sm md:min-h-11 md:px-4 md:py-2.5">
+              <Save className="h-3 w-3 sm:h-4 sm:w-4" />
+              保存
             </SecondaryButton>
-            <PrimaryButton onClick={handleStartGame} disabled={!canStart || isLoading} className="min-h-10 w-full px-3.5 py-2 text-sm sm:w-auto md:min-h-11 md:px-4 md:py-2.5">
-              {isLoading ? '设定生成中...' : '开启命运'}
+            <PrimaryButton onClick={handleStartGame} disabled={!canStart || isLoading} className="min-h-8 w-full whitespace-nowrap rounded-lg px-1 py-0.5 text-[11px] leading-4 sm:min-h-10 sm:w-auto sm:rounded-full sm:px-3.5 sm:py-2 sm:text-sm md:min-h-11 md:px-4 md:py-2.5">
+              {isLoading ? '生成中' : '开启'}
             </PrimaryButton>
           </div>
         </div>

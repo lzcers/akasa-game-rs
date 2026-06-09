@@ -124,7 +124,7 @@ pub static FATE_BASE_SYSTEM_PROMPT: &str = r#"
 "#;
 
 pub static OUTPUT_SCHEMA: &str = r#"{
-  "round": 4,
+  "round": 0,
   "scene_title": "本场景的简短标题",
   "time_absolute": "故事内绝对时间，如：第三日 凌晨两点一刻",
   "time_relative": "关键时间压力描述，如：距离穹顶自毁只剩约一炷香；没有则填 null",

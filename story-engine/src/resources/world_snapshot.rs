@@ -314,7 +314,7 @@ impl WorldSnapshot {
             )
             .unwrap();
         } else {
-            writeln!(out, "请根据以上信息续写故事，保持与前面段落的连贯性。").unwrap();
+            writeln!(out, "请根据以上信息编写故事，保持与你输出的文本连贯性。").unwrap();
         }
 
         out
