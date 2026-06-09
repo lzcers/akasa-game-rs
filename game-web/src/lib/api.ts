@@ -163,7 +163,8 @@ export interface CreateGameSessionInput {
 export interface ProtagonistOption {
   title: string;
   action: string;
-  motivationAndRisk: string;
+  motivationAndRisk?: string;
+  motivation_and_risk?: string;
 }
 
 export interface PendingProtagonistChoice {
