@@ -62,7 +62,7 @@ struct LiveEventLog {
 }
 
 const EVENT_CHANNEL_CAPACITY: usize = 256;
-const EVENT_HISTORY_CAPACITY: usize = 1024;
+const EVENT_HISTORY_CAPACITY: usize = 8192;
 
 impl AppState {
     pub fn new(analytics_events_path: impl Into<std::path::PathBuf>, local_debug: bool) -> Self {
@@ -463,11 +463,25 @@ fn collect_story_narrations(snapshot: &Session) -> Vec<String> {
         .collect();
 
     let latest = snapshot.latest_narration.trim();
-    if !latest.is_empty() && narrations.last().is_none_or(|item| item != latest) {
+    if is_stable_phase(snapshot.phase)
+        && !latest.is_empty()
+        && narrations.last().is_none_or(|item| item != latest)
+    {
         narrations.push(latest.to_string());
     }
 
     narrations
+}
+
+fn is_stable_phase(phase: TurnPhase) -> bool {
+    matches!(
+        phase,
+        TurnPhase::Idle
+            | TurnPhase::AwaitingPlayer
+            | TurnPhase::TurnCompleted
+            | TurnPhase::Ended
+            | TurnPhase::Failed
+    )
 }
 
 fn status_from_phase(phase: TurnPhase) -> &'static str {
@@ -725,6 +739,17 @@ mod tests {
             narrations,
             vec!["钟声掠过雾墙。", "回廊尽头亮起一盏迟到的灯。"]
         );
+    }
+
+    #[test]
+    fn collect_story_narrations_ignores_live_latest_output_in_non_stable_phase() {
+        let mut snapshot = sample_session_from_archive();
+        snapshot.phase = TurnPhase::Simulation;
+        snapshot.latest_narration = "这一段还在生成，不能进入分享摘要。".to_string();
+
+        let narrations = collect_story_narrations(&snapshot);
+
+        assert_eq!(narrations, vec!["钟声掠过雾墙。"]);
     }
 
     fn sample_payload() -> SessionArchivePayload {

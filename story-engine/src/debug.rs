@@ -199,6 +199,7 @@ struct BufferedTaskStream {
     chunks: VecDeque<(TaskChunkKind, String)>,
     printed_kind: Option<TaskChunkKind>,
     completed: bool,
+    error: Option<String>,
 }
 
 #[derive(Default)]
@@ -225,10 +226,24 @@ impl OrderedTaskStreams {
             .streams
             .get_mut(&key)
             .expect("task stream must exist after insertion");
+        let status = update.status;
         if let (Some(kind), Some(chunk)) = (update.chunk_kind, update.chunk) {
             stream.chunks.push_back((kind, chunk));
         }
-        stream.completed = matches!(update.status, TaskStatus::Done | TaskStatus::Error);
+        if let Some(error) = update.error {
+            match status {
+                TaskStatus::Error => stream.error = Some(error),
+                TaskStatus::Pending | TaskStatus::Running => eprintln!(
+                    "[stream retry {} {:?} {}] {error}",
+                    key.session_id, key.kind, key.entity
+                ),
+                TaskStatus::Done => {}
+            }
+        }
+        if status == TaskStatus::Done {
+            stream.error = None;
+        }
+        stream.completed = matches!(status, TaskStatus::Done | TaskStatus::Error);
 
         self.flush();
     }
@@ -261,6 +276,12 @@ impl OrderedTaskStreams {
 
             if stream.printed_kind.is_some() {
                 println!();
+            }
+            if let Some(error) = &stream.error {
+                eprintln!(
+                    "[stream error {} {:?} {}] {error}",
+                    key.session_id, key.kind, key.entity
+                );
             }
             self.streams.remove(&key);
             self.order.pop_front();

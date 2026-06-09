@@ -105,17 +105,27 @@ const GameplayPage: React.FC = () => {
   const typingKey = `${currentRound}:${activeRoundState?.isAwaitingNarration ? '1' : '0'}:${activeRoundState?.narrationText ?? ''}`;
   const isTyping = shouldType && completedTypingKey !== typingKey;
   const isChoiceInteractionDisabled = isTyping || isLoading;
+  const canContinueWithoutChoice = phase === 'awaiting_player'
+    && activeRoundState?.choicesStatus === 'ready'
+    && currentRoundChoices.length === 0
+    && !isNarrationStreaming;
   const isObsessionToggleDisabled = isChoiceInteractionDisabled || !hasChoices || obsessionPoints <= 0;
   const isObsessionSubmitDisabled = isChoiceInteractionDisabled || obsessionInput.trim().length === 0;
-  const canArchiveCurrentRound = phase === 'awaiting_player'
-    && hasChoices
-    && !isNarrationStreaming
-    && !isTyping
-    && !isLoading;
-  const archiveActionUnavailableReason = canArchiveCurrentRound
+  const latestCompletedNarration = useMemo(() => (
+    [...narrationHistory]
+      .reverse()
+      .find((entry) => (
+        entry.narrationText.trim()
+        && !entry.isAwaitingNarration
+        && entry.narrationStatus !== 'pending'
+        && entry.narrationStatus !== 'running'
+      ))
+  ), [narrationHistory]);
+  const canArchiveLatestCompletedRound = Boolean(sessionId && latestCompletedNarration);
+  const archiveActionUnavailableReason = canArchiveLatestCompletedRound
     ? null
-    : '选项出现后可分享或存档。';
-  const archiveActionKey = `${sessionId ?? 'no-session'}:${currentRound}:${currentRoundChoices.map((choice) => choice.id).join(',')}`;
+    : '完成第一段叙事后可分享或存档。';
+  const archiveActionKey = `${sessionId ?? 'no-session'}:${latestCompletedNarration?.round ?? 'no-completed-round'}`;
   const statusMessage = feedback ?? error;
   const broadcastItems = latestBroadcastItems
     .map((item) => item.trim())
@@ -124,11 +134,7 @@ const GameplayPage: React.FC = () => {
     ? broadcastItems
     : (latestBroadcastSummary.trim() ? [latestBroadcastSummary.trim()] : []);
   const shareSummaryFallback = useMemo(() => {
-    const latestNarration = [...narrationHistory]
-      .reverse()
-      .find((entry) => entry.narrationText.trim())
-      ?.narrationText
-      .trim();
+    const latestNarration = latestCompletedNarration?.narrationText.trim();
     const broadcastSummary = latestBroadcastSummary.trim();
 
     if (latestNarration && broadcastSummary && !latestNarration.includes(broadcastSummary)) {
@@ -144,7 +150,7 @@ const GameplayPage: React.FC = () => {
     }
 
     return `${currentScene} 的命运仍在推进，下一轮选择正在逼近。`;
-  }, [currentScene, latestBroadcastSummary, narrationHistory]);
+  }, [currentScene, latestBroadcastSummary, latestCompletedNarration]);
   const shareGameUrl = useMemo(() => (
     new URL(
       sessionId ? routeWithClonedSession(appRoutes.gameplay, sessionId) : appRoutes.lobby,
@@ -253,6 +259,27 @@ const GameplayPage: React.FC = () => {
     }
   }, [activeObsession, currentRound, readErrorMessage, submitChoice]);
 
+  const handleContinueClick = useCallback(async () => {
+    try {
+      await submitChoice({
+        input: {
+          type: 'free_text',
+          action: 'continue',
+        },
+        displayText: '继续',
+      });
+      setRoundControls({
+        round: currentRound,
+        activeObsession: false,
+        obsessionInput: '',
+        previews: {},
+      });
+      setFeedback(null);
+    } catch (submitError) {
+      setFeedback(readErrorMessage(submitError, '继续剧情失败。'));
+    }
+  }, [currentRound, readErrorMessage, submitChoice]);
+
   useEffect(() => {
     if (!autoChoiceEnabled) {
       autoChoiceKeyRef.current = null;
@@ -323,7 +350,7 @@ const GameplayPage: React.FC = () => {
   };
 
   const handleSave = async () => {
-    if (!canArchiveCurrentRound) {
+    if (!canArchiveLatestCompletedRound) {
       setFeedback(archiveActionUnavailableReason);
       return;
     }
@@ -362,6 +389,7 @@ const GameplayPage: React.FC = () => {
             <div className="mt-auto flex touch-pan-y flex-col gap-2">
               <ChoicePanel
                 hasChoices={hasChoices}
+                canContinue={canContinueWithoutChoice}
                 choices={currentRoundChoices}
                 previews={previews}
                 remainingIntuitionPoints={intuitionPoints}
@@ -372,6 +400,7 @@ const GameplayPage: React.FC = () => {
                 isChoiceInteractionDisabled={isChoiceInteractionDisabled}
                 isObsessionSubmitDisabled={isObsessionSubmitDisabled}
                 onChoiceClick={handleChoiceClick}
+                onContinue={handleContinueClick}
                 onAutoChoiceToggle={setAutoChoiceEnabled}
                 onPreview={handlePreview}
                 onObsessionInputChange={(nextValue) => {
@@ -393,7 +422,7 @@ const GameplayPage: React.FC = () => {
                 shareSummaryFallback={shareSummaryFallback}
                 shareGameUrl={shareGameUrl}
                 archiveActionKey={archiveActionKey}
-                isArchiveActionDisabled={!canArchiveCurrentRound}
+                isArchiveActionDisabled={!canArchiveLatestCompletedRound}
                 archiveActionUnavailableReason={archiveActionUnavailableReason}
                 onToggleObsession={() => {
                   setRoundControls((prev) => ({

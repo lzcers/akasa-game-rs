@@ -88,7 +88,8 @@ impl ProtagonistOptions {
 }
 
 /// 单个可供玩家选择的主角行动。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct ProtagonistOption {
     pub title: String,
     pub action: String,

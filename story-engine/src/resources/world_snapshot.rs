@@ -5,7 +5,7 @@ use std::fmt::Write;
 
 /// 世界 Agent 单轮完整输出
 #[derive(Component, Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[serde(default, rename_all = "snake_case")]
 pub struct WorldSnapshot {
     pub round: u64,
     pub scene_title: String,
@@ -50,7 +50,7 @@ pub struct WorldSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[serde(default, rename_all = "snake_case")]
 pub struct NpcState {
     pub name: String,
     pub location: String,
@@ -65,7 +65,7 @@ pub struct NpcState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[serde(default, rename_all = "snake_case")]
 pub struct ItemState {
     pub name: String,
     /// 物品当前所在地或持有者
@@ -80,7 +80,7 @@ pub struct ItemState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[serde(default, rename_all = "snake_case")]
 pub struct OngoingEvent {
     pub name: String,
     /// 当前态势的叙事描述，如 "闸门已被撞开一半，脚步声近在咫尺"

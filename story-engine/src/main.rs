@@ -61,17 +61,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 return Ok(());
             }
             TurnPhase::AwaitingPlayer => {
-                let Some(choice) = snapshot.choices.first() else {
-                    return Err("故事引擎进入 AwaitingPlayer，但没有可选行动".into());
-                };
-                println!(
-                    "[api] auto selected choice: {} -> {}",
-                    choice.id, choice.option.action
-                );
-                session.submit_player_action(PlayerActionInput {
-                    r#type: PlayerActionType::SelectedOption,
-                    action: choice.option.action.clone(),
-                })?;
+                if let Some(choice) = snapshot.choices.first() {
+                    println!(
+                        "[api] auto selected choice: {} -> {}",
+                        choice.id, choice.option.action
+                    );
+                    session.submit_player_action(PlayerActionInput {
+                        r#type: PlayerActionType::SelectedOption,
+                        action: choice.option.action.clone(),
+                    })?;
+                } else {
+                    println!("[api] no player choices available; continuing");
+                    session.submit_player_action(PlayerActionInput {
+                        r#type: PlayerActionType::FreeText,
+                        action: "continue".to_string(),
+                    })?;
+                }
             }
             TurnPhase::TurnCompleted if last_completed_turn != Some(snapshot.turn_index) => {
                 completed_turns += 1;

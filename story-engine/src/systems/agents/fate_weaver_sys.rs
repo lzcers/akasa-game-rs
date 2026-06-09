@@ -16,12 +16,15 @@ use crate::{
     },
     engine::RuntimeDebugObserverResource,
     resources::{
-        agent_task::{AgentTaskManager, TaskStatus},
+        agent_task::{AgentTaskManager, TaskKind, TaskStatus},
+        export::ExportState,
         protagonist_action::ProtagonistDecisionState,
         world_snapshot::WorldSnapshot,
     },
     utils::parse_json_response,
 };
+
+use super::{output_preview, publish_apply_error};
 
 #[allow(clippy::type_complexity)]
 pub fn fate_weaver_dispatch_system(
@@ -68,6 +71,7 @@ pub fn fate_weaver_apply_system(
     mut sessions: Query<(
         Entity,
         Option<&StorySession>,
+        &ExportState,
         &mut TurnFlow,
         &mut WorldSnapshot,
     )>,
@@ -75,9 +79,9 @@ pub fn fate_weaver_apply_system(
     mut agent_tasks: ResMut<AgentTaskManager>,
     debug_observer: Option<Res<RuntimeDebugObserverResource>>,
 ) {
-    for (session_entity, session, mut flow, mut world_snapshot) in sessions
+    for (session_entity, session, export_state, mut flow, mut world_snapshot) in sessions
         .iter_mut()
-        .filter(|(_, _, flow, _)| flow.stage == TurnStage::Simulation)
+        .filter(|(_, _, _, flow, _)| flow.stage == TurnStage::Simulation)
     {
         for (entity, mut agent, _) in agents
             .iter_mut()
@@ -88,18 +92,35 @@ pub fn fate_weaver_apply_system(
             };
             match result.status {
                 TaskStatus::Done => {
-                    let Some(mut output) = agent_tasks
-                        .take_result(entity)
-                        .and_then(|result| result.output)
-                    else {
+                    let Some(mut output) = result.output.clone() else {
                         continue;
                     };
 
                     if agent.output_type == AgentOutputType::Json {
-                        let Ok(mut snapshot) = parse_json_response::<WorldSnapshot>(&output) else {
-                            agent.revert();
-                            flow.stage = TurnStage::Failed;
-                            break;
+                        let mut snapshot = match parse_json_response::<WorldSnapshot>(&output) {
+                            Ok(snapshot) => snapshot,
+                            Err(error) => {
+                                let error = format!(
+                                    "FateWeaver 输出无法解析为 WorldSnapshot：{error}。输出预览：{}",
+                                    output_preview(&output)
+                                );
+                                if agent_tasks.retry_task(entity, error.clone()) {
+                                    break;
+                                }
+                                publish_apply_error(
+                                    export_state,
+                                    debug_observer.as_deref(),
+                                    session,
+                                    &flow,
+                                    entity,
+                                    TaskKind::Simulation,
+                                    format!("{error}；已达到最大重试次数。"),
+                                );
+                                agent_tasks.clear_task(entity);
+                                agent.revert();
+                                flow.stage = TurnStage::Failed;
+                                break;
+                            }
                         };
                         snapshot.round = flow.active_turn_id;
                         if let Ok(normalized_output) = serde_json::to_string_pretty(&snapshot) {
@@ -107,6 +128,7 @@ pub fn fate_weaver_apply_system(
                         }
                         *world_snapshot = snapshot;
                     }
+                    let _ = agent_tasks.take_result(entity);
                     agent.append_assistant_message(&output);
                     if let (Some(session), Some(observer)) = (
                         session,
@@ -204,6 +226,7 @@ mod tests {
                     stage: TurnStage::Simulation,
                 },
                 WorldSnapshot::default(),
+                ExportState::new(),
             ))
             .id();
         let agent = world

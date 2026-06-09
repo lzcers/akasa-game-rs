@@ -106,6 +106,7 @@ function roundStateFromHistoryEntry(
 ): RoundState {
   const isCurrentRound = entry.round === currentRound;
   const choices = (isCurrentRound ? session.choices : entry.choices).map(toChoiceFromSession);
+  const isAwaitingCurrentRound = isCurrentRound && session.phase === 'awaiting_player';
   const selectedChoiceText = entry.selectedChoiceText?.trim()
     || deriveSelectedChoiceText(entry)
     || null;
@@ -121,7 +122,7 @@ function roundStateFromHistoryEntry(
         ? 'done'
         : null,
     choices,
-    choicesStatus: choices.length > 0 ? 'ready' : 'idle',
+    choicesStatus: choices.length > 0 || isAwaitingCurrentRound ? 'ready' : 'idle',
     selectedChoiceText,
     isAwaitingNarration: false,
   });
@@ -147,7 +148,7 @@ function currentRoundStateFromSession(
       narrationText: latestHistoryFromSession(session),
       narrationStatus: session.currentTask?.kind === 'narration' ? session.currentTask.status : null,
       choices: session.choices.map(toChoiceFromSession),
-      choicesStatus: session.choices.length > 0 ? 'ready' : 'idle',
+      choicesStatus: session.choices.length > 0 || session.phase === 'awaiting_player' ? 'ready' : 'idle',
       selectedChoiceText: null,
       isAwaitingNarration: false,
     }),

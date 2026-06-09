@@ -5,6 +5,7 @@ import { SecondaryButton } from "./AkashicUI";
 
 interface ChoicePanelProps {
   hasChoices: boolean;
+  canContinue: boolean;
   choices: Choice[];
   previews: Record<string, string>;
   remainingIntuitionPoints: number;
@@ -15,6 +16,7 @@ interface ChoicePanelProps {
   isChoiceInteractionDisabled: boolean;
   isObsessionSubmitDisabled: boolean;
   onChoiceClick: (choice: Choice) => void | Promise<void>;
+  onContinue: () => void | Promise<void>;
   onAutoChoiceToggle?: (enabled: boolean) => void;
   onPreview: (
     choice: Choice,
@@ -26,6 +28,7 @@ interface ChoicePanelProps {
 
 const ChoicePanel: React.FC<ChoicePanelProps> = ({
   hasChoices,
+  canContinue,
   choices,
   previews,
   remainingIntuitionPoints,
@@ -36,6 +39,7 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
   isChoiceInteractionDisabled,
   isObsessionSubmitDisabled,
   onChoiceClick,
+  onContinue,
   onAutoChoiceToggle,
   onPreview,
   onObsessionInputChange,
@@ -52,7 +56,7 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
     obsessionInputRef.current?.focus();
   }, [activeObsession]);
 
-  if (!hasChoices) {
+  if (!hasChoices && !canContinue) {
     return null;
   }
 
@@ -92,42 +96,55 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
 
         {!activeObsession ? (
           <div className="akashic-scroll max-h-[28dvh] touch-pan-y space-y-1 overflow-y-auto pr-0.5 py-0.5">
-            {choices.map((choice) => (
-              <div key={choice.id} className="space-y-1.5">
-                <div className="grid grid-cols-[minmax(0,1fr)_2.5rem] items-center gap-1.5">
-                  <button
-                    onClick={() => void onChoiceClick(choice)}
-                    disabled={isChoiceInteractionDisabled || choice.disabled}
-                    className="akashic-choice h-10 text-[#f3ead8] disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <div className="flex min-h-7 items-center text-left">
-                      <div className="w-full text-sm font-semibold leading-5 sm:text-[0.95rem]">
-                        {choice.text}
+            {hasChoices ? (
+              choices.map((choice) => (
+                <div key={choice.id} className="space-y-1.5">
+                  <div className="grid grid-cols-[minmax(0,1fr)_2.5rem] items-center gap-1.5">
+                    <button
+                      onClick={() => void onChoiceClick(choice)}
+                      disabled={isChoiceInteractionDisabled || choice.disabled}
+                      className="akashic-choice h-10 text-[#f3ead8] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <div className="flex min-h-7 items-center text-left">
+                        <div className="w-full text-sm font-semibold leading-5 sm:text-[0.95rem]">
+                          {choice.text}
+                        </div>
                       </div>
-                    </div>
-                  </button>
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={(event) => void onPreview(choice, event)}
-                    disabled={
-                      isChoiceInteractionDisabled ||
-                      (remainingIntuitionPoints <= 0 && !previews[choice.id])
-                    }
-                    className="akashic-icon-btn h-10 min-h-10 w-10 self-auto disabled:cursor-not-allowed disabled:opacity-50"
-                    title={
-                      previews[choice.id]
-                        ? "再次查看命运碎片"
-                        : remainingIntuitionPoints > 0
-                          ? "消耗 1 点直觉，查看命运碎片"
-                          : "本轮直觉已用尽"
-                    }
-                  >
-                    <Eye className="h-4 w-4" />
-                  </button>
+                    <button
+                      type="button"
+                      onClick={(event) => void onPreview(choice, event)}
+                      disabled={
+                        isChoiceInteractionDisabled ||
+                        (remainingIntuitionPoints <= 0 && !previews[choice.id])
+                      }
+                      className="akashic-icon-btn h-10 min-h-10 w-10 self-auto disabled:cursor-not-allowed disabled:opacity-50"
+                      title={
+                        previews[choice.id]
+                          ? "再次查看命运碎片"
+                          : remainingIntuitionPoints > 0
+                            ? "消耗 1 点直觉，查看命运碎片"
+                            : "本轮直觉已用尽"
+                      }
+                    >
+                      <Eye className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))
+            ) : (
+              <button
+                type="button"
+                onClick={() => void onContinue()}
+                disabled={isChoiceInteractionDisabled}
+                className="akashic-choice h-10 w-full text-[#f3ead8] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <div className="flex min-h-7 items-center justify-center text-sm font-semibold leading-5 sm:text-[0.95rem]">
+                  继续
+                </div>
+              </button>
+            )}
           </div>
         ) : null}
 

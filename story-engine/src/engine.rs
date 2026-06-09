@@ -671,20 +671,17 @@ impl SessionRuntime {
             .world
             .get::<TurnFlow>(entity)
             .ok_or_else(|| "会话缺少流程状态".to_string())?;
-        if !is_stable_phase(flow.stage) {
-            return Err("当前会话不在稳定态，无法创建存档".to_string());
-        }
         let profiles = self
             .world
             .get::<SessionProfiles>(entity)
             .ok_or_else(|| "会话缺少配置资料".to_string())?
             .clone();
-        let world_snapshot = self
+        let current_world_snapshot = self
             .world
             .get::<WorldSnapshot>(entity)
             .ok_or_else(|| "会话缺少世界快照".to_string())?
             .clone();
-        let history_log = self
+        let current_history_log = self
             .world
             .get::<SessionHistoryLog>(entity)
             .ok_or_else(|| "会话缺少历史记录".to_string())?
@@ -695,18 +692,31 @@ impl SessionRuntime {
             .ok_or_else(|| "会话缺少主角决策状态".to_string())?
             .clone();
         let simulator_agents = self.owned_simulator_agents(entity);
+        let archive_view = if is_stable_phase(flow.stage) {
+            ArchiveView {
+                phase: flow.stage,
+                turn_index: flow.turn_index,
+                active_turn_id: flow.active_turn_id,
+                world_snapshot: current_world_snapshot,
+                committed_action: decision_state.committed_action().to_string(),
+                choices: decision_state.choices().to_vec(),
+                history_log: current_history_log,
+            }
+        } else {
+            completed_dialogue_archive_view(&current_history_log)?
+        };
 
         Ok(SessionArchiveState {
             world_profile: profiles.world_profile,
             protagonist_profile: profiles.protagonist_profile,
             key_story_beats: profiles.key_story_beats,
-            phase: flow.stage,
-            turn_index: flow.turn_index,
-            active_turn_id: flow.active_turn_id,
-            world_snapshot,
-            committed_action: decision_state.committed_action().to_string(),
-            choices: decision_state.choices().to_vec(),
-            history_log,
+            phase: archive_view.phase,
+            turn_index: archive_view.turn_index,
+            active_turn_id: archive_view.active_turn_id,
+            world_snapshot: archive_view.world_snapshot,
+            committed_action: archive_view.committed_action,
+            choices: archive_view.choices,
+            history_log: archive_view.history_log,
             fate_weaver_context: simulator_agents
                 .iter()
                 .find(|agent| agent.output_type == AgentOutputType::Json)
@@ -770,6 +780,72 @@ impl SessionRuntime {
             owner.parent() == session_entity && agent.output_type == AgentOutputType::Json
         })
     }
+}
+
+struct ArchiveView {
+    phase: TurnStage,
+    turn_index: u64,
+    active_turn_id: u64,
+    world_snapshot: WorldSnapshot,
+    committed_action: String,
+    choices: Vec<PendingProtagonistChoice>,
+    history_log: SessionHistoryLog,
+}
+
+fn completed_dialogue_archive_view(history_log: &SessionHistoryLog) -> Result<ArchiveView, String> {
+    let completed_round = history_log
+        .rounds
+        .iter()
+        .rev()
+        .find(|entry| {
+            entry
+                .narration_text
+                .as_deref()
+                .is_some_and(|text| !text.trim().is_empty())
+                && entry.world_snapshot.is_some()
+        })
+        .ok_or_else(|| "当前会话还没有已完成的对话可用于创建存档".to_string())?;
+    let completed_round_id = completed_round.round;
+    let world_snapshot = completed_round
+        .world_snapshot
+        .clone()
+        .expect("completed dialogue entries are filtered to include world snapshots");
+    let choices = completed_round.choices.clone();
+    let committed_action = history_log
+        .rounds
+        .iter()
+        .rev()
+        .filter(|entry| entry.round < completed_round_id)
+        .filter_map(|entry| entry.committed_action.as_deref())
+        .find(|action| !action.trim().is_empty())
+        .unwrap_or("start")
+        .to_string();
+    let mut archive_history = SessionHistoryLog {
+        rounds: history_log
+            .rounds
+            .iter()
+            .filter(|entry| entry.round <= completed_round_id)
+            .cloned()
+            .collect(),
+    };
+
+    if let Some(entry) = archive_history
+        .rounds
+        .iter_mut()
+        .find(|entry| entry.round == completed_round_id)
+    {
+        entry.committed_action = None;
+    }
+
+    Ok(ArchiveView {
+        phase: TurnStage::AwaitingPlayer,
+        turn_index: completed_round_id,
+        active_turn_id: completed_round_id,
+        world_snapshot,
+        committed_action,
+        choices,
+        history_log: archive_history,
+    })
 }
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -873,6 +949,94 @@ fn validate_archive_state(state: &SessionArchiveState) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resources::protagonist_action::ProtagonistOption;
+
+    #[test]
+    fn non_stable_archive_view_uses_latest_completed_dialogue() {
+        let history_log = SessionHistoryLog {
+            rounds: vec![
+                RoundHistoryEntry {
+                    round: 1,
+                    world_snapshot: Some(WorldSnapshot {
+                        round: 1,
+                        scene_title: "旧厅".to_string(),
+                        ..WorldSnapshot::default()
+                    }),
+                    narration_text: Some("旧厅里的灯醒了。".to_string()),
+                    choices: vec![PendingProtagonistChoice {
+                        id: "choice-1".to_string(),
+                        option: ProtagonistOption {
+                            title: "推门".to_string(),
+                            action: "推门".to_string(),
+                            motivation_and_risk: "门后有风".to_string(),
+                        },
+                    }],
+                    committed_action: Some("推门".to_string()),
+                },
+                RoundHistoryEntry {
+                    round: 2,
+                    world_snapshot: Some(WorldSnapshot {
+                        round: 2,
+                        scene_title: "雾廊".to_string(),
+                        ..WorldSnapshot::default()
+                    }),
+                    narration_text: Some("雾廊把脚步声吞下。".to_string()),
+                    choices: vec![PendingProtagonistChoice {
+                        id: "choice-1".to_string(),
+                        option: ProtagonistOption {
+                            title: "点灯".to_string(),
+                            action: "点灯".to_string(),
+                            motivation_and_risk: "光会暴露位置".to_string(),
+                        },
+                    }],
+                    committed_action: Some("点灯".to_string()),
+                },
+                RoundHistoryEntry {
+                    round: 3,
+                    world_snapshot: Some(WorldSnapshot {
+                        round: 3,
+                        scene_title: "未完成的下一幕".to_string(),
+                        ..WorldSnapshot::default()
+                    }),
+                    narration_text: None,
+                    choices: Vec::new(),
+                    committed_action: None,
+                },
+            ],
+        };
+
+        let archive_view = completed_dialogue_archive_view(&history_log).unwrap();
+
+        assert_eq!(archive_view.phase, TurnStage::AwaitingPlayer);
+        assert_eq!(archive_view.turn_index, 2);
+        assert_eq!(archive_view.active_turn_id, 2);
+        assert_eq!(archive_view.world_snapshot.scene_title, "雾廊");
+        assert_eq!(archive_view.committed_action, "推门");
+        assert_eq!(archive_view.choices[0].option.action, "点灯");
+        assert_eq!(archive_view.history_log.rounds.len(), 2);
+        assert_eq!(archive_view.history_log.rounds[1].committed_action, None);
+    }
+
+    #[test]
+    fn non_stable_archive_view_rejects_history_without_completed_dialogue() {
+        let history_log = SessionHistoryLog {
+            rounds: vec![RoundHistoryEntry {
+                round: 1,
+                world_snapshot: Some(WorldSnapshot {
+                    round: 1,
+                    ..WorldSnapshot::default()
+                }),
+                narration_text: None,
+                choices: Vec::new(),
+                committed_action: None,
+            }],
+        };
+
+        assert_eq!(
+            completed_dialogue_archive_view(&history_log).err().unwrap(),
+            "当前会话还没有已完成的对话可用于创建存档"
+        );
+    }
 
     #[tokio::test]
     async fn keeps_profiles_isolated_across_sessions_in_one_world() {

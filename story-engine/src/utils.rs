@@ -41,6 +41,6 @@ where
         return Ok(parsed);
     }
 
-    let repaired = jsonrepair(cleaned).map_err(|err| format!("无法解析 JSON 响应: {}", err))?;
-    serde_json::from_str::<T>(&repaired).map_err(|_| format!("无法解析 JSON 响应: {}", cleaned))
+    let repaired = jsonrepair(cleaned).map_err(|err| format!("无法修复 JSON 响应: {}", err))?;
+    serde_json::from_str::<T>(&repaired).map_err(|err| format!("JSON 响应结构不符合预期: {}", err))
 }
