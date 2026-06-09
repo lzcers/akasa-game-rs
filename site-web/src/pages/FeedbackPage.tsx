@@ -181,8 +181,7 @@ export default function FeedbackPage() {
 
               <div className="game-card p-5 lg:p-6 bg-background/40">
                 <p className="text-sm text-foreground/85 leading-7 mb-4">
-                  如果你还想补充某段故事、某个角色，或一个想被记录回应的世界，
-                  可以随时继续写下新的回声。
+                  如果你还有更多想法或者建议，可以继续反馈。
                 </p>
                 <button
                   onClick={() => {
