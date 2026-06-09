@@ -20,6 +20,7 @@ use story_engine::utils::{build_chat_model, parse_json_response};
 use tokio::sync::broadcast;
 
 use crate::{
+    analytics::AnalyticsSummary,
     error::AppError,
     state::{AppState, LiveTaskUpdate},
 };
@@ -28,7 +29,8 @@ use super::dto::{
     AnalyticsBatchData, AnalyticsBatchRequest, ApiResponse, ControlGameSessionData,
     ControlGameSessionRequest, CreateGameSessionData, CreateGameSessionRequest,
     GameSessionWorldStateData, GenerateProfilesData, GenerateProfilesRequest, LoadArchiveRequest,
-    SaveExportData, SaveExportRequest, SessionPath, StorySummaryData,
+    SaveExportData, SaveExportRequest, SessionPath, StorySummaryData, SubmitFeedbackData,
+    SubmitFeedbackRequest,
 };
 
 type ApiResult<T> = Result<Json<ApiResponse<T>>, AppError>;
@@ -61,6 +63,12 @@ struct StreamHandshakeData {
 #[serde(rename_all = "camelCase")]
 pub struct StreamQuery {
     since: Option<u64>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsSummaryQuery {
+    range_hours: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -116,6 +124,25 @@ pub async fn record_analytics_events(
 ) -> ApiResult<AnalyticsBatchData> {
     let accepted = state.record_analytics_events(request).await?;
     Ok(Json(ApiResponse::ok(AnalyticsBatchData { accepted })))
+}
+
+pub async fn get_analytics_summary(
+    State(state): State<AppState>,
+    Query(query): Query<AnalyticsSummaryQuery>,
+) -> ApiResult<AnalyticsSummary> {
+    let summary = state
+        .analytics_summary(query.range_hours.unwrap_or(24))
+        .await?;
+    Ok(Json(ApiResponse::ok(summary)))
+}
+
+pub async fn submit_feedback(
+    State(state): State<AppState>,
+    Json(request): Json<SubmitFeedbackRequest>,
+) -> ApiResult<SubmitFeedbackData> {
+    let request = request.validate()?;
+    let submitted = state.send_feedback(request).await?;
+    Ok(Json(ApiResponse::ok(submitted)))
 }
 
 pub async fn save_export(

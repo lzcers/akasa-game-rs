@@ -7,13 +7,14 @@ use bevy_ecs::{
 
 use crate::{
     components::{
-        agent::{Agent, AgentOutputType, Applicator, PendingReasoning},
+        agent::{Agent, AgentRole, Applicator, PendingReasoning},
         flow::ApplicationCompleted,
         outcome::NarrationOutcome,
         session::StorySession,
         turn_flow::{TurnFlow, TurnStage},
     },
     engine::RuntimeDebugObserverResource,
+    prompts::world_prompt,
     resources::{
         agent_task::{AgentTaskManager, TaskStatus},
         protagonist_action::ProtagonistDecisionState,
@@ -37,13 +38,13 @@ pub fn narration_dispatch_system(
     {
         let prompt = format!(
             "{}\n",
-            world_snapshot.to_story_prompt(Some(decision_state.committed_action())),
+            world_prompt::story_prompt(world_snapshot, Some(decision_state.committed_action())),
         );
 
         for (entity, mut agent, _, _) in
             agents.iter_mut().filter(|(entity, agent, owner, outcome)| {
                 owner.parent() == session_entity
-                    && agent.output_type == AgentOutputType::Text
+                    && agent.role == AgentRole::Narrator
                     && agent_tasks.task_result(*entity).is_none()
                     && !outcome.is_some_and(|outcome| outcome.turn_id == flow.active_turn_id)
             })
@@ -67,7 +68,7 @@ pub fn narration_apply_system(
         .filter(|(_, _, flow)| flow.stage == TurnStage::Application)
     {
         for (entity, mut agent, _) in agents.iter_mut().filter(|(_, agent, owner)| {
-            owner.parent() == session_entity && agent.output_type == AgentOutputType::Text
+            owner.parent() == session_entity && agent.role == AgentRole::Narrator
         }) {
             let Some(result) = agent_tasks.task_result(entity).cloned() else {
                 continue;

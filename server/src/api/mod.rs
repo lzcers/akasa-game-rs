@@ -21,6 +21,11 @@ pub fn build_router(state: AppState) -> Router {
             "/api/analytics/events",
             post(handlers::record_analytics_events),
         )
+        .route("/api/feedback", post(handlers::submit_feedback))
+        .route(
+            "/internal/analytics/data",
+            get(handlers::get_analytics_summary),
+        )
         .route("/api/profiles/generate", post(handlers::generate_profiles))
         .route(
             "/api/game-sessions/create",

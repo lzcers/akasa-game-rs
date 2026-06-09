@@ -2,6 +2,8 @@ services:
   caddy:
     image: ${DOCKER_REGISTRY}/${DOCKER_NAMESPACE}/${DOCKER_IMAGE_PREFIX:-akashic}-caddy:${IMAGE_TAG:-latest}
     restart: unless-stopped
+    env_file:
+      - .env
     depends_on:
       - server
     ports:

@@ -7,12 +7,13 @@ use bevy_ecs::{
 
 use crate::{
     components::{
-        agent::{Agent, AgentOutputType, Applicator, PendingReasoning},
+        agent::{Agent, AgentRole, Applicator, PendingReasoning},
         flow::ApplicationCompleted,
         session::StorySession,
         turn_flow::{TurnFlow, TurnStage},
     },
     engine::RuntimeDebugObserverResource,
+    prompts::world_prompt,
     resources::{
         agent_task::{AgentTaskManager, TaskKind, TaskStatus},
         export::ExportState,
@@ -39,12 +40,15 @@ pub fn protagonist_dispatch_system(
             flow.stage == TurnStage::Application && !world_snapshot.is_ending
         })
     {
-        let prompt = world_snapshot.to_protagonist_prompt(Some(decision_state.committed_action()));
+        let prompt = world_prompt::protagonist_prompt(
+            world_snapshot,
+            Some(decision_state.committed_action()),
+        );
 
         for (entity, mut agent, _, _) in
             agents.iter_mut().filter(|(entity, agent, owner, outcome)| {
                 owner.parent() == session_entity
-                    && agent.output_type == AgentOutputType::Json
+                    && agent.role == AgentRole::Protagonist
                     && agent_tasks.task_result(*entity).is_none()
                     && !outcome.is_some_and(|outcome| outcome.turn_id == flow.active_turn_id)
             })
@@ -74,7 +78,7 @@ pub fn protagonist_apply_system(
         .filter(|(_, _, _, flow, _)| flow.stage == TurnStage::Application)
     {
         for (entity, mut agent, _) in agents.iter_mut().filter(|(_, agent, owner)| {
-            owner.parent() == session_entity && agent.output_type == AgentOutputType::Json
+            owner.parent() == session_entity && agent.role == AgentRole::Protagonist
         }) {
             let Some(result) = agent_tasks.task_result(entity).cloned() else {
                 continue;
@@ -140,5 +144,63 @@ pub fn protagonist_apply_system(
                 TaskStatus::Pending | TaskStatus::Running => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use agent::models::ChatModel;
+    use bevy_ecs::{hierarchy::ChildOf, prelude::*, schedule::Schedule};
+
+    use super::*;
+    use crate::components::agent::AgentOutputType;
+
+    #[test]
+    fn dispatch_uses_agent_role_instead_of_output_type() {
+        let mut world = World::new();
+        world.insert_resource(AgentTaskManager::new(ChatModel::new()));
+        let session = world
+            .spawn((
+                TurnFlow {
+                    turn_index: 0,
+                    active_turn_id: 1,
+                    stage: TurnStage::Application,
+                },
+                ProtagonistDecisionState::default(),
+                WorldSnapshot::default(),
+            ))
+            .id();
+        let json_narrator = world
+            .spawn((
+                Agent::new_with_role(
+                    AgentRole::Narrator,
+                    AgentOutputType::Json,
+                    "JsonNarrator",
+                    "narrate".to_string(),
+                ),
+                ChildOf(session),
+                Applicator,
+            ))
+            .id();
+        let text_protagonist = world
+            .spawn((
+                Agent::new_with_role(
+                    AgentRole::Protagonist,
+                    AgentOutputType::Text,
+                    "TextProtagonist",
+                    "choose".to_string(),
+                ),
+                ChildOf(session),
+                Applicator,
+            ))
+            .id();
+        let mut schedule = Schedule::default();
+        schedule.add_systems(protagonist_dispatch_system);
+
+        schedule.run(&mut world);
+        world.flush();
+
+        assert!(world.get::<PendingReasoning>(json_narrator).is_none());
+        assert!(world.get::<PendingReasoning>(text_protagonist).is_some());
     }
 }

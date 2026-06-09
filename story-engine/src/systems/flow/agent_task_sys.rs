@@ -7,7 +7,7 @@ use bevy_ecs::{
 
 use crate::{
     components::{
-        agent::{Agent, AgentOutputType, Applicator, PendingReasoning, Player, Simulator},
+        agent::{Agent, AgentRole, Applicator, PendingReasoning, Simulator},
         session::StorySession,
         turn_flow::TurnFlow,
     },
@@ -24,7 +24,6 @@ pub fn agent_task_system(
     mut agent_tasks: ResMut<AgentTaskManager>,
     pending_simulators: Query<(Entity, &Agent), (With<PendingReasoning>, With<Simulator>)>,
     pending_applicators: Query<(Entity, &Agent), (With<PendingReasoning>, With<Applicator>)>,
-    pending_players: Query<Entity, (With<PendingReasoning>, With<Player>)>,
     agent_owners: Query<&ChildOf>,
     sessions: Query<(&ExportState, &TurnFlow, &StorySession)>,
     debug_observer: Res<RuntimeDebugObserverResource>,
@@ -35,15 +34,15 @@ pub fn agent_task_system(
     }
 
     for (entity, agent) in pending_applicators.iter() {
-        let task_kind = match agent.output_type {
-            AgentOutputType::Text => TaskKind::Narration,
-            AgentOutputType::Json => TaskKind::ProtagonistAction,
+        let task_kind = match agent.role {
+            AgentRole::Narrator => TaskKind::Narration,
+            AgentRole::Protagonist => TaskKind::ProtagonistAction,
+            AgentRole::Simulator => {
+                commands.entity(entity).remove::<PendingReasoning>();
+                continue;
+            }
         };
         agent_tasks.spawn_task(entity, task_kind, &agent.context);
-        commands.entity(entity).remove::<PendingReasoning>();
-    }
-
-    for entity in pending_players.iter() {
         commands.entity(entity).remove::<PendingReasoning>();
     }
 

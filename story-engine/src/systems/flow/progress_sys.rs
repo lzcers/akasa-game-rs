@@ -6,7 +6,7 @@ use bevy_ecs::{
 };
 
 use crate::components::{
-    agent::{Agent, AgentOutputType, Applicator, Simulator},
+    agent::{Agent, AgentRole, Applicator, Simulator},
     flow::{ApplicationCompleted, FlowEnd, PlayerInputCompleted, SimulationCompleted},
     turn_flow::{TurnFlow, TurnStage},
 };
@@ -58,8 +58,7 @@ pub fn flow_progress_system(
                     .iter()
                     .filter(|(owner, agent)| {
                         owner.parent() == session_entity
-                            && (!world_snapshot.is_ending
-                                || agent.output_type == AgentOutputType::Text)
+                            && (!world_snapshot.is_ending || agent.role == AgentRole::Narrator)
                     })
                     .count();
                 let completed = completed_applicators
@@ -67,8 +66,7 @@ pub fn flow_progress_system(
                     .filter(|(owner, agent, completed)| {
                         owner.parent() == session_entity
                             && completed.turn_id == flow.active_turn_id
-                            && (!world_snapshot.is_ending
-                                || agent.output_type == AgentOutputType::Text)
+                            && (!world_snapshot.is_ending || agent.role == AgentRole::Narrator)
                     })
                     .count();
 

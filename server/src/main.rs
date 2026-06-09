@@ -1,5 +1,6 @@
 mod analytics;
 mod api;
+mod email;
 mod error;
 mod state;
 

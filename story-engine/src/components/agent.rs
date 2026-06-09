@@ -11,6 +11,7 @@ use crate::prompts::{
 pub struct Agent {
     pub name: String,
     pub sys_prompt: String,
+    pub role: AgentRole,
     pub output_type: AgentOutputType,
     pub context: Context,
 }
@@ -21,9 +22,6 @@ pub struct Simulator;
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Applicator;
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Player;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentOutputType {
@@ -31,6 +29,14 @@ pub enum AgentOutputType {
     Json,
     #[serde(alias = "simulation_text", alias = "narration")]
     Text,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRole {
+    Simulator,
+    Narrator,
+    Protagonist,
 }
 
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
@@ -47,21 +53,36 @@ impl Agent {
             .replace("{protagonist_profile}", protagonist_profile)
             .replace("{key_story_beats}", key_story_beats)
             .replace("{output_schema}", OUTPUT_SCHEMA);
-        Self::new(AgentOutputType::Json, "FateWeaver", system_prompt)
+        Self::new_with_role(
+            AgentRole::Simulator,
+            AgentOutputType::Json,
+            "FateWeaver",
+            system_prompt,
+        )
     }
 
     pub fn new_upper_narrator(world_profile: &str, protagonist_profile: &str) -> Self {
         let system_prompt = UPPER_NARRATOR_PROMPT
             .replace("{world_profile}", world_profile)
             .replace("{protagonist_profile}", protagonist_profile);
-        Self::new(AgentOutputType::Text, "UpperNarrator", system_prompt)
+        Self::new_with_role(
+            AgentRole::Narrator,
+            AgentOutputType::Text,
+            "UpperNarrator",
+            system_prompt,
+        )
     }
 
     pub fn new_protagonist(world_profile: &str, protagonist_profile: &str) -> Self {
         let system_prompt = PROTAGONIST_PROMPT
             .replace("{world_profile}", world_profile)
             .replace("{protagonist_profile}", protagonist_profile);
-        Self::new(AgentOutputType::Json, "Protagonist", system_prompt)
+        Self::new_with_role(
+            AgentRole::Protagonist,
+            AgentOutputType::Json,
+            "Protagonist",
+            system_prompt,
+        )
     }
 
     pub fn from_context(
@@ -70,7 +91,18 @@ impl Agent {
         sys_prompt: impl Into<String>,
         context: Context,
     ) -> Self {
+        Self::from_context_with_role(AgentRole::Simulator, output_type, name, sys_prompt, context)
+    }
+
+    pub fn from_context_with_role(
+        role: AgentRole,
+        output_type: AgentOutputType,
+        name: impl Into<String>,
+        sys_prompt: impl Into<String>,
+        context: Context,
+    ) -> Self {
         Self {
+            role,
             output_type,
             name: name.into(),
             sys_prompt: sys_prompt.into(),
@@ -83,9 +115,19 @@ impl Agent {
         name: impl Into<String>,
         system_prompt: String,
     ) -> Self {
+        Self::new_with_role(AgentRole::Simulator, output_type, name, system_prompt)
+    }
+
+    pub fn new_with_role(
+        role: AgentRole,
+        output_type: AgentOutputType,
+        name: impl Into<String>,
+        system_prompt: String,
+    ) -> Self {
         let mut context = Context::new();
         context.add_message(Message::system(&system_prompt));
         Self {
+            role,
             output_type,
             name: name.into(),
             sys_prompt: system_prompt,

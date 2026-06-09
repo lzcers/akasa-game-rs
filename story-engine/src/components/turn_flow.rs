@@ -32,11 +32,6 @@ impl Default for TurnFlow {
 }
 
 impl TurnFlow {
-    pub fn reset(&mut self, next_turn_id: Option<u64>) {
-        self.stage = TurnStage::Idle;
-        self.active_turn_id = next_turn_id.unwrap_or_else(|| self.turn_index + 1);
-    }
-
     pub fn finish_turn(&mut self) {
         self.turn_index = self.active_turn_id.max(self.turn_index + 1);
         self.active_turn_id = self.turn_index;
@@ -61,6 +56,19 @@ impl TurnFlow {
             }
             _ => {}
         }
+    }
+}
+
+impl TurnStage {
+    pub const fn is_stable(self) -> bool {
+        matches!(
+            self,
+            TurnStage::Idle
+                | TurnStage::AwaitingPlayer
+                | TurnStage::TurnCompleted
+                | TurnStage::Ended
+                | TurnStage::Failed
+        )
     }
 }
 

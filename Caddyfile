@@ -5,9 +5,34 @@
 
 akasa.fun, www.akasa.fun {
     encode zstd gzip
-    root * /srv/site-web
-    try_files {path} /index.html
-    file_server
+
+    handle /internal/analytics/data* {
+        basic_auth {
+            zack {$AKASA_ANALYTICS_PASSWORD_HASH}
+        }
+
+        reverse_proxy server:3001
+    }
+
+    handle /analytics* {
+        basic_auth {
+            zack {$AKASA_ANALYTICS_PASSWORD_HASH}
+        }
+
+        root * /srv/site-web
+        try_files {path} /index.html
+        file_server
+    }
+
+    handle /api/* {
+        reverse_proxy server:3001
+    }
+
+    handle {
+        root * /srv/site-web
+        try_files {path} /index.html
+        file_server
+    }
 }
 
 game.akasa.fun {

@@ -42,10 +42,6 @@ impl ProtagonistDecisionState {
             .collect();
     }
 
-    pub fn clear_choices(&mut self) {
-        self.choices.clear();
-    }
-
     pub fn commit_action(&mut self, action: &str) -> String {
         let action = action.trim().to_string();
         self.choices.clear();
@@ -75,16 +71,6 @@ impl Default for ProtagonistDecisionState {
 pub struct ProtagonistOptions {
     #[serde(default)]
     pub options: Vec<ProtagonistOption>,
-}
-
-impl ProtagonistOptions {
-    pub fn first_action(&self) -> Option<&str> {
-        self.options.first().map(|option| option.action.as_str())
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.options.is_empty()
-    }
 }
 
 /// 单个可供玩家选择的主角行动。

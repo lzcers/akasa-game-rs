@@ -148,6 +148,12 @@ export default function Layout() {
             </div>
             <div className="flex flex-col gap-2 text-xs text-muted-foreground lg:items-end">
               <p>© 2026 阿卡夏工作室. 保留所有权利.</p>
+              <a
+                href="https://beian.miit.gov.cn/"
+                className="transition-colors hover:text-foreground"
+              >
+                浙ICP备2022004381号-2
+              </a>
               <div className="hidden lg:flex items-center gap-2 text-[11px] tracking-[0.28em] text-muted-foreground/60">
                 <span className="h-px w-10 bg-linear-to-r from-transparent to-border/80" />
               </div>

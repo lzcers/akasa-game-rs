@@ -4,6 +4,11 @@ import path from 'path'
 
 export default defineConfig({
   plugins: [react()],
+  server: {
+    proxy: {
+      '/api': 'http://localhost:3001',
+    },
+  },
   build: {
     target: ['es2020', 'safari15.4', 'ios15.4'],
     cssTarget: ['safari15.4', 'ios15.4'],

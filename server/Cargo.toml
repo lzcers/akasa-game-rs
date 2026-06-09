@@ -15,6 +15,11 @@ axum = "0.8.8"
 base64 = "0.22.1"
 chrono = { version = "0.4.42", default-features = false, features = ["clock"] }
 flate2 = "1.1.9"
+lettre = { version = "0.11.22", default-features = false, features = [
+    "builder",
+    "smtp-transport",
+    "tokio1-rustls-tls",
+] }
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 tower-http = { version = "0.6.8", features = ["cors", "trace"] }
 tracing = "0.1.44"

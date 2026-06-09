@@ -17,14 +17,15 @@ use tokio::sync::{Mutex, broadcast};
 use uuid::Uuid;
 
 use crate::{
-    analytics::AnalyticsRepository,
+    analytics::{AnalyticsRepository, AnalyticsSummary},
     api::archive,
     api::dto::{
         AnalyticsBatchRequest, ControlGameSessionData, ControlGameSessionRequest,
         CreateGameSessionData, CreateGameSessionRequest, GameSessionControlCommand,
         GameSessionWorldStateData, RoundHistoryData, SaveExportData, SessionActionInput,
-        WorldStateData,
+        SubmitFeedbackData, ValidatedFeedbackRequest, WorldStateData,
     },
+    email::{FeedbackEmail, FeedbackMailer},
     error::AppError,
 };
 
@@ -32,6 +33,7 @@ use crate::{
 pub struct AppState {
     sessions: Arc<Mutex<HashMap<String, SessionRecord>>>,
     analytics_repo: AnalyticsRepository,
+    feedback_mailer: FeedbackMailer,
     engine: AkashicEngine,
 }
 
@@ -69,6 +71,7 @@ impl AppState {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             analytics_repo: AnalyticsRepository::new(analytics_events_path),
+            feedback_mailer: FeedbackMailer::from_env(),
             engine: AkashicEngine::new_with_debug_observer(local_debug.then(|| {
                 Arc::new(LocalDebugObserver::for_workspace_root()) as Arc<dyn RuntimeDebugObserver>
             })),
@@ -93,6 +96,35 @@ impl AppState {
             .append_events(&request.events)
             .await
             .map_err(|err| AppError::internal(format!("写入埋点事件失败：{err:#}")))
+    }
+
+    pub async fn analytics_summary(&self, range_hours: u32) -> Result<AnalyticsSummary, AppError> {
+        self.analytics_repo
+            .summary(range_hours)
+            .await
+            .map_err(|err| AppError::internal(format!("读取埋点指标失败：{err:#}")))
+    }
+
+    pub async fn send_feedback(
+        &self,
+        request: ValidatedFeedbackRequest,
+    ) -> Result<SubmitFeedbackData, AppError> {
+        let feedback_id = format!("feedback-{}", Uuid::new_v4().simple());
+        let submitted_at = now_string();
+
+        self.feedback_mailer
+            .send_feedback(FeedbackEmail {
+                feedback_id: &feedback_id,
+                submitted_at: &submitted_at,
+                request: &request,
+            })
+            .await
+            .map_err(|err| AppError::internal(format!("发送反馈邮件失败：{err:#}")))?;
+
+        Ok(SubmitFeedbackData {
+            feedback_id,
+            accepted: true,
+        })
     }
 
     // 创建会话
