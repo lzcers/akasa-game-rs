@@ -15,13 +15,13 @@ export default function Layout() {
   return (
     <div className="min-h-screen bg-background">
       {/* 背景微光 */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
+      <div className="hidden sm:block fixed inset-0 pointer-events-none overflow-hidden">
         <div className="absolute top-0 left-1/3 w-[600px] h-[400px] bg-accent/3 rounded-full blur-[150px]" />
         <div className="absolute bottom-1/4 right-1/4 w-[500px] h-[300px] bg-primary/3 rounded-full blur-[150px]" />
       </div>
 
       {/* 导航栏 */}
-      <header className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
+      <header className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 bg-background/95 md:bg-background/80 md:backdrop-blur-xl">
         <nav className="max-w-6xl mx-auto px-6 h-14 lg:h-16 flex items-center justify-between gap-6">
           <Link to="/" className="flex items-center gap-2">
             <img
@@ -93,7 +93,7 @@ export default function Layout() {
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }}
-              className="md:hidden border-t border-border/50 bg-background/95 backdrop-blur-xl"
+              className="md:hidden border-t border-border/50 bg-background"
             >
               <div className="px-6 py-3 space-y-1">
                 {navItems.map((item) => (

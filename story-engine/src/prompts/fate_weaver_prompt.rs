@@ -77,6 +77,7 @@ pub static FATE_BASE_SYSTEM_PROMPT: &str = r#"
   1. 主角已实现长期目标，核心冲突已解决，关键节点骨架中的终局场景已经完成。
   2. 主角死亡，或进入无法逆转的状态（如永久封印、精神彻底崩溃），故事已无继续推进的可能。
   3. 主要情感弧线已经闭合，继续推演只会稀释戏剧张力。
+  4. 接下来不需要主角做出行动和选择了。
 - 如果判定为最终轮，将 `is_ending` 设为 `true`，并根据情绪基调选择 `ending_type`, ending_type 可以是一个简短的字符串，描述结局的情绪基调或主题，如 "triumph"、"tragedy"、"bittersweet"、"open"，也可以是更具体的组合，如 "sacrifice"、"redemption"、"hope_amid_loss" 等。
   - 若现有词汇不足以涵盖，你可以自创一个最贴切的词或短语。
   - `"triumph"`：主角成功达成目标，代价可接受或虽沉重但精神胜利。

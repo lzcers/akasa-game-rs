@@ -34,11 +34,14 @@ export default function DynamicBackground() {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    let animationId: number
+    let animationId = 0
     let particles: Particle[] = []
     let orbs: FloatingOrb[] = []
     let mouseX = 0
     let mouseY = 0
+    let resizeFrame: number | null = null
+    const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
     const resize = () => {
       canvas.width = window.innerWidth
@@ -47,8 +50,10 @@ export default function DynamicBackground() {
 
     const initParticles = () => {
       particles = []
-      // 增加粒子数量到 150-200
-      const count = Math.min(200, Math.max(150, Math.floor((canvas.width * canvas.height) / 8000)))
+      const minCount = isCoarsePointer ? 45 : 150
+      const maxCount = isCoarsePointer ? 80 : 200
+      const density = isCoarsePointer ? 18000 : 8000
+      const count = Math.min(maxCount, Math.max(minCount, Math.floor((canvas.width * canvas.height) / density)))
 
       for (let i = 0; i < count; i++) {
         // 金色: rgb(212, 165, 116) 或 青色: rgb(74, 158, 173)
@@ -214,21 +219,35 @@ export default function DynamicBackground() {
       mouseY = e.clientY
     }
 
+    const handleResize = () => {
+      if (resizeFrame !== null) return
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = null
+        resize()
+        initParticles()
+        initOrbs()
+      })
+    }
+
     resize()
     initParticles()
     initOrbs()
-    animate()
+    if (prefersReducedMotion) {
+      drawLightBeams()
+      drawOrbs()
+      drawGrid()
+      drawParticles()
+    } else {
+      animate()
+    }
 
-    window.addEventListener('resize', () => {
-      resize()
-      initParticles()
-      initOrbs()
-    })
+    window.addEventListener('resize', handleResize)
     window.addEventListener('mousemove', handleMouseMove)
 
     return () => {
       cancelAnimationFrame(animationId)
-      window.removeEventListener('resize', resize)
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
+      window.removeEventListener('resize', handleResize)
       window.removeEventListener('mousemove', handleMouseMove)
     }
   }, [])

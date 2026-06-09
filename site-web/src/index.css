@@ -5,57 +5,130 @@
 
 :root {
   /* 游戏配色 - 深邃藏青与金色 */
+  --background: #080b12;
   --background: oklch(0.06 0.02 250);
+  --foreground: #ece5d4;
   --foreground: oklch(0.92 0.02 85);
+  --card: #101622;
   --card: oklch(0.10 0.025 250);
+  --card-foreground: #ece5d4;
   --card-foreground: oklch(0.92 0.02 85);
+  --popover: #0c111b;
   --popover: oklch(0.08 0.02 250);
+  --popover-foreground: #ece5d4;
   --popover-foreground: oklch(0.92 0.02 85);
   /* 金色/米色主色调 */
+  --primary: #d6bb73;
   --primary: oklch(0.82 0.10 85);
+  --primary-foreground: #161b24;
   --primary-foreground: oklch(0.12 0.02 250);
   /* 深色次要色 */
+  --secondary: #171d2b;
   --secondary: oklch(0.14 0.025 250);
+  --secondary-foreground: #d8d0bd;
   --secondary-foreground: oklch(0.85 0.02 85);
+  --muted: #151a25;
   --muted: oklch(0.12 0.02 250);
+  --muted-foreground: #858b96;
   --muted-foreground: oklch(0.60 0.02 250);
   /* 青绿色强调色 */
+  --accent: #42b6ba;
   --accent: oklch(0.70 0.12 185);
+  --accent-foreground: #161b24;
   --accent-foreground: oklch(0.12 0.02 250);
+  --destructive: #c44c2f;
   --destructive: oklch(0.55 0.20 25);
+  --destructive-foreground: #f4efe2;
   --destructive-foreground: oklch(0.95 0.01 60);
   /* 蓝色调边框 */
+  --border: #293349;
   --border: oklch(0.22 0.04 250);
+  --input: #171d2b;
   --input: oklch(0.14 0.025 250);
+  --ring: #4aa9a9;
   --ring: oklch(0.65 0.08 185);
+  --chart-1: #d6bb73;
   --chart-1: oklch(0.82 0.10 85);
+  --chart-2: #42b6ba;
   --chart-2: oklch(0.70 0.12 185);
+  --chart-3: #7d65b8;
   --chart-3: oklch(0.55 0.10 270);
+  --chart-4: #d98a4a;
   --chart-4: oklch(0.70 0.14 30);
+  --chart-5: #9967bf;
   --chart-5: oklch(0.60 0.08 300);
   --radius: 0.875rem;
 }
 
 .dark {
+  --background: #080b12;
   --background: oklch(0.06 0.02 250);
+  --foreground: #ece5d4;
   --foreground: oklch(0.92 0.02 85);
+  --card: #101622;
   --card: oklch(0.10 0.025 250);
+  --card-foreground: #ece5d4;
   --card-foreground: oklch(0.92 0.02 85);
+  --popover: #0c111b;
   --popover: oklch(0.08 0.02 250);
+  --popover-foreground: #ece5d4;
   --popover-foreground: oklch(0.92 0.02 85);
+  --primary: #d6bb73;
   --primary: oklch(0.82 0.10 85);
+  --primary-foreground: #161b24;
   --primary-foreground: oklch(0.12 0.02 250);
+  --secondary: #171d2b;
   --secondary: oklch(0.14 0.025 250);
+  --secondary-foreground: #d8d0bd;
   --secondary-foreground: oklch(0.85 0.02 85);
+  --muted: #151a25;
   --muted: oklch(0.12 0.02 250);
+  --muted-foreground: #858b96;
   --muted-foreground: oklch(0.60 0.02 250);
+  --accent: #42b6ba;
   --accent: oklch(0.70 0.12 185);
+  --accent-foreground: #161b24;
   --accent-foreground: oklch(0.12 0.02 250);
+  --destructive: #c44c2f;
   --destructive: oklch(0.55 0.20 25);
+  --destructive-foreground: #f4efe2;
   --destructive-foreground: oklch(0.95 0.01 60);
+  --border: #293349;
   --border: oklch(0.22 0.04 250);
+  --input: #171d2b;
   --input: oklch(0.14 0.025 250);
+  --ring: #4aa9a9;
   --ring: oklch(0.65 0.08 185);
+}
+
+@supports not (color: oklch(0 0 0)) {
+  :root,
+  .dark {
+    --background: #080b12;
+    --foreground: #ece5d4;
+    --card: #101622;
+    --card-foreground: #ece5d4;
+    --popover: #0c111b;
+    --popover-foreground: #ece5d4;
+    --primary: #d6bb73;
+    --primary-foreground: #161b24;
+    --secondary: #171d2b;
+    --secondary-foreground: #d8d0bd;
+    --muted: #151a25;
+    --muted-foreground: #858b96;
+    --accent: #42b6ba;
+    --accent-foreground: #161b24;
+    --destructive: #c44c2f;
+    --destructive-foreground: #f4efe2;
+    --border: #293349;
+    --input: #171d2b;
+    --ring: #4aa9a9;
+    --chart-1: #d6bb73;
+    --chart-2: #42b6ba;
+    --chart-3: #7d65b8;
+    --chart-4: #d98a4a;
+    --chart-5: #9967bf;
+  }
 }
 
 @theme inline {
@@ -110,7 +183,9 @@
 /* 游戏风格卡片边框发光效果 */
 .game-card {
   position: relative;
+  background: #101622;
   background: oklch(0.10 0.025 250);
+  border: 1px solid #303a52;
   border: 1px solid oklch(0.25 0.05 250);
   border-radius: var(--radius);
 }
@@ -121,6 +196,7 @@
   inset: -1px;
   border-radius: inherit;
   padding: 1px;
+  background: linear-gradient(135deg, #3c4863 0%, #252d40 50%, #3c4863 100%);
   background: linear-gradient(135deg,
       oklch(0.35 0.06 250) 0%,
       oklch(0.20 0.04 250) 50%,
@@ -134,9 +210,11 @@
 
 /* 游戏风格按钮 */
 .game-btn-primary {
+  background: linear-gradient(180deg, #dbc076 0%, #c9a95f 100%);
   background: linear-gradient(180deg,
       oklch(0.85 0.10 85) 0%,
       oklch(0.78 0.10 85) 100%);
+  color: #161b24;
   color: oklch(0.12 0.02 250);
   font-weight: 500;
   border-radius: var(--radius);
@@ -144,14 +222,18 @@
 }
 
 .game-btn-primary:hover {
+  background: linear-gradient(180deg, #e5ca7d 0%, #d6bb73 100%);
   background: linear-gradient(180deg,
       oklch(0.88 0.10 85) 0%,
       oklch(0.82 0.10 85) 100%);
 }
 
 .game-btn-secondary {
+  background: #171d2b;
   background: oklch(0.14 0.025 250);
+  color: #b6af9e;
   color: oklch(0.70 0.02 85);
+  border: 1px solid #3a465e;
   border: 1px solid oklch(0.30 0.05 250);
   font-weight: 500;
   border-radius: var(--radius);
@@ -159,7 +241,9 @@
 }
 
 .game-btn-secondary:hover {
+  border-color: #52607b;
   border-color: oklch(0.40 0.06 250);
+  color: #d8d0bd;
   color: oklch(0.85 0.02 85);
 }
 
@@ -169,21 +253,26 @@
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 1rem;
+  background: #151b28;
   background: oklch(0.12 0.025 250);
+  border: 1px solid #30384e;
   border: 1px solid oklch(0.25 0.04 250);
   border-radius: 9999px;
   font-size: 0.875rem;
+  color: #c2b9a7;
   color: oklch(0.75 0.02 85);
 }
 
 /* 进度条青绿色 */
 .game-progress {
+  background: #151b28;
   background: oklch(0.12 0.025 250);
   border-radius: 9999px;
   overflow: hidden;
 }
 
 .game-progress-bar {
+  background: linear-gradient(90deg, #37a6aa 0%, #56bec0 100%);
   background: linear-gradient(90deg,
       oklch(0.65 0.12 185) 0%,
       oklch(0.75 0.12 185) 100%);
@@ -198,32 +287,40 @@
 }
 
 ::-webkit-scrollbar-track {
+  background: #0c111b;
   background: oklch(0.08 0.02 250);
 }
 
 ::-webkit-scrollbar-thumb {
+  background: #232b3a;
   background: oklch(0.20 0.03 250);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
+  background: #343d50;
   background: oklch(0.28 0.04 250);
 }
 
 /* 选中文本样式 */
 ::selection {
+  background: rgba(214, 187, 115, 0.3);
   background: oklch(0.82 0.10 85 / 0.3);
+  color: #f4efe2;
   color: oklch(0.95 0.02 85);
 }
 
 /* 文字发光效果 */
 .text-glow {
+  text-shadow: 0 0 20px rgba(214, 187, 115, 0.3);
   text-shadow: 0 0 20px oklch(0.82 0.10 85 / 0.3);
 }
 
 /* 加载动画圆环 */
 .loading-ring {
+  border: 2px solid #232b3a;
   border: 2px solid oklch(0.20 0.03 250);
+  border-top-color: #42b6ba;
   border-top-color: oklch(0.70 0.12 185);
   border-radius: 50%;
   animation: spin 1s linear infinite;
@@ -232,5 +329,59 @@
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@supports not (color: oklch(0 0 0)) {
+  .game-card {
+    background: #101622;
+    border-color: #303a52;
+  }
+
+  .game-card::before {
+    background: linear-gradient(135deg, #3c4863 0%, #252d40 50%, #3c4863 100%);
+  }
+
+  .game-btn-primary {
+    background: linear-gradient(180deg, #dbc076 0%, #c9a95f 100%);
+    color: #161b24;
+  }
+
+  .game-btn-primary:hover {
+    background: linear-gradient(180deg, #e5ca7d 0%, #d6bb73 100%);
+  }
+
+  .game-btn-secondary {
+    background: #171d2b;
+    color: #b6af9e;
+    border-color: #3a465e;
+  }
+
+  .game-btn-secondary:hover {
+    color: #d8d0bd;
+    border-color: #52607b;
+  }
+
+  .game-chip,
+  .game-progress {
+    background: #151b28;
+    border-color: #30384e;
+  }
+
+  .game-chip {
+    color: #c2b9a7;
+  }
+
+  .game-progress-bar {
+    background: linear-gradient(90deg, #37a6aa 0%, #56bec0 100%);
+  }
+
+  .text-glow {
+    text-shadow: 0 0 20px rgba(214, 187, 115, 0.3);
+  }
+
+  .loading-ring {
+    border-color: #232b3a;
+    border-top-color: #42b6ba;
   }
 }

@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  BookOpenText,
   Crown,
   Flame,
   Orbit,
@@ -16,8 +17,9 @@ import {
   SectionCard,
   StoryFrame,
 } from '../components/AkashicUI';
-import { appRoutes } from '../lib/appRoutes';
+import { appRoutes, routeWithStoryReviewSession } from '../lib/appRoutes';
 import { track } from '../lib/analytics';
+import { suppressSessionRestore } from '../lib/sessionRestore';
 import { useGameInternalStore } from '../store/gameStore';
 import { useGameUIStore } from '../store/gameUIStore';
 
@@ -127,6 +129,7 @@ const EndingPage: React.FC = () => {
     resetGame: state.resetGame,
   })));
   const roundStates = useGameInternalStore((state) => state.roundStates);
+  const sessionId = useGameInternalStore((state) => state.sessionId);
   const presentation = endingPresentation(stateView?.endingType ?? null);
   const Icon = presentation.icon;
   const lastRound = useMemo(() => (
@@ -155,8 +158,17 @@ const EndingPage: React.FC = () => {
   };
 
   const handleBackToLobby = () => {
+    suppressSessionRestore(sessionId);
+    navigate(appRoutes.lobby, { replace: true });
     resetGame();
-    navigate(appRoutes.lobby);
+  };
+
+  const handleReviewStory = () => {
+    if (!sessionId) {
+      return;
+    }
+
+    navigate(routeWithStoryReviewSession(appRoutes.gameplay, sessionId));
   };
 
   return (
@@ -226,6 +238,10 @@ const EndingPage: React.FC = () => {
             <PrimaryButton onClick={() => void handleSave()} disabled={isLoading} className="min-w-44">
               {isLoading ? '封存终章中...' : '封存这段终章'}
             </PrimaryButton>
+            <SecondaryButton onClick={handleReviewStory} disabled={isLoading || !sessionId} className="min-w-44 gap-2">
+              <BookOpenText className="h-4 w-4" />
+              阅读全部文本
+            </SecondaryButton>
             <SecondaryButton onClick={handleBackToLobby} disabled={isLoading} className="min-w-44">
               回到回响厅
             </SecondaryButton>

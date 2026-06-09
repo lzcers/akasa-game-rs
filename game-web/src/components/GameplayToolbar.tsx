@@ -5,6 +5,7 @@ import StoryShareCard from './StoryShareCard';
 import { generateGameSessionStorySummary } from '../lib/api';
 
 interface GameplayToolbarProps {
+  isReadOnly?: boolean;
   activeObsession: boolean;
   isObsessionToggleDisabled: boolean;
   obsessionPoints: number;
@@ -21,6 +22,7 @@ interface GameplayToolbarProps {
 }
 
 const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
+  isReadOnly = false,
   activeObsession,
   isObsessionToggleDisabled,
   obsessionPoints,
@@ -105,28 +107,32 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
   return (
     <>
       <div className="game-opts inset-x-0 rounded-full border border-[rgba(116,103,80,0.4)] bg-[rgba(8,14,26,0.82)] px-2 py-2 backdrop-blur-md">
-        <div className="relative flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <SecondaryButton
-              onClick={onToggleObsession}
-              className={`min-h-0 gap-1.5 px-2.5 py-1.5 text-[0.72rem] leading-4 sm:text-xs ${activeObsession ? 'border-red-300/50 bg-red-950/25 text-red-100' : ''}`}
-              disabled={isObsessionToggleDisabled}
-            >
-              <Flame className={`h-3.5 w-3.5 ${activeObsession ? 'animate-pulse' : ''}`} />
-              执念
-            </SecondaryButton>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1 text-[0.72rem] leading-4 text-[#d9cbb1] sm:text-xs">
-              <Flame className="h-3.5 w-3.5" />
-              <span>{obsessionPoints}</span>
-            </span>
-            <span className="text-[0.72rem] leading-4 text-[#8f98ab] sm:text-xs">|</span>
-            <span className="inline-flex items-center gap-1 text-[0.72rem] leading-4 text-[#d9cbb1] sm:text-xs">
-              <Eye className="h-3.5 w-3.5" />
-              <span>{`${intuitionPoints}/2`}</span>
-            </span>
-          </div>
+        <div className={`relative flex items-center gap-2 ${isReadOnly ? 'justify-end' : 'justify-between'}`}>
+          {!isReadOnly ? (
+            <>
+              <div className="flex items-center gap-2">
+                <SecondaryButton
+                  onClick={onToggleObsession}
+                  className={`min-h-0 gap-1.5 px-2.5 py-1.5 text-[0.72rem] leading-4 sm:text-xs ${activeObsession ? 'border-red-300/50 bg-red-950/25 text-red-100' : ''}`}
+                  disabled={isObsessionToggleDisabled}
+                >
+                  <Flame className={`h-3.5 w-3.5 ${activeObsession ? 'animate-pulse' : ''}`} />
+                  执念
+                </SecondaryButton>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1 text-[0.72rem] leading-4 text-[#d9cbb1] sm:text-xs">
+                  <Flame className="h-3.5 w-3.5" />
+                  <span>{obsessionPoints}</span>
+                </span>
+                <span className="text-[0.72rem] leading-4 text-[#8f98ab] sm:text-xs">|</span>
+                <span className="inline-flex items-center gap-1 text-[0.72rem] leading-4 text-[#d9cbb1] sm:text-xs">
+                  <Eye className="h-3.5 w-3.5" />
+                  <span>{`${intuitionPoints}/2`}</span>
+                </span>
+              </div>
+            </>
+          ) : null}
           <div className="relative">
             <SecondaryButton
               type="button"

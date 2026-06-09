@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { Library, Play, TriangleAlert } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -12,12 +12,17 @@ import {
 } from "../components/AkashicUI";
 import { appRoutes } from "../lib/appRoutes";
 import { useGameUIStore } from "../store/gameUIStore";
+import { clearSuppressedSessionRestore } from "../lib/sessionRestore";
 
 const LobbyPage: React.FC = () => {
   const navigate = useNavigate();
   const resetGame = useGameUIStore((state) => state.resetGame);
   const isLoading = useGameUIStore((state) => state.isLoading);
   const error = useGameUIStore((state) => state.error);
+
+  useEffect(() => {
+    clearSuppressedSessionRestore();
+  }, []);
 
   const handleStart = () => {
     resetGame();

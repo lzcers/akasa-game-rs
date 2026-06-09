@@ -24,7 +24,7 @@ import {
   upsertStoredSaveSlot,
   writeStoredSaveArchive,
 } from '../lib/saveSlots';
-import { appRoutes, routeWithSession } from '../lib/appRoutes';
+import { appRoutes, isStoryReviewSearch, routeWithSession } from '../lib/appRoutes';
 import { navigateTo } from '../lib/navigation';
 import {
   getAnalyticsSourceSessionId,
@@ -149,6 +149,7 @@ let activeCloneRequest: {
   sourceSessionId: string;
   promise: Promise<{ sessionId: string; isEnding: boolean }>;
 } | null = null;
+let endingSnapshotSyncTimer: number | null = null;
 let startupFlowRunId = 0;
 
 const MIN_GENERATING_PAGE_MS = 1200;
@@ -179,6 +180,10 @@ function closeActiveSessionStream() {
   activeStreamTaskRounds = new Map();
   bootstrappingSessionId = null;
   restoringSessionId = null;
+  if (endingSnapshotSyncTimer !== null) {
+    window.clearTimeout(endingSnapshotSyncTimer);
+    endingSnapshotSyncTimer = null;
+  }
 }
 
 function clearStartupStageTimer() {
@@ -297,6 +302,12 @@ function connectSessionStream(sessionId: string) {
         }
         const nextTask = applyTaskUpdate(activeStreamTasks, event);
         applyStreamTaskToStores(nextTask, activeStreamTaskRounds.get(event.entity));
+        if (event.kind === 'narration' && event.status === 'done') {
+          scheduleEndingSnapshotSync(sessionId);
+        }
+        if (event.status === 'error') {
+          scheduleEndingSnapshotSync(sessionId);
+        }
       },
       onError: () => {
         if (activeStreamSessionId !== sessionId) {
@@ -309,6 +320,50 @@ function connectSessionStream(sessionId: string) {
     },
     lastStreamEventId,
   );
+}
+
+function scheduleEndingSnapshotSync(sessionId: string) {
+  if (endingSnapshotSyncTimer !== null) {
+    window.clearTimeout(endingSnapshotSyncTimer);
+  }
+  endingSnapshotSyncTimer = window.setTimeout(() => {
+    endingSnapshotSyncTimer = null;
+    void syncActiveSessionSnapshot(sessionId);
+  }, 120);
+}
+
+async function syncActiveSessionSnapshot(sessionId: string) {
+  if (activeStreamSessionId !== sessionId) {
+    return;
+  }
+
+  try {
+    const session = await getGameSession(sessionId);
+    if (activeStreamSessionId !== sessionId) {
+      return;
+    }
+
+    useGameUIStore.setState({
+      stateView: stateViewFromSession(session),
+      isLoading: false,
+      error: session.phase === 'failed' ? '故事推进失败，请稍后重试。' : null,
+    });
+    useGameInternalStore.setState(internalStateFromSession(session));
+
+    const isReviewingEndedStory = window.location.pathname === appRoutes.gameplay
+      && isStoryReviewSearch(window.location.search);
+    if (session.phase === 'ended' && !isReviewingEndedStory) {
+      navigateTo(routeWithSession(appRoutes.ending, session.sessionId), { replace: true });
+    }
+  } catch (error) {
+    if (activeStreamSessionId !== sessionId) {
+      return;
+    }
+    useGameUIStore.setState({
+      isLoading: false,
+      error: error instanceof Error ? error.message : '同步故事状态失败。',
+    });
+  }
 }
 
 function applyStreamTaskToStores(task: TaskView, boundRound?: number | null) {

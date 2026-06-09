@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useGameInternalStore } from '../store/gameStore';
 import { useGameUIStore } from '../store/gameUIStore';
 import { useGameValueStore } from '../store/gameValueStore';
@@ -13,8 +13,9 @@ import ChoicePanel from '../components/ChoicePanel';
 import GameplayToolbar from '../components/GameplayToolbar';
 import NarrationPanel from '../components/NarrationPanel';
 import type { NarrationRoundEntry } from '../components/gameplayTypes';
-import { appRoutes, routeWithClonedSession } from '../lib/appRoutes';
+import { appRoutes, isStoryReviewSearch, routeWithClonedSession } from '../lib/appRoutes';
 import { track } from '../lib/analytics';
+import { suppressSessionRestore } from '../lib/sessionRestore';
 import type { Choice } from '../lib/api';
 
 const EMPTY_BROADCAST_ITEMS: string[] = [];
@@ -22,12 +23,14 @@ const AUTO_CHOICE_STORAGE_KEY = 'akasa:auto-choice-enabled';
 
 const GameplayPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const {
     phase,
     turnIndex,
     currentScene,
     latestBroadcastItems,
     latestBroadcastSummary,
+    isEnding,
     isLoading,
     error,
     skipRestoredNarrationAnimation,
@@ -37,6 +40,7 @@ const GameplayPage: React.FC = () => {
     currentScene: state.stateView?.currentScene ?? '',
     latestBroadcastItems: state.stateView?.latestBroadcastItems ?? EMPTY_BROADCAST_ITEMS,
     latestBroadcastSummary: state.stateView?.latestBroadcastSummary ?? '',
+    isEnding: state.stateView?.isEnding ?? false,
     isLoading: state.isLoading,
     error: state.error,
     skipRestoredNarrationAnimation: state.skipRestoredNarrationAnimation,
@@ -90,6 +94,7 @@ const GameplayPage: React.FC = () => {
       .sort((left, right) => left.round - right.round)
   ), [roundStates]);
   const activeRoundState = roundStates[currentRound];
+  const isEndingReviewMode = isStoryReviewSearch(location.search) && (phase === 'ended' || isEnding);
   const hasCurrentRoundControls = roundControls.round === currentRound;
   const activeObsession = hasCurrentRoundControls ? roundControls.activeObsession : false;
   const obsessionInput = hasCurrentRoundControls ? roundControls.obsessionInput : '';
@@ -104,11 +109,12 @@ const GameplayPage: React.FC = () => {
   const shouldType = Boolean(activeRoundState?.isAwaitingNarration) || isNarrationStreaming;
   const typingKey = `${currentRound}:${activeRoundState?.isAwaitingNarration ? '1' : '0'}:${activeRoundState?.narrationText ?? ''}`;
   const isTyping = shouldType && completedTypingKey !== typingKey;
-  const isChoiceInteractionDisabled = isTyping || isLoading;
+  const isChoiceInteractionDisabled = isEndingReviewMode || isTyping || isLoading;
   const canContinueWithoutChoice = phase === 'awaiting_player'
     && activeRoundState?.choicesStatus === 'ready'
     && currentRoundChoices.length === 0
-    && !isNarrationStreaming;
+    && !isNarrationStreaming
+    && !isEndingReviewMode;
   const isObsessionToggleDisabled = isChoiceInteractionDisabled || !hasChoices || obsessionPoints <= 0;
   const isObsessionSubmitDisabled = isChoiceInteractionDisabled || obsessionInput.trim().length === 0;
   const latestCompletedNarration = useMemo(() => (
@@ -281,7 +287,7 @@ const GameplayPage: React.FC = () => {
   }, [currentRound, readErrorMessage, submitChoice]);
 
   useEffect(() => {
-    if (!autoChoiceEnabled) {
+    if (!autoChoiceEnabled || isEndingReviewMode) {
       autoChoiceKeyRef.current = null;
       return undefined;
     }
@@ -320,6 +326,7 @@ const GameplayPage: React.FC = () => {
     handleChoiceClick,
     hasChoices,
     isChoiceInteractionDisabled,
+    isEndingReviewMode,
     sessionId,
   ]);
 
@@ -373,6 +380,7 @@ const GameplayPage: React.FC = () => {
             currentScene={currentScene}
             isLoading={isLoading}
             broadcastMessages={broadcastMessages}
+            statusLabel={isEndingReviewMode ? '命运完结' : undefined}
           />
 
           <div className="flex min-h-0 flex-1 flex-col gap-3">
@@ -380,41 +388,44 @@ const GameplayPage: React.FC = () => {
               narrationHistory={narrationHistory}
               currentRound={currentRound}
               isAwaitingNarration={Boolean(activeRoundState?.isAwaitingNarration)}
-              skipRestoredNarrationAnimation={skipRestoredNarrationAnimation}
+              skipRestoredNarrationAnimation={skipRestoredNarrationAnimation || isEndingReviewMode}
               onTypewriterComplete={handleTypewriterComplete}
             />
             <div className="min-h-5">
               {statusMessage ? <p className="text-xs text-[#d9cbb1] sm:text-sm">{statusMessage}</p> : null}
             </div>
             <div className="mt-auto flex touch-pan-y flex-col gap-2">
-              <ChoicePanel
-                hasChoices={hasChoices}
-                canContinue={canContinueWithoutChoice}
-                choices={currentRoundChoices}
-                previews={previews}
-                remainingIntuitionPoints={intuitionPoints}
-                activeObsession={activeObsession}
-                obsessionInput={obsessionInput}
-                autoChoiceEnabled={autoChoiceEnabled}
-                showAutoChoiceToggle={import.meta.env.DEV}
-                isChoiceInteractionDisabled={isChoiceInteractionDisabled}
-                isObsessionSubmitDisabled={isObsessionSubmitDisabled}
-                onChoiceClick={handleChoiceClick}
-                onContinue={handleContinueClick}
-                onAutoChoiceToggle={setAutoChoiceEnabled}
-                onPreview={handlePreview}
-                onObsessionInputChange={(nextValue) => {
-                  setRoundControls((prev) => ({
-                    round: currentRound,
-                    activeObsession: prev.round === currentRound ? prev.activeObsession : false,
-                    obsessionInput: nextValue,
-                    previews: prev.round === currentRound ? prev.previews : {},
-                  }));
-                }}
-                onObsessionSubmit={handleObsessionSubmit}
-              />
+              {!isEndingReviewMode ? (
+                <ChoicePanel
+                  hasChoices={hasChoices}
+                  canContinue={canContinueWithoutChoice}
+                  choices={currentRoundChoices}
+                  previews={previews}
+                  remainingIntuitionPoints={intuitionPoints}
+                  activeObsession={activeObsession}
+                  obsessionInput={obsessionInput}
+                  autoChoiceEnabled={autoChoiceEnabled}
+                  showAutoChoiceToggle={import.meta.env.DEV}
+                  isChoiceInteractionDisabled={isChoiceInteractionDisabled}
+                  isObsessionSubmitDisabled={isObsessionSubmitDisabled}
+                  onChoiceClick={handleChoiceClick}
+                  onContinue={handleContinueClick}
+                  onAutoChoiceToggle={setAutoChoiceEnabled}
+                  onPreview={handlePreview}
+                  onObsessionInputChange={(nextValue) => {
+                    setRoundControls((prev) => ({
+                      round: currentRound,
+                      activeObsession: prev.round === currentRound ? prev.activeObsession : false,
+                      obsessionInput: nextValue,
+                      previews: prev.round === currentRound ? prev.previews : {},
+                    }));
+                  }}
+                  onObsessionSubmit={handleObsessionSubmit}
+                />
+              ) : null}
               <GameplayToolbar
-                activeObsession={activeObsession}
+                isReadOnly={isEndingReviewMode}
+                activeObsession={!isEndingReviewMode && activeObsession}
                 isObsessionToggleDisabled={isObsessionToggleDisabled}
                 obsessionPoints={obsessionPoints}
                 intuitionPoints={intuitionPoints}
@@ -425,6 +436,9 @@ const GameplayPage: React.FC = () => {
                 isArchiveActionDisabled={!canArchiveLatestCompletedRound}
                 archiveActionUnavailableReason={archiveActionUnavailableReason}
                 onToggleObsession={() => {
+                  if (isEndingReviewMode) {
+                    return;
+                  }
                   setRoundControls((prev) => ({
                     round: currentRound,
                     activeObsession: prev.round === currentRound ? !prev.activeObsession : true,
@@ -434,8 +448,9 @@ const GameplayPage: React.FC = () => {
                   setFeedback(null);
                 }}
                 onBackToLobby={() => {
+                  suppressSessionRestore(sessionId);
+                  navigate(appRoutes.lobby, { replace: true });
                   resetGame();
-                  navigate(appRoutes.lobby);
                 }}
                 onSave={handleSave}
               />

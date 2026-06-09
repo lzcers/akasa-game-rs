@@ -7,6 +7,7 @@ interface GameplayHeaderProps {
   currentScene: string;
   isLoading: boolean;
   broadcastMessages: string[];
+  statusLabel?: string;
 }
 
 const GameplayHeader: React.FC<GameplayHeaderProps> = ({
@@ -14,13 +15,15 @@ const GameplayHeader: React.FC<GameplayHeaderProps> = ({
   currentScene,
   isLoading,
   broadcastMessages,
+  statusLabel,
 }) => {
   const [broadcastCursor, setBroadcastCursor] = useState({ key: '', index: 0 });
   const [isBroadcastDragging, setIsBroadcastDragging] = useState(false);
   const broadcastSwipeStartRef = useRef<{ pointerId: number; clientX: number } | null>(null);
   const suppressBroadcastClickRef = useRef(false);
 
-  const isFatePlanningScene = isLoading && currentScene.includes('命运编织');
+  const isFatePlanningScene = !statusLabel && isLoading && currentScene.includes('命运编织');
+  const sceneStatusLabel = statusLabel ?? currentScene;
   const broadcastKey = broadcastMessages.join('||');
   const broadcastIndex = broadcastCursor.key === broadcastKey
     ? Math.min(broadcastCursor.index, Math.max(broadcastMessages.length - 1, 0))
@@ -122,11 +125,11 @@ const GameplayHeader: React.FC<GameplayHeaderProps> = ({
       <div className="flex flex-wrap gap-1 justify-between">
         <StatusPill icon={Clock3} className="px-2.5 py-1 text-[0.7rem] sm:text-xs">第 {currentRound} 轮</StatusPill>
         <StatusPill
-          icon={isFatePlanningScene ? Hourglass : null}
+          icon={statusLabel ? Sparkles : isFatePlanningScene ? Hourglass : null}
           iconClassName={isFatePlanningScene ? 'h-3 w-3 animate-spin' : undefined}
           className="px-2.5 py-1 text-[0.7rem] sm:text-xs"
         >
-          {currentScene}
+          {sceneStatusLabel}
         </StatusPill>
       </div>
       <div className="relative h-10 sm:h-11">

@@ -3,10 +3,12 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import {
   appRoutes,
   isCloneShareSearch,
+  isStoryReviewSearch,
   readSessionIdFromSearch,
   routeWithSession,
 } from './lib/appRoutes';
 import { installNavigator } from './lib/navigation';
+import { isSessionRestoreSuppressed } from './lib/sessionRestore';
 import LobbyPage from './pages/LobbyPage';
 import ArchiveListPage from './pages/ArchiveListPage';
 import CreationPage from './pages/CreationPage';
@@ -121,11 +123,16 @@ function SessionRouteGuard({
   const location = useLocation();
   const requestedSessionId = readSessionIdFromSearch(location.search);
   const shouldCloneSession = isCloneShareSearch(location.search);
+  const shouldReviewEndedStory = isStoryReviewSearch(location.search);
   const sessionId = useGameInternalStore((state) => state.sessionId);
   const stateView = useGameUIStore((state) => state.stateView);
 
   if (requestedSessionId && shouldCloneSession) {
     return <SessionCloneGate sourceSessionId={requestedSessionId} />;
+  }
+
+  if (isSessionRestoreSuppressed(requestedSessionId)) {
+    return <Navigate to={appRoutes.lobby} replace />;
   }
 
   if (requestedSessionId && (sessionId !== requestedSessionId || !stateView)) {
@@ -140,11 +147,11 @@ function SessionRouteGuard({
     return <Navigate to={routeWithSession(route, sessionId)} replace />;
   }
 
-  if (route === appRoutes.gameplay && stateView.isEnding) {
+  if (route === appRoutes.gameplay && stateView.phase === 'ended' && !shouldReviewEndedStory) {
     return <Navigate to={routeWithSession(appRoutes.ending, sessionId)} replace />;
   }
 
-  if (route === appRoutes.ending && !stateView.isEnding) {
+  if (route === appRoutes.ending && stateView.phase !== 'ended' && !stateView.isEnding) {
     return <Navigate to={routeWithSession(appRoutes.gameplay, sessionId)} replace />;
   }
 
