@@ -17,8 +17,9 @@ const features = [
         <path d="m4.22 4.22 2.83 2.83m9.9 9.9 2.83 2.83m-2.83-15.56 2.83 2.83m-15.56 9.9 2.83 2.83" />
       </svg>
     ),
-    title: "自由设定",
-    description: "你可以设定任何你想要的世界观、角色，让回响更符合你的想象",
+    title: "写入原初记录",
+    description:
+      "写下你想共鸣出的世界、角色与禁忌，阿卡夏会据此显影一条专属分支",
   },
   {
     icon: (
@@ -34,8 +35,8 @@ const features = [
         <path d="M2 12l10 5 10-5" />
       </svg>
     ),
-    title: "执念干涉",
-    description: "你可以通过干涉来改变主角的行动，使主角执行你的意志",
+    title: "执念共鸣",
+    description: "在关键时刻把意志投入记录，让主角行动与故事因果产生更强回响",
   },
   // {
   //   icon: (
@@ -61,48 +62,47 @@ const features = [
 
 const storySteps = [
   {
-    phase: "世界生成中",
-    title: "编织世界脉络",
+    phase: "世界显影中",
+    title: "共鸣世界记录",
     description:
-      "正在收束时代纹理、核心矛盾与规则压力，让回响拥有可持续展开的张力。",
-    headerTitle: "世界正在苏醒",
-    headerDesc: "时代的齿轮开始转动，规则与矛盾在虚空中编织成形。",
-    statusText: "正在构建世界观",
+      "正在从你的设定里提取时代纹理、冲突与规则，让世界从阿卡夏记录中浮现。",
+    headerTitle: "世界正在从记录中醒来",
+    headerDesc: "你写下的关键词正在与记录共鸣，时代、法则与暗流逐层显影。",
+    statusText: "正在显影世界记录",
     progress: 45,
     tags: [
-      { icon: "gear", text: "蒸汽朋克", color: "accent" },
-      { icon: "layer", text: "时代纹理成型中", color: "primary" },
-      { icon: "box", text: "规则压力就绪", color: "accent" },
+      { icon: "gear", text: "世界种子已接入", color: "accent" },
+      { icon: "layer", text: "时代纹理显影中", color: "primary" },
+      { icon: "box", text: "规则回响就绪", color: "accent" },
     ],
   },
   {
-    phase: "人物生成中",
-    title: "凝聚主角命运",
+    phase: "角色共鸣中",
+    title: "凝聚角色回响",
     description:
-      "正在把你的烙印、欲望、弱点与性格倾向熔进人物设定，让主角更适合长期演绎。",
-    headerTitle: "主角轮廓正在浮现",
-    headerDesc:
-      "你的欲望、弱点与行动倾向正在被收束成更适合展开剧情的命运底稿。",
-    statusText: "正在收束主角欲望",
+      "正在把姓名、烙印、欲望与弱点写入记录，让主角从你的想象里苏醒。",
+    headerTitle: "角色轮廓正在显影",
+    headerDesc: "角色的欲望、弱点与行动倾向正在被收束成可持续演绎的记录底稿。",
+    statusText: "正在共鸣角色记录",
     progress: 65,
     tags: [
-      { icon: "spark", text: "命运烙印待揭晓", color: "primary" },
-      { icon: "box", text: "核心矛盾已经明确", color: "accent" },
-      { icon: "user", text: "性格倾向分析中", color: "primary" },
+      { icon: "spark", text: "角色烙印待显影", color: "primary" },
+      { icon: "box", text: "核心冲突已收束", color: "accent" },
+      { icon: "user", text: "行动倾向共鸣中", color: "primary" },
     ],
   },
   {
-    phase: "注入回响中",
-    title: "唤起第一轮命运",
-    description: "世界与主角设定已经落笔，正在将它们汇入故事，并唤起开场叙事。",
-    headerTitle: "命运即将展开",
-    headerDesc: "世界与灵魂已经交融，第一轮命运的序章正在被书写。",
-    statusText: "正在编织开场叙事",
+    phase: "记录共鸣中",
+    title: "唤起第一段回响",
+    description: "世界与角色设定已经落笔，正在汇入阿卡夏记录，并点亮开场分支。",
+    headerTitle: "第一段回响即将展开",
+    headerDesc: "世界与角色已经完成共鸣，序章正在从记录深处被唤起。",
+    statusText: "正在点亮开场记录",
     progress: 85,
     tags: [
-      { icon: "gear", text: "蒸汽朋克", color: "accent" },
-      { icon: "spark", text: "命运烙印已刻下", color: "primary" },
-      { icon: "layer", text: "故事即将开始", color: "accent" },
+      { icon: "gear", text: "世界记录已接入", color: "accent" },
+      { icon: "spark", text: "角色烙印已写入", color: "primary" },
+      { icon: "layer", text: "分支即将开启", color: "accent" },
     ],
   },
 ];
@@ -212,25 +212,25 @@ export default function HomePage() {
               <div className="lg:pr-4">
                 <div className="max-w-2xl mx-auto lg:mx-0 text-center lg:text-left">
                   <p className="text-[11px] tracking-[0.34em] text-accent/80 mb-4">
-                    INTERACTIVE DESTINY SIMULATION
+                    AKASA ECHO
                   </p>
                   <h1 className="font-serif text-4xl md:text-5xl lg:text-5xl tracking-[0.08em] mb-4 text-glow">
                     <span className="text-primary">阿卡夏·回响</span>
                   </h1>
 
                   <p className="text-sm md:text-base text-muted-foreground mb-8 max-w-xl mx-auto lg:mx-0 leading-7">
-                    从一个名字、一段烙印开始，让你在字里行间轻推命运。
+                    写下你想要的世界与角色，让记录在字里行间回应你。
                   </p>
 
                   <div className="mb-6 text-left bg-background/35">
                     <p className="text-sm text-foreground/90 leading-relaxed mb-4">
-                      这里不是静止的设定页，而是一场会自己呼吸的命运预演。
-                      世界、主角与序章会先在你眼前逐步成形，再把你送进真正的故事里。
+                      这里不是静止的设定页，而是一座回应想象的记录厅。
+                      世界、角色与序章会先与你的设定共鸣，再把你送进真正会生长的故事里。
                     </p>
-                    <div className="flex flex-wrap gap-2">
-                      <span className="game-chip">世界先被唤醒</span>
-                      <span className="game-chip">主角随后成形</span>
-                      <span className="game-chip">序章接着落笔</span>
+                    <div className="flex flex-wrap gap-1">
+                      <span className="game-chip">记录开始共鸣</span>
+                      <span className="game-chip">角色从中显影</span>
+                      <span className="game-chip">分支随选择延展</span>
                     </div>
                   </div>
                 </div>
@@ -254,7 +254,7 @@ export default function HomePage() {
                     >
                       <polygon points="5 3 19 12 5 21 5 3" />
                     </svg>
-                    进入回响
+                    开启共鸣
                   </motion.button>
                 </div>
               </div>
@@ -266,10 +266,10 @@ export default function HomePage() {
                       阿卡夏记录
                     </p>
                     <h2 className="font-serif text-xl md:text-2xl text-foreground">
-                      世界生成中
+                      记录显影中
                     </h2>
                     <p className="hidden lg:block text-sm text-muted-foreground mt-2">
-                      {/* 在桌面端并排观看世界生成、人物凝聚与序章注入的完整过程。 */}
+                      {/* 在桌面端并排观看世界显影、角色共鸣与序章写入的完整过程。 */}
                     </p>
                   </div>
 
@@ -322,7 +322,7 @@ export default function HomePage() {
                           </div>
                         </div>
 
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap gap-1">
                           {currentStory.tags.map((tag, idx) => (
                             <motion.span
                               key={tag.text}
@@ -445,10 +445,10 @@ export default function HomePage() {
               className="text-center lg:text-left"
             >
               <p className="text-xs tracking-[0.3em] text-accent/80 mb-3">
-                EXPERIENCE NOTES
+                记录如何回响
               </p>
               <h2 className="font-serif text-2xl md:text-3xl text-foreground mb-3">
-                游戏特色
+                体验特色
               </h2>
               <p className="text-muted-foreground text-sm leading-7 max-w-md mx-auto lg:mx-0"></p>
             </motion.div>

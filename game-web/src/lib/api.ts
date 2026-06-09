@@ -17,7 +17,6 @@ export interface Character {
 export interface World {
   era: string;
   description: string;
-  specialRules: string[];
 }
 
 export interface StoryPreferences {
@@ -143,6 +142,13 @@ export interface GeneratedProfiles {
   keyStoryBeats: string;
 }
 
+export type CreationGenerationTarget = 'character' | 'world';
+
+export interface GeneratedCreationDraft {
+  character?: Character;
+  world?: World;
+}
+
 export interface StorySummaryData {
   summary: string;
   narrationCount: number;
@@ -250,28 +256,20 @@ async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
   return payload.data;
 }
 
-function formatSpecialRules(specialRules: string[]): string {
-  if (specialRules.length === 0) {
-    return '无';
-  }
-
-  return specialRules.map((rule, index) => `${index + 1}. ${rule}`).join('\n');
-}
-
 export function buildGenerateProfilesPrompt(
   character: Character,
   world: World,
 ): string {
-  return `请基于以下两组设定生成“世界设定”和“主角设定”。
+  return `请基于以下两组设定，像从“阿卡夏记录”中与玩家输入共鸣一样，生成“世界记录”和“角色记录”。
 
-这些表单内容都是已确定事实，禁止改写、替换或否定，只能围绕它们做扩写、补完和强化。
+这些表单内容都是已确定事实，禁止改写、替换或否定，只能围绕它们做扩写、补完和强化。生成结果应像记录被唤醒、世界与角色逐步显影，而不是普通设定简介。
 
-[人物设定]
+[角色记录种子]
 - 姓名：${character.name}
 - 性别：${character.gender}
 - 年龄：${character.age}
-- 人物设定：${character.background || '未填写'}
-- 人物描述：${character.appearance || '未填写'}
+- 角色烙印：${character.background || '未填写'}
+- 角色描述：${character.appearance || '未填写'}
 - 属性分配：
   - 智力：${character.traits.intellect}
   - 体力：${character.traits.physique}
@@ -280,19 +278,18 @@ export function buildGenerateProfilesPrompt(
   - 理性：${character.traits.rationality}
   - 利他：${character.traits.altruism}
 
-[世界设定]
+[世界记录种子]
 - 时代：${world.era}
-- 世界描述：${world.description || '未填写'}
-- 额外特殊规则：
-${formatSpecialRules(world.specialRules)}
+- 世界记录：${world.description || '未填写'}
 
 [生成目标]
-- 这是长期互动叙事的设定底稿，不是一次性简介。
-- 世界设定必须严格建立在“世界设定”事实上。
-- 主角设定必须严格建立在“人物设定”事实上，并自然解释主角为何会被卷入这个故事。
-- 世界设定重点写清世界如何运转、现实压力从何而来，以及什么样的秩序正在支配众人。
-- 主角设定重点写清欲望、弱点、行动倾向，以及六项属性如何转化为行为习惯与判断方式。
-`;
+- 这是长期 AI 互动小说的记录底稿，不是一次性简介。
+- 世界记录必须严格建立在“世界记录种子”事实上。
+- 角色记录必须严格建立在“角色记录种子”事实上，并自然解释角色为何会被卷入这个故事。
+- 世界记录重点写清世界如何运转、现实压力从何而来，以及什么样的秩序正在支配众人。
+- 角色记录重点写清欲望、弱点、行动倾向，以及六项属性如何转化为行为习惯与判断方式。
+- 语气可以带有“记录、共鸣、显影、回响”的阿卡夏感，但不要堆砌术语。
+  `;
 }
 
 export function generateProfiles(character: Character, world: World) {
@@ -300,6 +297,17 @@ export function generateProfiles(character: Character, world: World) {
   return requestJson<GeneratedProfiles>(withApiOrigin('/api/profiles/generate'), {
     method: 'POST',
     body: JSON.stringify({ prompt }),
+  });
+}
+
+export function generateCreationDraft(
+  target: CreationGenerationTarget,
+  character: Character,
+  world: World,
+) {
+  return requestJson<GeneratedCreationDraft>(withApiOrigin('/api/creation/generate'), {
+    method: 'POST',
+    body: JSON.stringify({ target, character, world }),
   });
 }
 

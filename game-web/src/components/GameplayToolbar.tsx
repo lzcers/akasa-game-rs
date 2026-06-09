@@ -88,7 +88,7 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
         if (cancelled) {
           return;
         }
-        const message = error instanceof Error ? error.message : '故事摘要生成失败。';
+        const message = error instanceof Error ? error.message : '回响摘录生成失败。';
         setShareError(message);
       } finally {
         if (!cancelled) {
@@ -140,7 +140,7 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
               className="min-h-0 gap-1.5 px-2.5 py-1.5 text-[0.72rem] leading-4 sm:text-xs"
             >
               <MoreHorizontal className="h-3.5 w-3.5" />
-              菜单
+                  记录菜单
             </SecondaryButton>
             {isUtilityMenuOpen ? (
               <div className="absolute bottom-[calc(100%+0.45rem)] right-0 z-20 min-w-[8.8rem] rounded-[0.95rem] border border-[rgba(116,103,80,0.5)] bg-[rgba(7,13,24,0.96)] p-1.5 shadow-[0_10px_24px_rgba(0,0,0,0.45)]">
@@ -153,12 +153,12 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
                   className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] sm:text-xs"
                 >
                   <House className="h-3.5 w-3.5" />
-                  返回大厅
+                  返回回响厅
                 </button>
                 <button
                   type="button"
                   disabled={isArchiveActionDisabled}
-                  title={archiveActionUnavailableReason ?? '存档'}
+                  title={archiveActionUnavailableReason ?? '封存记录'}
                   onClick={() => {
                     if (isArchiveActionDisabled) {
                       return;
@@ -169,12 +169,12 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
                   className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] disabled:cursor-not-allowed disabled:text-[#8f98ab] disabled:hover:bg-transparent sm:text-xs"
                 >
                   <Save className="h-3.5 w-3.5" />
-                  存档
+                  封存
                 </button>
                 <button
                   type="button"
                   disabled={isArchiveActionDisabled}
-                  title={archiveActionUnavailableReason ?? '分享'}
+                  title={archiveActionUnavailableReason ?? '分享记录'}
                   onClick={() => {
                     if (isArchiveActionDisabled) {
                       return;
@@ -185,7 +185,7 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
                   className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] disabled:cursor-not-allowed disabled:text-[#8f98ab] disabled:hover:bg-transparent sm:text-xs"
                 >
                   <Share2 className="h-3.5 w-3.5" />
-                  分享
+                  分享记录
                 </button>
                 {isArchiveActionDisabled && archiveActionUnavailableReason ? (
                   <p className="px-2 py-1 text-[0.68rem] leading-4 text-[#8f98ab]">
@@ -217,13 +217,13 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
             </div>
             {isShareLoading ? (
               <div className="game-card rounded-3xl border border-[rgba(116,103,80,0.5)] bg-[rgba(8,14,26,0.95)] px-6 py-8 text-center text-sm text-[#d9cbb1] shadow-[0_24px_80px_rgba(1,8,20,0.6)]">
-                正在整理这一段命运的分享摘要...
+                  正在整理这一段记录的共鸣摘要...
               </div>
             ) : (
               <div className="space-y-3">
                 {shareError ? (
                   <div className="rounded-2xl border border-amber-300/20 bg-amber-100/8 px-4 py-3 text-xs leading-5 text-amber-100/85">
-                    摘要接口暂时不可用，当前展示的是最近一段叙事内容。{shareError}
+                      摘要接口暂时不可用，当前展示的是最近一段回响。{shareError}
                   </div>
                 ) : null}
                 <StoryShareCard

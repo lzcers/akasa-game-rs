@@ -102,7 +102,7 @@ const ArchiveListPage: React.FC = () => {
 
   const handleDelete = (slot: StoredSaveSlot) => {
     setFeedback(null);
-    const confirmed = window.confirm(`确认删除本地存档“${slot.title || slot.slotId}”吗？`);
+    const confirmed = window.confirm(`确认删除本地记录“${slot.title || slot.slotId}”吗？`);
     if (!confirmed) {
       return;
     }
@@ -117,7 +117,7 @@ const ArchiveListPage: React.FC = () => {
     if (!archive) {
       setFeedback({
         type: 'error',
-        message: `未找到存档“${slot.title || slot.slotId}”的本地数据。`,
+        message: `未找到记录“${slot.title || slot.slotId}”的本地数据。`,
       });
       return;
     }
@@ -138,7 +138,7 @@ const ArchiveListPage: React.FC = () => {
     window.URL.revokeObjectURL(url);
     setFeedback({
       type: 'success',
-      message: `已导出“${slot.title || slot.slotId}”存档。`,
+      message: `已导出“${slot.title || slot.slotId}”记录。`,
     });
   };
 
@@ -158,7 +158,7 @@ const ArchiveListPage: React.FC = () => {
       const rawText = await file.text();
       const parsed = JSON.parse(rawText) as unknown;
       if (!isSharedArchiveFile(parsed)) {
-        throw new Error('该文件不是可用的存档文件。');
+        throw new Error('该文件不是可用的回响记录。');
       }
 
       const slotId = createSlotId();
@@ -174,12 +174,12 @@ const ArchiveListPage: React.FC = () => {
       refreshSlots();
       setFeedback({
         type: 'success',
-        message: `已导入存档“${file.name}”。`,
+        message: `已导入记录“${file.name}”。`,
       });
     } catch (importError) {
       setFeedback({
         type: 'error',
-        message: importError instanceof Error ? importError.message : '导入存档失败。',
+        message: importError instanceof Error ? importError.message : '导入记录失败。',
       });
     }
   };
@@ -201,17 +201,17 @@ const ArchiveListPage: React.FC = () => {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <SecondaryButton onClick={() => navigate(appRoutes.lobby)} disabled={isLoading}>
               <ArrowLeft className="h-4 w-4" />
-              返回大厅
+                返回回响厅
             </SecondaryButton>
             <PrimaryButton type="button" onClick={handleImportButtonClick} disabled={isLoading}>
               <Upload className="h-4 w-4" />
-              导入存档
+                导入记录
             </PrimaryButton>
           </div>
 
           <PageTitle
-            title="存档列表"
-            subtitle="这里保存着你在当前设备上的旅程记录，可随时导入、导出或继续。"
+              title="回响档案"
+              subtitle="这里封存着当前设备上的阿卡夏记录，可随时导入、导出或续读。"
           />
 
           {error ? (
@@ -240,9 +240,9 @@ const ArchiveListPage: React.FC = () => {
 
           {!hasSlots ? (
             <SectionCard className="space-y-3">
-              <p className="text-base text-[#e9edf7]">当前设备上还没有留下任何存档。</p>
+                <p className="text-base text-[#e9edf7]">当前设备上还没有封存任何记录。</p>
               <p className="text-sm leading-7 text-[#98a3ba]">
-                先开启一段旅程并保存，或直接导入一份已有存档。
+                  先开启一段回响并封存，或直接导入一份已有记录。
               </p>
             </SectionCard>
           ) : (
@@ -252,16 +252,16 @@ const ArchiveListPage: React.FC = () => {
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="space-y-1">
-                        <h3 className="text-lg text-[#f2eadf]">{slot.title || '未命名存档'}</h3>
+                        <h3 className="text-lg text-[#f2eadf]">{slot.title || '未命名记录'}</h3>
                         <p className="text-xs tracking-[0.12em] text-[#8f98ab]">
-                          存档编号：{slot.slotId}
+                            记录编号：{slot.slotId}
                         </p>
                       </div>
-                      <StatusPill icon={null}>最近更新 {formatTimeLabel(slot.updatedAt)}</StatusPill>
+                        <StatusPill icon={null}>最近回响 {formatTimeLabel(slot.updatedAt)}</StatusPill>
                     </div>
-                    <p className="text-sm text-[#b6c0d6]">旅程编号：{slot.sessionId}</p>
+                      <p className="text-sm text-[#b6c0d6]">回响编号：{slot.sessionId}</p>
                     <p className="text-sm text-[#8f98ab]">
-                      创建于 {formatTimeLabel(slot.createdAt)}
+                        首次封存于 {formatTimeLabel(slot.createdAt)}
                     </p>
                   </div>
                   <div className="flex flex-col gap-3 sm:flex-row">
@@ -271,7 +271,7 @@ const ArchiveListPage: React.FC = () => {
                       className="flex-1"
                     >
                       <FolderOpen className="h-4 w-4" />
-                      {isLoading ? '读取中...' : '继续旅程'}
+                        {isLoading ? '读取中...' : '续读记录'}
                     </PrimaryButton>
                     <SecondaryButton
                       type="button"
@@ -280,7 +280,7 @@ const ArchiveListPage: React.FC = () => {
                       className="flex-1"
                     >
                       <Download className="h-4 w-4" />
-                      导出存档
+                        导出记录
                     </SecondaryButton>
                     <SecondaryButton
                       type="button"
@@ -289,7 +289,7 @@ const ArchiveListPage: React.FC = () => {
                       className="flex-1 text-[#ffb6b6] hover:border-[#7f3b3b]/60 hover:bg-[#2a1216]/85 hover:text-[#ffd7d7]"
                     >
                       <Trash2 className="h-4 w-4" />
-                      删除存档
+                        删除记录
                     </SecondaryButton>
                   </div>
                 </SectionCard>

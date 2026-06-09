@@ -23,7 +23,7 @@ function appendBits(target: number[], value: number, length: number) {
 function buildDataCodewords(input: string): number[] {
   const bytes = encoder.encode(input);
   if (bytes.length > MAX_BYTE_LENGTH) {
-    throw new Error('分享链接过长，无法生成二维码。');
+    throw new Error('共鸣入口过长，无法生成二维码。');
   }
 
   const bits: number[] = [];

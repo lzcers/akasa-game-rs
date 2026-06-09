@@ -42,7 +42,7 @@ const LobbyPage: React.FC = () => {
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_18%,rgba(240,223,194,0.18),transparent_28%),linear-gradient(135deg,rgba(8,14,26,0.28),rgba(8,14,26,0.86)_62%,rgba(3,7,14,0.95))]" />
         <div className="relative z-10">
           <div className="mx-auto max-w-3xl space-y-6">
-            <PageTitle title="阿卡夏·回响" subtitle="" />
+            <PageTitle title="阿卡夏·回响" subtitle="从记录中共鸣出你想要的世界与角色。" />
             {error ? (
               <StatusPill
                 icon={TriangleAlert}
@@ -55,15 +55,15 @@ const LobbyPage: React.FC = () => {
             <SectionCard className="space-y-5">
               <div className="space-y-3 text-center">
                 <p className="text-lg font-semibold leading-8 text-[#f6eddc] sm:text-xl">
-                  写下你是谁，世界便从记录中醒来。
+                  写下你想要的世界与角色，记录便会回应。
                 </p>
                 <p className="mx-auto max-w-2xl text-sm leading-7 text-[#b9c3d4] sm:text-base">
-                  阿卡夏会读取你的名字、性别与命运烙印，显化出一段只属于这次游玩的开局。你做出的每个选择，都会影响故事的走向。
+                  阿卡夏会读取姓名、烙印、角色气质与世界种子，从记录中显影一段只属于你的开局。每次选择，都会让分支继续回响。
                 </p>
               </div>
               <div className="rounded-xl border border-[#6f6655]/35 bg-[#0c1424]/56 px-4 py-3 text-center">
                 <p className="text-sm font-medium leading-7 text-[#e4d7bd] sm:text-base">
-                  记录生出世界，烙印牵引冲突，选择留下代价。
+                  设定唤起记录，共鸣生成世界，选择写成新的因果。
                 </p>
               </div>
             </SectionCard>
@@ -74,7 +74,7 @@ const LobbyPage: React.FC = () => {
                 className="flex-1"
               >
                 <Play className="h-4 w-4" />
-                显化命运
+                开始共鸣
               </PrimaryButton>
               <SecondaryButton
                 onClick={() => navigate(appRoutes.archives)}
@@ -82,7 +82,7 @@ const LobbyPage: React.FC = () => {
                 className="flex-1"
               >
                 <Library className="h-4 w-4" />
-                继续旧日回响
+                续读旧日记录
               </SecondaryButton>
             </div>
           </div>

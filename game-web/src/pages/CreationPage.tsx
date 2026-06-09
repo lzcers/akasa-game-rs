@@ -1,8 +1,8 @@
 import React from 'react';
-import { ChevronDown, RotateCcw, Save, TriangleAlert } from 'lucide-react';
+import { ChevronDown, RotateCcw, Save, Sparkles, TriangleAlert } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useGameUIStore } from '../store/gameUIStore';
-import type { Character, World } from '../lib/api';
+import { generateCreationDraft, type Character, type CreationGenerationTarget, type World } from '../lib/api';
 import {
   FieldLabel,
   PrimaryButton,
@@ -43,7 +43,7 @@ const backgroundOptions = [
   '从天空坠落却未曾死去的旅者',
   '替家族偿还旧债的年轻家主',
   '在瘟疫年代守住火种的记录者',
-  '被命运误写姓名的替身者',
+  '被记录误写姓名的替身者',
   '体内封印着灭世魔王的童身',
   '被十二枚时之楔钉住灵魂的永生者',
   '窃取神明眼眸而获罪的凡人',
@@ -63,7 +63,21 @@ const backgroundOptions = [
   '被遗忘的战争机器，如今苏醒的古代兵器',
   '体内流淌着世界树汁液的半树人',
   '行走于人间的灾厄观测装置',
-  '窃取了九层地狱税单的逃税灵魂'
+  '继承九层地狱失落账簿的漂泊灵魂',
+  '与强势财团继承人签下秘密契约的普通女孩',
+  '被冷艳继承者认作宿命例外的人',
+  '转学当天被校花看穿灵魂颜色的新生',
+  '继承豪门秘钥却必须伪装平凡的千金',
+  '被银幕巨星藏在聚光灯外的小助理',
+  '与狐妖姐姐共享心跳的都市灵契者',
+  '在末班地铁觉醒读心异能的社畜',
+  '被神秘投资人从破产边缘拉回的继承人',
+  '误入女巫咖啡馆后签下愿望契约的常客',
+  '带着分支预感重回关键之日的旁观者',
+  '被未来妻子从灾变时间线救回的人',
+  '替旧日挚友守住秘密身份的守护者',
+  '能听见敌对女王心声的异能新人',
+  '被前世恋人留下玫瑰印记的轮回者'
 ];
 const eraOptions = [
   '蒸汽朋克',
@@ -107,7 +121,22 @@ const eraOptions = [
   '潮汐由巨兽呼吸掌控的活体群岛',
   '梦境在现实投下阴影的噩梦边境',
   '万物声音皆被剥夺的寂静纪废墟',
-  '太阳与月亮为敌对阵营的永战星空'
+  '太阳与月亮为敌对阵营的永战星空',
+  '都市奇幻',
+  '都市异能',
+  '财团契约笼罩的霓虹都市',
+  '女巫与财阀共治的霓虹都会',
+  '异能事务所暗中维稳的现代城市',
+  '豪门继承人与秘密盟友博弈的名利场',
+  '银幕巨星与新人互相救赎的聚光时代',
+  '校园怪谈与少女社团并行的初夏城',
+  '灵契妖族潜伏在人类公司的现代职场',
+  '每座高楼都有守护神的海滨都市',
+  '财阀、女巫与 AI 共同共鸣记录的近未来',
+  '地下酒吧连接异世界的午夜城区',
+  '女性猎魔人联盟守护的旧城',
+  '情感真人秀会触发异能觉醒的平行都市',
+  '故人归来后全城记忆错位的雨夜都会'
 ];
 
 const ATTRIBUTE_TOTAL = 30;
@@ -309,9 +338,7 @@ function isWorldDraft(value: unknown): value is World {
 
   const world = value as Partial<World>;
   return typeof world.era === 'string'
-    && typeof world.description === 'string'
-    && Array.isArray(world.specialRules)
-    && world.specialRules.every((rule) => typeof rule === 'string');
+    && typeof world.description === 'string';
 }
 
 const CreationPage: React.FC = () => {
@@ -327,8 +354,9 @@ const CreationPage: React.FC = () => {
   } = useGameUIStore();
   const [initialDraft] = React.useState(readCreationDraft);
   const [draftFeedback, setDraftFeedback] = React.useState<string | null>(
-    initialDraft ? '已恢复本地草稿' : null,
+    initialDraft ? '已恢复本地记录草稿' : null,
   );
+  const [generationTarget, setGenerationTarget] = React.useState<CreationGenerationTarget | null>(null);
   const [ageInput, setAgeInput] = React.useState(() => ({
     sourceAge: initialDraft?.character.age ?? character.age,
     value: String(initialDraft?.character.age ?? character.age),
@@ -356,6 +384,10 @@ const CreationPage: React.FC = () => {
   }).join(' ');
 
   const canStart = Boolean(character.name.trim()) && (character.gender === '男' || character.gender === '女');
+  const isGenerating = generationTarget !== null;
+  const isGeneratingCharacter = generationTarget === 'character';
+  const isGeneratingWorld = generationTarget === 'world';
+  const formActionDisabled = isLoading || isGenerating;
 
   React.useEffect(() => {
     if (!initialDraft) {
@@ -392,7 +424,7 @@ const CreationPage: React.FC = () => {
       character: cloneCharacter(character),
       world: cloneWorld(world),
     });
-    setDraftFeedback(saved ? '已保存到本地草稿' : '当前环境无法访问本地存储');
+    setDraftFeedback(saved ? '已封存为本地记录草稿' : '当前环境无法封存本地记录');
   };
 
   const handleResetDraft = () => {
@@ -403,7 +435,49 @@ const CreationPage: React.FC = () => {
       sourceAge: initialCharacter.age,
       value: String(initialCharacter.age),
     });
-    setDraftFeedback('已重置创建表单');
+    setDraftFeedback('已清空本次记录草稿');
+  };
+
+  const handleGenerateCharacter = async () => {
+    setGenerationTarget('character');
+    setDraftFeedback('阿卡夏正在共鸣角色记录');
+    try {
+      const generated = await generateCreationDraft('character', character, world);
+      if (!generated.character) {
+        throw new Error('Missing generated character.');
+      }
+
+      updateCharacter(generated.character);
+      setAgeInput({
+        sourceAge: generated.character.age,
+        value: String(generated.character.age),
+      });
+      track('creation_ai_character_generated', { character: generated.character, world });
+      setDraftFeedback('角色记录已显影');
+    } catch {
+      setDraftFeedback('角色记录暂时未能显影，请稍后再试');
+    } finally {
+      setGenerationTarget(null);
+    }
+  };
+
+  const handleGenerateWorld = async () => {
+    setGenerationTarget('world');
+    setDraftFeedback('阿卡夏正在共鸣世界记录');
+    try {
+      const generated = await generateCreationDraft('world', character, world);
+      if (!generated.world) {
+        throw new Error('Missing generated world.');
+      }
+
+      updateWorld(generated.world);
+      track('creation_ai_world_generated', { character, world: generated.world });
+      setDraftFeedback('世界记录已显影');
+    } catch {
+      setDraftFeedback('世界记录暂时未能显影，请稍后再试');
+    } finally {
+      setGenerationTarget(null);
+    }
   };
 
   const handleTraitChange = (key: TraitKey, rawValue: number) => {
@@ -437,8 +511,18 @@ const CreationPage: React.FC = () => {
           ) : null}
           <section className="space-y-3">
             <div className="space-y-1.5">
-              <div className="flex flex-wrap items-baseline gap-3">
-                <h2 className="text-lg font-semibold text-[#f6eddc] md:text-xl">塑造主角轮廓</h2>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-lg font-semibold text-[#f6eddc] md:text-xl">写入角色记录</h2>
+                <SecondaryButton
+                  type="button"
+                  onClick={() => void handleGenerateCharacter()}
+                  disabled={formActionDisabled}
+                  aria-label="共鸣生成角色记录"
+                  className="!min-h-7 gap-1 !rounded-md !px-2 !py-1 text-[11px] font-medium leading-none md:!min-h-7 md:!px-2.5 md:!py-1 md:text-xs"
+                >
+                  <Sparkles className="h-3 w-3" />
+                  {isGeneratingCharacter ? '共鸣中' : '共鸣生成'}
+                </SecondaryButton>
               </div>
 
             </div>
@@ -464,7 +548,7 @@ const CreationPage: React.FC = () => {
                     className="akashic-select"
                     required
                   >
-                    <option value="" disabled>请选择性别</option>
+                      <option value="" disabled>选择记录性别</option>
                     <option value="男">男</option>
                     <option value="女">女</option>
                   </select>
@@ -515,22 +599,22 @@ const CreationPage: React.FC = () => {
                 </div>
               </div>
               <div>
-                <FieldLabel hint="">命运烙印</FieldLabel>
+                <FieldLabel hint="">角色烙印</FieldLabel>
                 <SearchableSelect
                   value={character.background}
                   options={backgroundOptions}
-                  placeholder="决定主角人生默认模式，但非绝对牢笼"
-                  createText="采用你此刻写下的命运烙印"
+                    placeholder="写下会牵引角色一生的记录烙印"
+                    createText="采用你此刻写下的角色烙印"
                   onChange={(nextValue) => updateCharacter({ background: nextValue })}
                 />
               </div>
               <div>
-                <FieldLabel hint="">人物描述</FieldLabel>
+                  <FieldLabel hint="">角色描述</FieldLabel>
                 <textarea
                   value={character.appearance}
                   onChange={(e) => updateCharacter({ appearance: e.target.value })}
                   className="akashic-field min-h-24 resize-y"
-                  placeholder="你可以在这输入详细的人物设定，诸如人物外貌描述，性格等。"
+                    placeholder="写下外貌、性格、执念、弱点，或任何你希望阿卡夏记住的细节。"
                 />
               </div>
 
@@ -540,11 +624,11 @@ const CreationPage: React.FC = () => {
             <SectionCard className="space-y-3 p-3 md:p-3.5">
               <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                 <div className="space-y-1">
-                  <FieldLabel hint="">人物属性</FieldLabel>
+                    <FieldLabel hint="">角色倾向</FieldLabel>
 
                 </div>
                 <StatusPill icon={null} className="bg-[#0f1c31]/70 px-2.5 py-1 text-[11px] text-[#d7e5ff] md:text-xs">
-                  {remainingPoints === 0 ? '点数已分配完成' : `剩余 ${remainingPoints} 点待分配`}
+                    {remainingPoints === 0 ? '倾向已写入完成' : `剩余 ${remainingPoints} 点可写入`}
                 </StatusPill>
               </div>
 
@@ -638,28 +722,40 @@ const CreationPage: React.FC = () => {
 
           <section className="space-y-3">
             <div className="space-y-1.5">
-              <h2 className="text-lg font-semibold text-[#f6eddc] md:text-xl">勾勒故事舞台</h2>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-lg font-semibold text-[#f6eddc] md:text-xl">写入世界记录</h2>
+                <SecondaryButton
+                  type="button"
+                  onClick={() => void handleGenerateWorld()}
+                  disabled={formActionDisabled}
+                  aria-label="共鸣生成世界记录"
+                  className="!min-h-7 gap-1 !rounded-md !px-2 !py-1 text-[11px] font-medium leading-none md:!min-h-7 md:!px-2.5 md:!py-1 md:text-xs"
+                >
+                  <Sparkles className="h-3 w-3" />
+                  {isGeneratingWorld ? '共鸣中' : '共鸣生成'}
+                </SecondaryButton>
+              </div>
             </div>
 
             <SectionCard className="z-30 space-y-3.5 p-3.5 md:p-4" style={{ overflow: 'visible' }}>
               <div>
-                <FieldLabel>世界背景</FieldLabel>
+                  <FieldLabel>世界种子</FieldLabel>
                 <SearchableSelect
                   value={world.era}
                   options={eraOptions}
-                  placeholder="搜索一个世界，或写下你想要的世界"
-                  createText="采用你此刻写下的世界"
+                    placeholder="搜索世界种子，或写下你想共鸣出的世界"
+                    createText="采用你此刻写下的世界种子"
                   onChange={(nextValue) => updateWorld({ era: nextValue })}
                 />
               </div>
 
               <div>
-                <FieldLabel hint="">世界描述</FieldLabel>
+                  <FieldLabel hint="">世界记录</FieldLabel>
                 <textarea
                   value={world.description}
                   onChange={(e) => updateWorld({ description: e.target.value })}
                   className="akashic-field min-h-24 resize-y"
-                  placeholder="你可以在这输入详细的世界描述，诸如世界历史，地理环境等。"
+                    placeholder="写下历史、地理、秩序、禁忌、核心矛盾，阿卡夏会据此显影舞台。"
                 />
               </div>
             </SectionCard>
@@ -674,18 +770,18 @@ const CreationPage: React.FC = () => {
               ) : null}
             </div>
             <SecondaryButton onClick={() => navigate(appRoutes.lobby)} className="min-h-8 w-full whitespace-nowrap rounded-lg px-1 py-0.5 text-[11px] leading-4 sm:min-h-10 sm:w-auto sm:rounded-full sm:px-3.5 sm:py-2 sm:text-sm md:min-h-11 md:px-4 md:py-2.5">
-              返回
+                返回大厅
             </SecondaryButton>
-            <SecondaryButton onClick={handleResetDraft} disabled={isLoading} className="flex min-h-8 w-full items-center justify-center gap-0.5 whitespace-nowrap rounded-lg px-1 py-0.5 text-[11px] leading-4 sm:min-h-10 sm:w-auto sm:gap-2 sm:rounded-full sm:px-3.5 sm:py-2 sm:text-sm md:min-h-11 md:px-4 md:py-2.5">
+            <SecondaryButton onClick={handleResetDraft} disabled={formActionDisabled} className="flex min-h-8 w-full items-center justify-center gap-0.5 whitespace-nowrap rounded-lg px-1 py-0.5 text-[11px] leading-4 sm:min-h-10 sm:w-auto sm:gap-2 sm:rounded-full sm:px-3.5 sm:py-2 sm:text-sm md:min-h-11 md:px-4 md:py-2.5">
               <RotateCcw className="h-3 w-3 sm:h-4 sm:w-4" />
-              重置
+                清空
             </SecondaryButton>
-            <SecondaryButton onClick={handleSaveDraft} disabled={isLoading} className="flex min-h-8 w-full items-center justify-center gap-0.5 whitespace-nowrap rounded-lg px-1 py-0.5 text-[11px] leading-4 sm:min-h-10 sm:w-auto sm:gap-2 sm:rounded-full sm:px-3.5 sm:py-2 sm:text-sm md:min-h-11 md:px-4 md:py-2.5">
+            <SecondaryButton onClick={handleSaveDraft} disabled={formActionDisabled} className="flex min-h-8 w-full items-center justify-center gap-0.5 whitespace-nowrap rounded-lg px-1 py-0.5 text-[11px] leading-4 sm:min-h-10 sm:w-auto sm:gap-2 sm:rounded-full sm:px-3.5 sm:py-2 sm:text-sm md:min-h-11 md:px-4 md:py-2.5">
               <Save className="h-3 w-3 sm:h-4 sm:w-4" />
-              保存
+                封存
             </SecondaryButton>
-            <PrimaryButton onClick={handleStartGame} disabled={!canStart || isLoading} className="min-h-8 w-full whitespace-nowrap rounded-lg px-1 py-0.5 text-[11px] leading-4 sm:min-h-10 sm:w-auto sm:rounded-full sm:px-3.5 sm:py-2 sm:text-sm md:min-h-11 md:px-4 md:py-2.5">
-              {isLoading ? '生成中' : '开启'}
+            <PrimaryButton onClick={handleStartGame} disabled={!canStart || formActionDisabled} className="min-h-8 w-full whitespace-nowrap rounded-lg px-1 py-0.5 text-[11px] leading-4 sm:min-h-10 sm:w-auto sm:rounded-full sm:px-3.5 sm:py-2 sm:text-sm md:min-h-11 md:px-4 md:py-2.5">
+                {isLoading ? '共鸣中' : '开启回响'}
             </PrimaryButton>
           </div>
         </div>

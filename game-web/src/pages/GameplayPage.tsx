@@ -130,7 +130,7 @@ const GameplayPage: React.FC = () => {
   const canArchiveLatestCompletedRound = Boolean(sessionId && latestCompletedNarration);
   const archiveActionUnavailableReason = canArchiveLatestCompletedRound
     ? null
-    : '完成第一段叙事后可分享或存档。';
+    : '第一段回响显影后可分享或封存。';
   const archiveActionKey = `${sessionId ?? 'no-session'}:${latestCompletedNarration?.round ?? 'no-completed-round'}`;
   const statusMessage = feedback ?? error;
   const broadcastItems = latestBroadcastItems
@@ -155,7 +155,7 @@ const GameplayPage: React.FC = () => {
       return broadcastSummary;
     }
 
-    return `${currentScene} 的命运仍在推进，下一轮选择正在逼近。`;
+    return `${currentScene} 的记录仍在回响，下一轮选择正在逼近。`;
   }, [currentScene, latestBroadcastSummary, latestCompletedNarration]);
   const shareGameUrl = useMemo(() => (
     new URL(
@@ -209,7 +209,7 @@ const GameplayPage: React.FC = () => {
     }
 
     void bootstrapSession().catch((bootstrapError) => {
-      setFeedback(readErrorMessage(bootstrapError, '开场叙事启动失败。'));
+      setFeedback(readErrorMessage(bootstrapError, '开场记录启动失败。'));
     });
   }, [bootstrapSession, phase, readErrorMessage, sessionId]);
 
@@ -224,7 +224,7 @@ const GameplayPage: React.FC = () => {
     try {
       const motivationAndRisk = choice.motivationAndRisk?.trim();
       if (!motivationAndRisk) {
-        throw new Error('这个选项暂时没有可窥见的命运碎片。');
+        throw new Error('这条分支暂时没有可窥见的记录碎片。');
       }
       consumeIntuition();
       track('intuition_preview_used');
@@ -240,7 +240,7 @@ const GameplayPage: React.FC = () => {
       }));
       setFeedback(motivationAndRisk);
     } catch (previewError) {
-      setFeedback(readErrorMessage(previewError, '直觉预览失败。'));
+      setFeedback(readErrorMessage(previewError, '记录窥见失败。'));
     }
   };
 
@@ -261,7 +261,7 @@ const GameplayPage: React.FC = () => {
       });
       setFeedback(null);
     } catch (submitError) {
-      setFeedback(readErrorMessage(submitError, '推进剧情失败。'));
+      setFeedback(readErrorMessage(submitError, '推进回响失败。'));
     }
   }, [activeObsession, currentRound, readErrorMessage, submitChoice]);
 
@@ -272,7 +272,7 @@ const GameplayPage: React.FC = () => {
           type: 'free_text',
           action: 'continue',
         },
-        displayText: '继续',
+        displayText: '继续回响',
       });
       setRoundControls({
         round: currentRound,
@@ -282,7 +282,7 @@ const GameplayPage: React.FC = () => {
       });
       setFeedback(null);
     } catch (submitError) {
-      setFeedback(readErrorMessage(submitError, '继续剧情失败。'));
+      setFeedback(readErrorMessage(submitError, '续写回响失败。'));
     }
   }, [currentRound, readErrorMessage, submitChoice]);
 
@@ -332,7 +332,7 @@ const GameplayPage: React.FC = () => {
 
   const handleObsessionSubmit = async (actionText: string) => {
     if (!actionText) {
-      setFeedback('请先写下这次执念行动。');
+      setFeedback('请先写下这次想写入记录的执念。');
       return;
     }
 
@@ -352,7 +352,7 @@ const GameplayPage: React.FC = () => {
       });
       setFeedback(null);
     } catch (submitError) {
-      setFeedback(readErrorMessage(submitError, '执念行动提交失败。'));
+      setFeedback(readErrorMessage(submitError, '执念写入失败。'));
     }
   };
 
@@ -364,9 +364,9 @@ const GameplayPage: React.FC = () => {
 
     try {
       await createSave();
-      setFeedback('存档保存成功');
+      setFeedback('这一段记录已封存');
     } catch (saveError) {
-      setFeedback(readErrorMessage(saveError, '存档失败。'));
+      setFeedback(readErrorMessage(saveError, '封存失败。'));
     }
   };
 
@@ -380,7 +380,7 @@ const GameplayPage: React.FC = () => {
             currentScene={currentScene}
             isLoading={isLoading}
             broadcastMessages={broadcastMessages}
-            statusLabel={isEndingReviewMode ? '命运完结' : undefined}
+            statusLabel={isEndingReviewMode ? '记录完结' : undefined}
           />
 
           <div className="flex min-h-0 flex-1 flex-col gap-3">

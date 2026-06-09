@@ -17,9 +17,9 @@ export default function StoryShareCard({
   gameUrl,
   className,
   eyebrow = 'AKASHIC ECHO',
-  title = '这一段命运，值得被分享',
-  sessionLabel = '故事摘要',
-  ctaLabel = '进入游戏',
+  title = '这一段记录，正在等待新的共鸣',
+  sessionLabel = '回响摘录',
+  ctaLabel = '进入回响',
 }: StoryShareCardProps) {
   const content = summary.trim()
 
@@ -55,7 +55,7 @@ export default function StoryShareCard({
 
           <div className="hidden rounded-full border border-border/70 bg-background/40 px-3 py-1 text-xs text-muted-foreground backdrop-blur-sm sm:inline-flex sm:items-center sm:gap-2">
             <Compass className="size-3.5 text-accent" />
-            <span>命运入口已附上</span>
+            <span>共鸣入口已附上</span>
           </div>
         </div>
       </div>
@@ -67,18 +67,18 @@ export default function StoryShareCard({
             <div className="relative rounded-[1.4rem] border border-border/70 bg-background/30 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-sm sm:p-6">
               <div className="mb-4 flex items-center gap-3">
                 <div className="h-px flex-1 bg-gradient-to-r from-primary/70 to-transparent" />
-                <span className="text-[11px] tracking-[0.28em] text-primary/85 uppercase">Summary</span>
+                <span className="text-[11px] tracking-[0.28em] text-primary/85 uppercase">回响摘录</span>
               </div>
               <p className="font-serif text-[1.02rem] leading-8 text-foreground/92 sm:text-[1.1rem]">
-                {content || '命运尚未留下可供摘录的回响。'}
+                {content || '记录尚未留下可供摘录的回响。'}
               </p>
             </div>
           </div>
 
           <div className="rounded-[1.5rem] border border-accent/20 bg-accent/8 p-4 backdrop-blur-sm">
-            <p className="text-[11px] tracking-[0.28em] text-accent/80 uppercase">Game Portal</p>
+            <p className="text-[11px] tracking-[0.28em] text-accent/80 uppercase">共鸣入口</p>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">
-              沿着这段摘要继续下沉，回到故事现场，把下一轮选择亲手推向结局。
+              沿着这段记录进入独立分支，让新的选择继续与阿卡夏共鸣。
             </p>
           </div>
         </div>
@@ -86,8 +86,8 @@ export default function StoryShareCard({
 
       <div className="relative flex flex-col items-start gap-4 border-t border-border/50 px-6 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-7">
         <div className="space-y-1">
-          <p className="text-xs tracking-[0.24em] text-muted-foreground uppercase">Share-ready Card</p>
-          <p className="text-sm text-foreground/80">适合在社区、群聊或活动页中展示这一段剧情回响。</p>
+          <p className="text-xs tracking-[0.24em] text-muted-foreground uppercase">可分享记录</p>
+          <p className="text-sm text-foreground/80">适合在社区、群聊或活动页中展示这一段阿卡夏回响。</p>
         </div>
 
         <a

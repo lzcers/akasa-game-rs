@@ -70,7 +70,7 @@ export const useGameValueStore = create<GameValueStoreState>((set, get) => ({
   consumeObsession: () => {
     const { obsessionPoints } = get();
     if (obsessionPoints <= 0) {
-      throw new Error('执念点不足。');
+      throw new Error('执念点不足，无法继续写入记录。');
     }
 
     set({
@@ -80,7 +80,7 @@ export const useGameValueStore = create<GameValueStoreState>((set, get) => ({
   consumeIntuition: () => {
     const { intuitionPoints } = get();
     if (intuitionPoints <= 0) {
-      throw new Error('本轮直觉已耗尽。');
+      throw new Error('本轮直觉已耗尽，暂时无法窥见记录碎片。');
     }
 
     set({

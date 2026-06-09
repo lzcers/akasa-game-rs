@@ -10,7 +10,7 @@ use rusqlite::{Connection, params};
 use serde::Serialize;
 use tokio::sync::Mutex;
 
-use crate::api::dto::AnalyticsEventInput;
+use crate::api::site::AnalyticsEventInput;
 
 const CREATE_ANALYTICS_EVENTS_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS analytics_events (

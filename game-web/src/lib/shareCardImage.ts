@@ -66,7 +66,7 @@ function drawWrappedText(
   lineHeight: number,
   maxLines: number,
 ) {
-  const normalized = text.trim() || '命运尚未留下可供摘录的回响。';
+  const normalized = text.trim() || '记录尚未留下可供摘录的回响。';
   const paragraphs = normalized.split(/\n+/);
   const lines: string[] = [];
 
@@ -217,7 +217,7 @@ export async function downloadStoryShareCardImage(input: ShareCardImageInput): P
 
   context.fillStyle = 'rgba(230,209,162,0.88)';
   context.font = '600 22px Inter, system-ui, sans-serif';
-  context.fillText('SUMMARY', CARD_PADDING + 42, 535);
+  context.fillText('回响摘录', CARD_PADDING + 42, 535);
 
   context.fillStyle = 'rgba(243,234,216,0.92)';
   context.font = '400 33px Inter, "PingFang SC", "Microsoft YaHei", sans-serif';
@@ -230,13 +230,13 @@ export async function downloadStoryShareCardImage(input: ShareCardImageInput): P
 
   context.fillStyle = 'rgba(207,244,248,0.74)';
   context.font = '600 22px Inter, "PingFang SC", "Microsoft YaHei", sans-serif';
-  context.fillText('扫码复制独立分支', CARD_PADDING, 1148);
+  context.fillText('扫码开启独立共鸣', CARD_PADDING, 1148);
 
   context.fillStyle = 'rgba(233,222,200,0.82)';
   context.font = '400 30px Inter, "PingFang SC", "Microsoft YaHei", sans-serif';
   drawWrappedText(
     context,
-    '带着这段摘要开启自己的分支，把下一轮选择亲手推向结局。',
+    '带着这段记录开启自己的分支，让下一轮选择继续与阿卡夏共鸣。',
     CARD_PADDING,
     1210,
     CARD_WIDTH - (CARD_PADDING * 3) - qrSize,
@@ -246,11 +246,11 @@ export async function downloadStoryShareCardImage(input: ShareCardImageInput): P
 
   context.fillStyle = 'rgba(143,152,171,0.9)';
   context.font = '500 22px Inter, system-ui, sans-serif';
-  context.fillText('AKASHIC SHARE CARD', CARD_PADDING, CARD_HEIGHT - 104);
+  context.fillText('阿卡夏·回响记录卡', CARD_PADDING, CARD_HEIGHT - 104);
 
   context.fillStyle = 'rgba(216,193,143,0.94)';
   context.font = '500 24px Inter, "PingFang SC", "Microsoft YaHei", sans-serif';
-  context.fillText('分支复制链接已附在右侧二维码中', CARD_PADDING, CARD_HEIGHT - 66);
+  context.fillText('独立共鸣入口已附在右侧二维码中', CARD_PADDING, CARD_HEIGHT - 66);
 
   const blob = await canvasToBlob(canvas);
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');

@@ -38,7 +38,7 @@ interface FatePlanningSummary {
   protagonistCondition: string | null;
 }
 
-export const STREAM_PLACEHOLDER_TEXT = '命运正在编织中...';
+export const STREAM_PLACEHOLDER_TEXT = '记录正在共鸣中...';
 
 export const initialCharacter: Character = {
   name: '',
@@ -59,7 +59,6 @@ export const initialCharacter: Character = {
 export const initialWorld: World = {
   era: '蒸汽朋克',
   description: '',
-  specialRules: [],
 };
 
 export const initialStory: StoryPreferences = {
@@ -78,8 +77,8 @@ export function cloneCharacter(character: Character): Character {
 
 export function cloneWorld(world: World): World {
   return {
-    ...world,
-    specialRules: [...world.specialRules],
+    era: world.era,
+    description: world.description,
   };
 }
 
@@ -103,13 +102,13 @@ export function taskLabel(kind: string): string {
   switch (kind) {
     case 'simulation':
     case 'fate_planning':
-      return '命运编织中...';
+      return '记录共鸣中...';
     case 'narration':
-      return '叙事展开中...';
+      return '回响展开中...';
     case 'protagonist_action':
-      return '主角抉择';
+      return '角色抉择';
     default:
-      return '命运推进';
+      return '记录推进';
   }
 }
 
@@ -320,7 +319,7 @@ export function protagonistActionText(task: TaskView): string | null {
     const parsedChoices = parseStreamingProtagonistChoices(raw);
     if (parsedChoices) {
       if (parsedChoices.length === 0) {
-        return '前路暂时未显，请稍等剧情展开。';
+        return '前路暂时未显，请稍等记录展开。';
       }
       return parsedChoices.map((choice) => choice.text).join(' / ');
     }
@@ -328,7 +327,7 @@ export function protagonistActionText(task: TaskView): string | null {
     const parsed = JSON.parse(raw) as { options?: StreamedProtagonistOption[] };
     const options = parsed.options ?? [];
     if (options.length === 0) {
-      return '前路暂时未显，请稍等剧情展开。';
+      return '前路暂时未显，请稍等记录展开。';
     }
     return options
       .map((option, index) => option.title?.trim() || option.action?.trim() || `行动 ${index + 1}`)

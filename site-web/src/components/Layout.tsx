@@ -1,16 +1,16 @@
-import { Outlet, Link, useLocation } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
-import { useState } from 'react'
+import { Outlet, Link, useLocation } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
+import { useState } from "react";
 
 const navItems = [
-  { path: '/', label: '首页' },
-  { path: '/feedback', label: '反馈' },
-  { path: '/changelog', label: '更新日志' },
-]
+  { path: "/", label: "回响入口" },
+  { path: "/feedback", label: "回音信箱" },
+  { path: "/changelog", label: "记录更新" },
+];
 
 export default function Layout() {
-  const location = useLocation()
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const location = useLocation();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
     <div className="min-h-screen bg-background">
@@ -26,7 +26,7 @@ export default function Layout() {
           <Link to="/" className="flex items-center gap-2">
             <img
               src="/logo.svg"
-              alt="阿卡夏笔记图标"
+              alt="阿卡夏·回响图标"
               className="w-7 h-7 shrink-0"
             />
             <div>
@@ -34,7 +34,7 @@ export default function Layout() {
                 阿卡夏·回响
               </span>
               <span className="hidden lg:block text-[11px] tracking-[0.28em] text-muted-foreground/70">
-                INTERACTIVE DESTINY
+                AKASA ECHO
               </span>
             </div>
           </Link>
@@ -45,10 +45,11 @@ export default function Layout() {
               <Link
                 key={item.path}
                 to={item.path}
-                className={`relative px-4 py-2 text-sm rounded-lg transition-colors ${location.pathname === item.path
-                  ? 'text-primary bg-primary/10'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-card/50'
-                  }`}
+                className={`relative px-4 py-2 text-sm rounded-lg transition-colors ${
+                  location.pathname === item.path
+                    ? "text-primary bg-primary/10"
+                    : "text-muted-foreground hover:text-foreground hover:bg-card/50"
+                }`}
               >
                 {item.label}
               </Link>
@@ -91,7 +92,7 @@ export default function Layout() {
           {mobileMenuOpen && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
+              animate={{ opacity: 1, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}
               className="md:hidden border-t border-border/50 bg-background"
             >
@@ -101,10 +102,11 @@ export default function Layout() {
                     key={item.path}
                     to={item.path}
                     onClick={() => setMobileMenuOpen(false)}
-                    className={`block py-3 px-4 rounded-lg text-sm ${location.pathname === item.path
-                      ? 'text-primary bg-primary/10'
-                      : 'text-muted-foreground'
-                      }`}
+                    className={`block py-3 px-4 rounded-lg text-sm ${
+                      location.pathname === item.path
+                        ? "text-primary bg-primary/10"
+                        : "text-muted-foreground"
+                    }`}
                   >
                     {item.label}
                   </Link>
@@ -137,7 +139,7 @@ export default function Layout() {
             <div className="flex items-center gap-2">
               <img
                 src="/logo.svg"
-                alt="阿卡夏笔记图标"
+                alt="阿卡夏·回响图标"
                 className="w-6 h-6 shrink-0"
               />
               <div>
@@ -162,5 +164,5 @@ export default function Layout() {
         </div>
       </footer>
     </div>
-  )
+  );
 }

@@ -15,7 +15,7 @@ import {
 
 function titleFromWorldState(
   worldState: SessionRoundHistoryData['worldState'] | GameSessionWorldStateData['worldState'] | null | undefined,
-  fallback = '命运回响',
+  fallback = '记录回响',
 ): string {
   return worldState?.sceneTitle?.trim() || fallback;
 }
@@ -53,17 +53,17 @@ export function stateViewFromSession(session: GameSessionWorldStateData): Runtim
     phase: session.phase,
     turnIndex: session.turnIndex,
     activeTurnId: session.activeTurnId,
-    currentLocation: session.worldState.locationName || '命运现场',
-    currentScene: session.worldState.sceneTitle || '命运回响',
-    protagonistState: session.worldState.protagonistCondition || '命运仍在酝酿',
+    currentLocation: session.worldState.locationName || '记录现场',
+    currentScene: session.worldState.sceneTitle || '记录回响',
+    protagonistState: session.worldState.protagonistCondition || '记录仍在酝酿',
     npcsState: session.worldState.currentEvent || '诸多回响正在汇聚',
     latestHistory: latestHistoryFromSession(session),
     latestBroadcastSummary:
       session.worldState.currentEvent
       || session.worldState.description
-      || '旅程已续上',
+      || '记录已续上',
     latestBroadcastItems,
-    latestProtagonistAction: session.currentProtagonistAction || '你还没有做出选择',
+    latestProtagonistAction: session.currentProtagonistAction || '你还没有写下选择',
     isEnding: session.worldState.isEnding,
     endingType: session.worldState.endingType ?? null,
   };

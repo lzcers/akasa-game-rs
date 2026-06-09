@@ -41,11 +41,11 @@ function endingPresentation(endingType: string | null): EndingPresentation {
   switch (endingType) {
     case 'triumph':
       return {
-        emblem: '凯歌终章',
-        title: '你把命运推到了所愿之处',
-        subtitle: '回响在此刻收束成一枚耀眼的结晶。那些曾压在你身上的阴影，被你亲手改写成了抵达。',
-        cardTitle: '胜利没有白白降临',
-        cardBody: '你跨过了最艰难的门槛，让执念、选择与代价终于换回一个能够被称作圆满的回答。',
+        emblem: '凯歌记录',
+        title: '你让这段记录抵达所愿之处',
+        subtitle: '回响在此刻收束成一枚耀眼的结晶。那些曾压在角色身上的阴影，被你亲手改写成了抵达。',
+        cardTitle: '胜利被写入记录',
+        cardBody: '你跨过了最艰难的门槛，让执念、选择与代价终于共鸣成一个能够被称作圆满的回答。',
         echoTitle: '余辉仍会延续',
         echoBody: '即便故事停在这里，这份胜利也会继续影响仍留在世界里的每一个人。',
         accentClassName: 'text-amber-100',
@@ -55,11 +55,11 @@ function endingPresentation(endingType: string | null): EndingPresentation {
       };
     case 'tragedy':
       return {
-        emblem: '沉坠终章',
-        title: '你抵达了无法挽回的尽头',
-        subtitle: '回响没有替你避开代价。它只是让最后一刻更清晰地落下，让失去成为这段旅程的名字。',
+        emblem: '沉坠记录',
+        title: '这段记录抵达了无法挽回的尽头',
+        subtitle: '阿卡夏没有替你避开代价。它只是让最后一刻更清晰地落下，让失去成为这段回响的名字。',
         cardTitle: '结局并不仁慈',
-        cardBody: '你曾努力伸手，却还是让某些重要之物从掌心坠落。故事没有回头，代价也不会被抹去。',
+        cardBody: '你曾努力伸手，却还是让某些重要之物从掌心坠落。记录没有回头，代价也不会被抹去。',
         echoTitle: '沉默仍在扩散',
         echoBody: '那些没有来得及说出口的话，会在更久的时间里化作世界的暗流。',
         accentClassName: 'text-rose-100',
@@ -69,9 +69,9 @@ function endingPresentation(endingType: string | null): EndingPresentation {
       };
     case 'bittersweet':
       return {
-        emblem: '残响终章',
-        title: '你得到了答案，也失去了别的东西',
-        subtitle: '命运给出的从不是完整的恩赐。它让你带着结果离开，也让你明白自己究竟付出了什么。',
+        emblem: '残响记录',
+        title: '你在记录中得到了答案，也留下缺口',
+        subtitle: '阿卡夏显影出的从不是完整的恩赐。它让你带着结果离开，也让你明白自己究竟付出了什么。',
         cardTitle: '所得与所失并肩而立',
         cardBody: '你没有空手而归，但也无法像故事开始时那样完整。正因如此，这段回响才显得真实。',
         echoTitle: '温热与刺痛同时留下',
@@ -83,13 +83,13 @@ function endingPresentation(endingType: string | null): EndingPresentation {
       };
     case 'open':
       return {
-        emblem: '未竟终章',
-        title: '这一段旅程停下了，世界却还没有',
+        emblem: '未竟记录',
+        title: '这一页暂时合上，世界仍在回响',
         subtitle: '门在此处轻轻合上，但远方仍有风声。你离开这一页时，更多可能仍在暗处继续发芽。',
         cardTitle: '故事只是暂别',
-        cardBody: '你触碰到了一个阶段的终点，却没有真的看见世界的全部。未被讲述的部分，仍在等待后来者。',
+        cardBody: '你触碰到了一个阶段的终点，却没有真的看见世界的全部。未被显影的部分，仍在等待后来者。',
         echoTitle: '远处还有潮汐',
-        echoBody: '就算此刻不再继续，你也知道命运并没有彻底熄灭，它只是把火留在了更远的地方。',
+        echoBody: '就算此刻不再继续，你也知道记录并没有彻底沉默，它只是把火留在了更远的地方。',
         accentClassName: 'text-sky-100',
         borderClassName: 'border-sky-300/30 bg-[linear-gradient(135deg,rgba(26,61,92,0.92),rgba(14,19,31,0.94))]',
         glowClassName: 'from-sky-300/18 via-cyan-200/10 to-transparent',
@@ -97,13 +97,13 @@ function endingPresentation(endingType: string | null): EndingPresentation {
       };
     default:
       return {
-        emblem: '终章已定',
-        title: '故事在这里缓缓落下帷幕',
+        emblem: '记录已定',
+        title: '故事在阿卡夏中缓缓合页',
         subtitle: '回响替你收好这一路的余温与裂痕，让最后一页以自己的方式静静合拢。',
-        cardTitle: '这一程已经完成',
+        cardTitle: '这一段记录已经完成',
         cardBody: '也许它没有一个容易归类的名字，但它确实已经抵达属于自己的终点。',
         echoTitle: '余韵会继续停留',
-        echoBody: '就算你转身离开，这段旅程留下的波纹也不会立刻消散。',
+        echoBody: '就算你转身离开，这段记录留下的波纹也不会立刻消散。',
         accentClassName: 'text-[#f6eddc]',
         borderClassName: 'border-[#c9b38f]/28 bg-[linear-gradient(135deg,rgba(64,48,29,0.92),rgba(17,17,19,0.94))]',
         glowClassName: 'from-[#d9cbb1]/14 via-[#d9cbb1]/8 to-transparent',
@@ -137,8 +137,8 @@ const EndingPage: React.FC = () => {
       .filter((entry) => entry.narrationText || entry.selectedChoiceText)
       .sort((left, right) => right.round - left.round)[0]
   ), [roundStates]);
-  const lastNarration = lastRound?.narrationText?.trim() || stateView?.latestHistory?.trim() || '最后一段余音还停留在风里。';
-  const lastChoice = lastRound?.selectedChoiceText?.trim() || '你走到了命运为你收束的这一刻。';
+  const lastNarration = lastRound?.narrationText?.trim() || stateView?.latestHistory?.trim() || '最后一段余音还停留在记录里。';
+  const lastChoice = lastRound?.selectedChoiceText?.trim() || '你走到了这段记录为你收束的这一刻。';
 
   React.useEffect(() => {
     track('ending_viewed', {
@@ -151,9 +151,9 @@ const EndingPage: React.FC = () => {
   const handleSave = async () => {
     try {
       await createSave();
-      setFeedback('这段终章已经被妥善收好。');
+      setFeedback('这段终章已经被封存进记录。');
     } catch (saveError) {
-      setFeedback(saveError instanceof Error ? saveError.message : '保存这段终章失败。');
+      setFeedback(saveError instanceof Error ? saveError.message : '封存这段终章失败。');
     }
   };
 
@@ -208,27 +208,27 @@ const EndingPage: React.FC = () => {
 
           <div className="grid gap-3 md:grid-cols-3">
             <SectionCard className="space-y-2">
-              <p className="text-xs tracking-[0.24em] text-[#bca984]">终章余波</p>
+              <p className="text-xs tracking-[0.24em] text-[#bca984]">记录余波</p>
               <p className="text-lg font-medium text-[#f6eddc]">{presentation.echoTitle}</p>
               <p className="text-sm leading-6 text-[#aeb6c6]">{presentation.echoBody}</p>
             </SectionCard>
             <SectionCard className="space-y-2">
-              <p className="text-xs tracking-[0.24em] text-[#bca984]">最后场景</p>
+              <p className="text-xs tracking-[0.24em] text-[#bca984]">终章场景</p>
               <p className="text-lg font-medium text-[#f6eddc]">
                 {stateView?.currentScene || '终章现场'}
               </p>
               <p className="text-sm leading-6 text-[#aeb6c6]">
-                {stateView?.currentLocation || '命运在此刻完成收束。'}
+                {stateView?.currentLocation || '记录在此刻完成收束。'}
               </p>
             </SectionCard>
             <SectionCard className="space-y-2">
-              <p className="text-xs tracking-[0.24em] text-[#bca984]">最后一步</p>
+              <p className="text-xs tracking-[0.24em] text-[#bca984]">最后写入</p>
               <p className="text-sm leading-6 text-[#f3e8d2]">{lastChoice}</p>
             </SectionCard>
           </div>
 
           <SectionCard className="space-y-3">
-            <p className="text-xs tracking-[0.24em] text-[#bca984]">最后的余音</p>
+            <p className="text-xs tracking-[0.24em] text-[#bca984]">终章摘录</p>
             <p className="whitespace-pre-wrap text-sm leading-7 text-[#d8dee9] sm:text-[0.95rem]">
               {lastNarration}
             </p>
@@ -240,7 +240,7 @@ const EndingPage: React.FC = () => {
             </PrimaryButton>
             <SecondaryButton onClick={handleReviewStory} disabled={isLoading || !sessionId} className="min-w-44 gap-2">
               <BookOpenText className="h-4 w-4" />
-              阅读全部文本
+              回看完整记录
             </SecondaryButton>
             <SecondaryButton onClick={handleBackToLobby} disabled={isLoading} className="min-w-44">
               回到回响厅

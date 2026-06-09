@@ -37,23 +37,23 @@ type ProfileStepKey =
 const startupSteps: StartupStep[] = [
   {
     key: "generating_world",
-    label: "世界生成中",
-    title: "编织世界脉络",
+    label: "世界显影中",
+    title: "共鸣世界记录",
     description:
-      "正在收束时代纹理、核心矛盾与规则压力，让回响拥有可持续展开的张力。",
+      "正在从你的设定中提取时代纹理、核心矛盾与规则压力，让世界从记录中浮现。",
   },
   {
     key: "generating_protagonist",
-    label: "人物生成中",
-    title: "凝聚主角命运",
+    label: "角色显影中",
+    title: "凝聚角色回响",
     description:
-      "正在把你的烙印、欲望、弱点与性格倾向熔进人物设定，让主角更适合长期演绎。",
+      "正在把烙印、欲望、弱点与性格倾向写入记录，让角色更适合长期演绎。",
   },
   {
     key: "creating_session",
-    label: "注入回响中",
-    title: "唤起第一轮命运",
-    description: "世界与主角设定已经落笔，正在将它们汇入故事，并唤起开场叙事。",
+    label: "写入回响中",
+    title: "唤起第一段记录",
+    description: "世界与角色设定已经落笔，正在汇入阿卡夏记录，并唤起开场叙事。",
   },
 ];
 
@@ -72,23 +72,23 @@ const profileStepOrder: ProfileStepKey[] = [
 
 const rotatingMessages: Record<Exclude<StartupStage, "idle">, string[]> = {
   generating_world: [
-    "正在编织时代压力",
+    "正在显影时代压力",
     "正在收束世界规则与禁忌",
-    "正在校准冲突将如何逼近主角",
+    "正在校准冲突将如何逼近角色",
   ],
   generating_protagonist: [
-    "正在收束主角欲望",
-    "正在打磨人物弱点与裂缝",
+    "正在收束角色欲望",
+    "正在打磨角色弱点与裂缝",
     "正在让性格倾向落成可演绎的行动方式",
   ],
   ready_to_enter: [
-    "第一轮叙事已经开始显影",
-    "命运入口已经被推开一道缝隙",
+    "第一段记录已经开始显影",
+    "共鸣入口已经被推开一道缝隙",
     "你现在可以步入回响，直接看到故事继续流动",
   ],
   creating_session: [
-    "正在注入世界设定",
-    "正在唤起第一轮命运",
+    "正在写入世界记录",
+    "正在唤起第一段回响",
     "正在为你铺开故事的开场",
   ],
 };
@@ -118,34 +118,34 @@ function stageHeadline(
   switch (stage) {
     case "generating_protagonist":
       return {
-        title: "主角轮廓正在浮现",
-        subtitle: `${name} 的欲望、弱点与行动倾向正在被收束成更适合展开剧情的命运底稿。`,
+        title: "角色记录正在显影",
+        subtitle: `${name} 的欲望、弱点与行动倾向正在被收束成更适合展开剧情的记录底稿。`,
       };
     case "creating_session":
       return {
-        title: "回响入口正在开启",
+        title: "共鸣入口正在开启",
         subtitle:
-          "世界设定与主角设定已经生成，正在将它们汇入回响，并点亮第一轮叙事。",
+          "世界记录与角色记录已经生成，正在将它们汇入回响，并点亮第一段叙事。",
       };
     case "ready_to_enter":
       return hasPlayableSession
         ? {
-            title: "开场已经点亮",
+            title: "开场记录已经点亮",
             subtitle:
-              "第一轮叙事已经开始流动。你现在就可以步入回响，直接看着它继续展开。",
+              "第一段叙事已经开始流动。你现在就可以步入回响，直接看着它继续展开。",
           }
         : {
-            title: "入口稍有震颤",
+            title: "共鸣入口稍有震颤",
             subtitle:
-              "世界设定与主角设定已经完备。再试一次，就能继续唤起你的第一轮命运。",
+              "世界记录与角色记录已经完备。再试一次，就能继续唤起你的第一段回响。",
           };
     case "generating_world":
     case "idle":
     default:
       return {
-        title: "世界纹理正在编织",
+        title: "世界记录正在显影",
         subtitle:
-          "回响会先推演世界压力，再收束主角命运，让开场更像一个真正会继续生长的故事。",
+          "阿卡夏会先推演世界压力，再收束角色记录，让开场更像一个真正会继续生长的故事。",
       };
   }
 }
@@ -189,7 +189,7 @@ const GeneratingPage: React.FC = () => {
     hasPlayableSession;
   const headline = stageHeadline(
     startupStage,
-    character.name || "这位主角",
+    character.name || "这位角色",
     canEnterWorld,
   );
   const stageKey = startupStage === "idle" ? "generating_world" : startupStage;
@@ -200,13 +200,13 @@ const GeneratingPage: React.FC = () => {
 
     return canEnterWorld
       ? [
-          "第一轮叙事已经开始显影",
-          "命运入口已经被推开一道缝隙",
+          "第一段记录已经开始显影",
+          "共鸣入口已经被推开一道缝隙",
           "你现在可以步入回响，直接看到故事继续流动",
         ]
       : [
-          "设定已经落笔，只差把旅程重新续上",
-          "命运入口短暂摇晃，你可以再次尝试",
+          "设定已经落笔，只差把记录重新续上",
+          "共鸣入口短暂摇晃，你可以再次尝试",
           "再推开一次门，回响会继续向前",
         ];
   }, [canEnterWorld, stageKey]);
@@ -243,19 +243,19 @@ const GeneratingPage: React.FC = () => {
     return {
       generating_world: {
         eyebrow: "世界设定",
-        title: "这一次回响所落下的世界纹理",
+        title: "阿卡夏显影出的世界记录",
         text: preparedProfiles.world,
         className: "border-[#5b6f96]/30 bg-[#0f1624]/80 text-[#c7d5f2]",
       },
       generating_protagonist: {
-        eyebrow: "人物设定",
-        title: "主角被命运收束后的轮廓",
+        eyebrow: "角色设定",
+        title: "阿卡夏显影出的角色记录",
         text: preparedProfiles.protagonist,
         className: "border-[#6f5f96]/30 bg-[#151325]/80 text-[#d8d0f2]",
       },
       creating_session: {
-        eyebrow: "命运引线",
-        title: "故事即将被点亮的第一束牵引",
+        eyebrow: "分支引线",
+        title: "第一条即将回响的分支引线",
         text: preparedProfiles.keyStoryBeats,
         className: "border-[#8a7755]/30 bg-[#17120f]/80 text-[#efe4cd]/88",
       },
@@ -318,7 +318,7 @@ const GeneratingPage: React.FC = () => {
                 icon={Sparkles}
                 className="border-[#8b5cf6]/30 bg-[#1b1733]/80 text-[#e3d8ff]"
               >
-                {character.background || "命运烙印待揭晓"}
+                {character.background || "角色烙印待显影"}
               </StatusPill>
             </div>
 
@@ -419,7 +419,7 @@ const GeneratingPage: React.FC = () => {
                 onClick={() => void startGame()}
                 className="min-w-44"
               >
-                重新编织
+                重新共鸣
               </SecondaryButton>
               <PrimaryButton
                 onClick={handleEnterWorld}
@@ -429,7 +429,7 @@ const GeneratingPage: React.FC = () => {
                 {canEnterWorld
                   ? "步入回响"
                   : isLoading
-                    ? "回响共鸣中..."
+                    ? "共鸣中..."
                     : "再次步入回响"}
               </PrimaryButton>
             </div>

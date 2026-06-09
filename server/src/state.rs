@@ -19,12 +19,12 @@ use uuid::Uuid;
 use crate::{
     analytics::{AnalyticsRepository, AnalyticsSummary},
     api::archive,
-    api::dto::{
-        AnalyticsBatchRequest, ControlGameSessionData, ControlGameSessionRequest,
-        CreateGameSessionData, CreateGameSessionRequest, GameSessionControlCommand,
-        GameSessionWorldStateData, RoundHistoryData, SaveExportData, SessionActionInput,
-        SubmitFeedbackData, ValidatedFeedbackRequest, WorldStateData,
+    api::game_sessions::{
+        ControlGameSessionData, ControlGameSessionRequest, CreateGameSessionData,
+        CreateGameSessionRequest, GameSessionControlCommand, GameSessionWorldStateData,
+        RoundHistoryData, SaveExportData, SessionActionInput, WorldStateData,
     },
+    api::site::{AnalyticsBatchRequest, SubmitFeedbackData, ValidatedFeedbackRequest},
     email::{FeedbackEmail, FeedbackMailer},
     error::AppError,
 };
@@ -591,7 +591,7 @@ mod tests {
         let state = test_state();
 
         let created = state
-            .create_game_session(crate::api::dto::CreateGameSessionRequest {
+            .create_game_session(crate::api::game_sessions::CreateGameSessionRequest {
                 world_profile: "archive world".to_string(),
                 protagonist_profile: "archive protagonist".to_string(),
                 key_story_beats: "archive beats".to_string(),
@@ -618,7 +618,7 @@ mod tests {
         let state = test_state();
 
         state
-            .create_game_session(crate::api::dto::CreateGameSessionRequest {
+            .create_game_session(crate::api::game_sessions::CreateGameSessionRequest {
                 world_profile: "old world".to_string(),
                 protagonist_profile: "old protagonist".to_string(),
                 key_story_beats: "old beats".to_string(),

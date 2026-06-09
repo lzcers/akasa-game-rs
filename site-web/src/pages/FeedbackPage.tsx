@@ -25,7 +25,7 @@ const feedbackTypes: {
 }[] = [
   {
     value: "bug",
-    label: "问题反馈",
+    label: "异常记录",
     icon: (
       <svg
         className="w-5 h-5"
@@ -40,7 +40,7 @@ const feedbackTypes: {
   },
   {
     value: "suggestion",
-    label: "功能建议",
+    label: "共鸣建议",
     icon: (
       <svg
         className="w-5 h-5"
@@ -55,7 +55,7 @@ const feedbackTypes: {
   },
   {
     value: "other",
-    label: "其他",
+    label: "其他回声",
     icon: (
       <svg
         className="w-5 h-5"
@@ -90,7 +90,7 @@ export default function FeedbackPage() {
 
     const trimmedContent = content.trim();
     if (!trimmedContent) {
-      setSubmitError("请先写下反馈内容。");
+      setSubmitError("请先写下你的回声。");
       return;
     }
 
@@ -124,7 +124,7 @@ export default function FeedbackPage() {
         setSubmitError(
           body?.success === false && body.error?.message
             ? body.error.message
-            : `反馈通道返回 ${response.status}`,
+            : `回声通道返回 ${response.status}`,
         );
         return;
       }
@@ -134,7 +134,7 @@ export default function FeedbackPage() {
       setSubmitError(
         error instanceof Error
           ? error.message
-          : "反馈通道暂时不可用，请稍后再试。",
+          : "回声通道暂时不可用，请稍后再试。",
       );
     } finally {
       setIsSubmitting(false);
@@ -168,21 +168,21 @@ export default function FeedbackPage() {
                   </svg>
                 </div>
                 <p className="text-xs tracking-[0.32em] text-accent/80 mb-3">
-                  MESSAGE RECEIVED
+                  回声已收录
                 </p>
                 <h2 className="font-serif text-2xl lg:text-3xl text-foreground mb-3">
-                  感谢你的反馈
+                  你的回声已被收录
                 </h2>
                 <p className="text-sm text-muted-foreground leading-7">
-                  我们已收到你的消息，会尽快处理。
-                  你的每一条建议，都会成为这片回响继续生长的线索。
+                  我们会沿着这条记录继续校准回响。
+                  你的每一个观察，都会帮助阿卡夏显影出更贴近玩家想象的世界。
                 </p>
               </div>
 
               <div className="game-card p-5 lg:p-6 bg-background/40">
                 <p className="text-sm text-foreground/85 leading-7 mb-4">
-                  如果你还想补充更多细节，或者愿意继续留下新的想法，
-                  可以随时再次写下你的观察与建议。
+                  如果你还想补充某段故事、某个角色，或一个想被记录回应的世界，
+                  可以随时继续写下新的回声。
                 </p>
                 <button
                   onClick={() => {
@@ -192,7 +192,7 @@ export default function FeedbackPage() {
                   }}
                   className="w-full sm:w-auto game-btn-secondary px-6 py-3"
                 >
-                  提交新反馈
+                  继续写回声
                 </button>
               </div>
             </div>
@@ -213,24 +213,24 @@ export default function FeedbackPage() {
           >
             <div className="text-center xl:text-left">
               <p className="text-xs tracking-[0.32em] text-accent/80 mb-3">
-                FEEDBACK CHANNEL
+                Email
               </p>
               <h1 className="font-serif text-3xl md:text-4xl text-foreground mb-3">
-                意见反馈
+                回音信箱
               </h1>
               <p className="text-muted-foreground text-sm leading-7 max-w-md mx-auto xl:mx-0">
-                你的声音会直接影响回响接下来的生长方向。
+                你的声音会影响阿游戏的迭代。
               </p>
             </div>
 
             <div className="game-card p-5">
               <p className="text-sm text-foreground mb-3">
-                提交前可以这样写得更清楚
+                写入前可以补足这些线索
               </p>
               <div className="space-y-3 text-sm text-muted-foreground">
-                <p>描述你当时在做什么，帮助我们更快复现。</p>
-                <p>如果是建议，也欢迎补一句你期待的体验变化。</p>
-                <p>愿意收到回信的话，再留下邮箱即可。</p>
+                <p>
+                  欢迎提出你的想法和建议，如愿意收到回信的话，可以下你的邮箱或者联系方式。
+                </p>
               </div>
             </div>
 
@@ -245,8 +245,8 @@ export default function FeedbackPage() {
               <div className="space-y-3">
                 {[
                   {
-                    q: "存档数据丢失怎么办？",
-                    a: "游戏数据存储在本地浏览器中。如果清除了浏览器缓存，存档可能会丢失。我们建议定期导出存档。",
+                    q: "本地记录丢失怎么办？",
+                    a: "游戏记录保存在当前浏览器中。如果清除了浏览器缓存，记录可能会丢失。建议定期导出重要记录。",
                   },
                 ].map((item, i) => (
                   <div key={i} className="game-card p-4">
@@ -271,7 +271,7 @@ export default function FeedbackPage() {
               <div>
                 <div className="mb-6">
                   <label className="block text-sm text-muted-foreground mb-3">
-                    反馈类型
+                    回声类型
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     {feedbackTypes.map((item) => (
@@ -301,7 +301,7 @@ export default function FeedbackPage() {
                     htmlFor="content"
                     className="block text-sm text-muted-foreground mb-2"
                   >
-                    反馈内容
+                    回声内容
                   </label>
                   <textarea
                     id="content"
@@ -309,7 +309,7 @@ export default function FeedbackPage() {
                     onChange={(e) => setContent(e.target.value)}
                     required
                     rows={8}
-                    placeholder="请详细描述你的想法、遇到的问题或建议..."
+                    placeholder="写下你看到的问题、希望共鸣出的世界或角色，或某段故事的不协调之处..."
                     className="w-full px-4 py-3 rounded-xl border border-border bg-card/50 text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20 transition-all resize-none"
                   />
                 </div>
@@ -321,7 +321,7 @@ export default function FeedbackPage() {
                     htmlFor="email"
                     className="block text-sm text-muted-foreground mb-2"
                   >
-                    联系邮箱{" "}
+                    联系邮箱/微信{" "}
                     <span className="text-muted-foreground/50">(可选)</span>
                   </label>
                   <input
@@ -329,11 +329,11 @@ export default function FeedbackPage() {
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="your@email.com"
+                    placeholder=""
                     className="w-full px-4 py-3 rounded-xl border border-border bg-card/50 text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20 transition-all"
                   />
                   <p className="mt-2 text-xs text-muted-foreground/60">
-                    如需我们回复，请留下邮箱
+                    如需我们回信，请留下邮箱
                   </p>
                 </div>
 
@@ -352,7 +352,7 @@ export default function FeedbackPage() {
                     isSubmitting ? "cursor-not-allowed opacity-70" : ""
                   }`}
                 >
-                  {isSubmitting ? "发送中..." : "提交反馈"}
+                  {isSubmitting ? "写入中..." : "送入记录"}
                 </motion.button>
               </div>
             </div>

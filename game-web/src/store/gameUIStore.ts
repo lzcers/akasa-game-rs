@@ -240,7 +240,7 @@ function waitForRoundNarrationStarted(sessionId: string, round: number) {
 
     const timeoutId = window.setTimeout(() => {
       unsubscribe();
-      reject(new Error('开场叙事比预想中更慢一些，请再试一次。'));
+      reject(new Error('开场记录比预想中更慢一些，请再试一次。'));
     }, FIRST_ROUND_READY_TIMEOUT_MS);
 
     const unsubscribe = useGameInternalStore.subscribe((state) => {
@@ -314,7 +314,7 @@ function connectSessionStream(sessionId: string) {
           return;
         }
         useGameUIStore.setState({
-          error: '连接有些不稳定，正在为你续上这段旅程...',
+          error: '连接有些不稳定，正在为你续接这段记录...',
         });
       },
     },
@@ -389,7 +389,7 @@ function applyStreamTaskToStores(task: TaskView, boundRound?: number | null) {
       const nextRoundState = createRoundState(activeRound, {
         ...(previousRoundState ?? {}),
         round: activeRound,
-        title: previousRoundState?.title || stateView?.currentScene || '命运回响',
+        title: previousRoundState?.title || stateView?.currentScene || '记录回响',
         narrationText: nextText,
         narrationStatus: task.status,
         isAwaitingNarration: false,
@@ -444,7 +444,7 @@ function applyStreamTaskToStores(task: TaskView, boundRound?: number | null) {
       const previousRoundState = internalState.roundStates[nextRound];
       const nextTurnIndex = Math.max(internalState.turnIndex, nextRound);
       const nextDisplayRound = internalState.displayRound || nextRound;
-      const nextTitle = summary?.sceneTitle ?? previousRoundState?.title ?? '命运回响';
+      const nextTitle = summary?.sceneTitle ?? previousRoundState?.title ?? '记录回响';
 
       if (
         internalState.turnIndex !== nextTurnIndex
@@ -589,9 +589,8 @@ const createGameUIActions = (
   updateWorld: (updates) =>
     set((state) => ({
       world: {
-        ...state.world,
-        ...updates,
-        specialRules: updates.specialRules ?? state.world.specialRules,
+        era: updates.era ?? state.world.era,
+        description: updates.description ?? state.world.description,
       },
     })),
   updateStory: (updates) =>
@@ -647,7 +646,7 @@ const createGameUIActions = (
         stateView: null,
         isLoading: false,
         startupStage: 'idle',
-        error: error instanceof Error ? error.message : '开启旅程失败。',
+        error: error instanceof Error ? error.message : '开启回响失败。',
       });
       navigateTo(appRoutes.creation, { replace: true });
       throw error;
@@ -682,7 +681,7 @@ const createGameUIActions = (
     }
 
     if (!preparedProfiles) {
-      throw new Error('设定还在准备中，请稍后再进入。');
+      throw new Error('记录还在共鸣中，请稍后再进入。');
     }
 
     set({
@@ -723,14 +722,14 @@ const createGameUIActions = (
           phase: 'booting',
           turnIndex: 0,
           activeTurnId: 0,
-          currentLocation: '命运现场',
-          currentScene: '命运编织中',
-          protagonistState: `${character.name || '无名旅人'} 正踏入 ${world.era}`,
+          currentLocation: '记录现场',
+          currentScene: '记录共鸣中',
+          protagonistState: `${character.name || '无名旅人'} 正踏入 ${world.era} 的记录`,
           npcsState: '诸多回响正在汇聚',
           latestHistory: STREAM_PLACEHOLDER_TEXT,
-          latestBroadcastSummary: '旅程已开始，正在展开开场内容...',
-          latestBroadcastItems: ['旅程已开始，正在展开开场内容...'],
-          latestProtagonistAction: '你还没有做出选择',
+          latestBroadcastSummary: '阿卡夏记录已开始共鸣，开场正在显影...',
+          latestBroadcastItems: ['阿卡夏记录已开始共鸣，开场正在显影...'],
+          latestProtagonistAction: '你还没有写下选择',
           isEnding: false,
           endingType: null,
         },
@@ -818,11 +817,11 @@ const createGameUIActions = (
     } = useGameValueStore.getState();
 
     if (!sessionId) {
-      throw new Error('当前还没有进行中的旅程。');
+      throw new Error('当前还没有进行中的记录。');
     }
 
     if (activeStreamSessionId !== sessionId) {
-      throw new Error('内容还在铺展中，请稍后再选择。');
+      throw new Error('记录还在铺展中，请稍后再选择。');
     }
 
     const nextInput: PlayerActionInput = {
@@ -830,11 +829,11 @@ const createGameUIActions = (
       action: submission.input.action.trim(),
     };
     if (!nextInput.action) {
-      throw new Error('写下你此刻想做的事。');
+      throw new Error('写下你此刻想写入记录的事。');
     }
 
     if (useObsession && obsessionPoints <= 0) {
-      throw new Error('执念点不足。');
+      throw new Error('执念点不足，无法继续写入记录。');
     }
 
     const activeRound = Math.max(displayRound || 1, 1);
@@ -844,7 +843,7 @@ const createGameUIActions = (
       nextInput.type === 'selected_option'
       && !currentRoundChoices.some((choice) => choice.action === nextInput.action)
     ) {
-      throw new Error('这个选项已失效，请重新选择。');
+      throw new Error('这条分支已失效，请重新选择。');
     }
     const selectedChoiceText = useObsession
       ? `${submission.displayText} [执念]`
@@ -930,7 +929,7 @@ const createGameUIActions = (
   createSave: async (title) => {
     const { sessionId } = useGameInternalStore.getState();
     if (!sessionId) {
-      throw new Error('此刻还没有可保存的进度。');
+      throw new Error('此刻还没有可封存的记录。');
     }
 
     const normalizedTitle = title?.trim();
@@ -959,7 +958,7 @@ const createGameUIActions = (
     } catch (error) {
       set({
         isLoading: false,
-        error: error instanceof Error ? error.message : '存档失败。',
+        error: error instanceof Error ? error.message : '封存失败。',
       });
       throw error;
     }
@@ -967,7 +966,7 @@ const createGameUIActions = (
   loadSave: async (saveId) => {
     const slotId = saveId.trim();
     if (!slotId) {
-      throw new Error('未找到要读取的存档。');
+      throw new Error('未找到要读取的记录。');
     }
 
     closeActiveSessionStream();
@@ -983,7 +982,7 @@ const createGameUIActions = (
     try {
       const archive = readStoredSaveArchive(slotId);
       if (!archive) {
-        throw new Error('没有找到这份存档，请确认它仍然存在。');
+        throw new Error('没有找到这份记录，请确认它仍然存在。');
       }
 
       const loaded = await loadGameSessionFromArchive({
@@ -1009,7 +1008,7 @@ const createGameUIActions = (
       });
       set({
         ...resetUIState(),
-        error: error instanceof Error ? error.message : '读取存档失败。',
+        error: error instanceof Error ? error.message : '读取记录失败。',
       });
       navigateTo(appRoutes.lobby, { replace: true });
       throw error;
@@ -1018,7 +1017,7 @@ const createGameUIActions = (
   restoreSession: async (sessionId) => {
     const targetSessionId = sessionId.trim();
     if (!targetSessionId) {
-      throw new Error('未找到要恢复的旅程编号。');
+      throw new Error('未找到要恢复的记录编号。');
     }
 
     const currentSessionId = useGameInternalStore.getState().sessionId;
@@ -1080,7 +1079,7 @@ const createGameUIActions = (
       });
       set({
         ...resetUIState(),
-        error: error instanceof Error ? error.message : '这段旅程已经暂时无法续上。',
+        error: error instanceof Error ? error.message : '这段记录已经暂时无法续上。',
       });
       navigateTo(appRoutes.lobby, { replace: true });
       throw error;
@@ -1089,7 +1088,7 @@ const createGameUIActions = (
   cloneSharedSession: async (sourceSessionId) => {
     const targetSessionId = sourceSessionId.trim();
     if (!targetSessionId) {
-      throw new Error('未找到要复制的旅程编号。');
+      throw new Error('未找到要复制的记录编号。');
     }
 
     if (activeCloneRequest?.sourceSessionId === targetSessionId) {
@@ -1147,7 +1146,7 @@ const createGameUIActions = (
         });
         set({
           ...resetUIState(),
-          error: error instanceof Error ? error.message : '这段旅程暂时无法复制。',
+          error: error instanceof Error ? error.message : '这段记录暂时无法复制。',
         });
         navigateTo(appRoutes.lobby, { replace: true });
         throw error;

@@ -9,7 +9,7 @@ use lettre::{
 };
 use tracing::warn;
 
-use crate::api::dto::ValidatedFeedbackRequest;
+use crate::api::site::ValidatedFeedbackRequest;
 
 #[derive(Clone)]
 pub struct FeedbackMailer {
@@ -347,7 +347,7 @@ fn parse_double_quoted_dotenv_value(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::api::dto::{FeedbackType, ValidatedFeedbackRequest};
+    use crate::api::site::{FeedbackType, ValidatedFeedbackRequest};
 
     use super::*;
 

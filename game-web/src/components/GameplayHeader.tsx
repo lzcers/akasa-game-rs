@@ -22,7 +22,9 @@ const GameplayHeader: React.FC<GameplayHeaderProps> = ({
   const broadcastSwipeStartRef = useRef<{ pointerId: number; clientX: number } | null>(null);
   const suppressBroadcastClickRef = useRef(false);
 
-  const isFatePlanningScene = !statusLabel && isLoading && currentScene.includes('命运编织');
+  const isFatePlanningScene = !statusLabel
+    && isLoading
+    && (currentScene.includes('记录共鸣') || currentScene.includes('命运编织'));
   const sceneStatusLabel = statusLabel ?? currentScene;
   const broadcastKey = broadcastMessages.join('||');
   const broadcastIndex = broadcastCursor.key === broadcastKey

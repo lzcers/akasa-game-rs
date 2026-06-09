@@ -65,9 +65,9 @@ function SessionRestoreGate({ sessionId }: { sessionId: string }) {
   return (
     <div className="flex h-full w-full items-center justify-center px-6 text-center">
       <div className="max-w-md space-y-3 rounded-[1.1rem] border border-[#6d86b7]/25 bg-[#101827]/78 px-5 py-5 text-[#efe4cd] shadow-[0_10px_30px_rgba(3,8,18,0.25)]">
-        <p className="text-sm font-semibold tracking-[0.18em] text-[#8fa4ca]">SESSION</p>
+        <p className="text-sm font-semibold tracking-[0.18em] text-[#8fa4ca]">记录续接</p>
         <p className="text-lg font-medium">
-          {isLoading ? '正在续上这段旅程...' : '正在打开旅程...'}
+          {isLoading ? '正在续接这段记录...' : '正在打开记录...'}
         </p>
         {error ? <p className="text-sm leading-6 text-[#ffd7d7]">{error}</p> : null}
       </div>
@@ -100,12 +100,12 @@ function SessionCloneGate({ sourceSessionId }: { sourceSessionId: string }) {
   return (
     <div className="flex h-full w-full items-center justify-center px-6 text-center">
       <div className="max-w-md space-y-3 rounded-[1.1rem] border border-[#6d86b7]/25 bg-[#101827]/78 px-5 py-5 text-[#efe4cd] shadow-[0_10px_30px_rgba(3,8,18,0.25)]">
-        <p className="text-sm font-semibold tracking-[0.18em] text-[#8fa4ca]">SHARE</p>
+        <p className="text-sm font-semibold tracking-[0.18em] text-[#8fa4ca]">共鸣分支</p>
         <p className="text-lg font-medium">
-          {isLoading ? '正在复制这段旅程...' : '正在打开分享旅程...'}
+          {isLoading ? '正在复制这段记录...' : '正在打开分享记录...'}
         </p>
         <p className="text-sm leading-6 text-[#a8b4c7]">
-          会为你生成一条独立分支，原玩家的故事不会被改变。
+          会为你生成一条独立共鸣分支，原玩家的记录不会被改变。
         </p>
         {error ? <p className="text-sm leading-6 text-[#ffd7d7]">{error}</p> : null}
       </div>

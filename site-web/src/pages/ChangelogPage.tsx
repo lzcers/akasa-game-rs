@@ -1,34 +1,32 @@
 type ChangelogEntry = {
-  version: string
-  date: string
-  type: 'major' | 'minor' | 'patch'
-  title: string
-  description: string
+  version: string;
+  date: string;
+  type: "major" | "minor" | "patch";
+  title: string;
+  description: string;
   changes: {
-    type: 'new' | 'improvement' | 'fix' | 'story'
-    text: string
-  }[]
-}
+    type: "new" | "improvement" | "fix" | "story";
+    text: string;
+  }[];
+};
 
 const changelog: ChangelogEntry[] = [
   {
-    version: '1.2.0',
-    date: '2026-05-28',
-    type: 'minor',
-    title: '序章',
-    description: '',
-    changes: [
-      { type: 'new', text: '互动文字游戏形态-第一版' },
-    ],
+    version: "1.0.0",
+    date: "2026-05-28",
+    type: "minor",
+    title: "初次共鸣",
+    description: "",
+    changes: [{ type: "new", text: "阿卡夏回响体验第一版" }],
   },
-]
+];
 
 const typeLabels = {
-  new: '新增',
-  improvement: '优化',
-  fix: '修复',
-  story: '剧情',
-}
+  new: "新增记录",
+  improvement: "共鸣优化",
+  fix: "记录修正",
+  story: "剧情回响",
+};
 
 export default function ChangelogPage() {
   return (
@@ -38,29 +36,26 @@ export default function ChangelogPage() {
           <div className="space-y-5 xl:sticky xl:top-28">
             <div>
               <p className="text-xs tracking-[0.32em] text-accent/80 mb-3">
-                CHRONICLE
+                记录编年
               </p>
               <h1 className="font-serif text-3xl md:text-4xl text-foreground mb-3">
-                更新日志
+                记录更新
               </h1>
             </div>
 
             <div className="game-card p-5">
-              <p className="text-sm text-foreground mb-3">当前阶段</p>
+              <p className="text-sm text-foreground mb-3">当前记录</p>
               <div className="space-y-2 text-sm text-muted-foreground">
-                <p>形态：互动文字游戏第一版</p>
-                <p>重点：先把序章与世界唤醒流程落稳</p>
-                <p>方向：继续补足体验与内容深度</p>
+                <p>形态：AI 互动小说共鸣原型</p>
+                <p>重点：先把世界、角色与序章显影流程落稳</p>
+                <p>方向：继续加深记录共鸣、分支因果与终章封存体验</p>
               </div>
             </div>
           </div>
 
           <div className="space-y-6">
             {changelog.map((entry) => (
-              <section
-                key={entry.version}
-                className="p-5 lg:p-6"
-              >
+              <section key={entry.version} className="p-5 lg:p-6">
                 <div className="grid gap-5 lg:grid-cols-[minmax(10rem,0.34fr)_minmax(0,1fr)] lg:gap-8">
                   <div className="lg:border-r lg:border-border/70 lg:pr-6">
                     <p className="text-xs tracking-[0.28em] text-accent/80 mb-3">
@@ -70,7 +65,11 @@ export default function ChangelogPage() {
                       v{entry.version}
                     </p>
                     <span className="inline-flex rounded-full border border-accent/30 bg-accent/8 px-3 py-1 text-xs text-accent">
-                      {entry.type === 'major' ? '重大更新' : entry.type === 'minor' ? '阶段更新' : '修补记录'}
+                      {entry.type === "major"
+                        ? "重大更新"
+                        : entry.type === "minor"
+                          ? "阶段更新"
+                          : "修补记录"}
                     </span>
                   </div>
 
@@ -106,5 +105,5 @@ export default function ChangelogPage() {
         </div>
       </div>
     </div>
-  )
+  );
 }
