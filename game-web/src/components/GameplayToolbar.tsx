@@ -1,8 +1,16 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Eye, Flame, House, MoreHorizontal, Save, Share2, X } from 'lucide-react';
-import { SecondaryButton } from './AkashicUI';
-import StoryShareCard from './StoryShareCard';
-import { generateGameSessionStorySummary } from '../lib/api';
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  Eye,
+  Flame,
+  House,
+  MoreHorizontal,
+  Save,
+  Share2,
+  X,
+} from "lucide-react";
+import { SecondaryButton } from "./AkashicUI";
+import StoryShareCard from "./StoryShareCard";
+import { generateGameSessionStorySummary } from "../lib/api";
 
 interface GameplayToolbarProps {
   isReadOnly?: boolean;
@@ -42,7 +50,8 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
   const [shareSummary, setShareSummary] = useState<string | null>(null);
   const [shareError, setShareError] = useState<string | null>(null);
   const [isShareLoading, setIsShareLoading] = useState(false);
-  const isShareCardOpen = shareCardOpenKey === archiveActionKey && !isArchiveActionDisabled;
+  const isShareCardOpen =
+    shareCardOpenKey === archiveActionKey && !isArchiveActionDisabled;
 
   const resolvedShareSummary = useMemo(() => {
     const fetchedSummary = shareSummary?.trim();
@@ -58,13 +67,13 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
     }
 
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === "Escape") {
         setShareCardOpenKey(null);
       }
     };
 
-    window.addEventListener('keydown', handleEscape);
-    return () => window.removeEventListener('keydown', handleEscape);
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
   }, [isShareCardOpen]);
 
   useEffect(() => {
@@ -88,7 +97,8 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
         if (cancelled) {
           return;
         }
-        const message = error instanceof Error ? error.message : '回响摘录生成失败。';
+        const message =
+          error instanceof Error ? error.message : "回响摘录生成失败。";
         setShareError(message);
       } finally {
         if (!cancelled) {
@@ -107,16 +117,20 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
   return (
     <>
       <div className="game-opts inset-x-0 rounded-full border border-[rgba(116,103,80,0.4)] bg-[rgba(8,14,26,0.82)] px-2 py-2 backdrop-blur-md">
-        <div className={`relative flex items-center gap-2 ${isReadOnly ? 'justify-end' : 'justify-between'}`}>
+        <div
+          className={`relative flex items-center gap-2 ${isReadOnly ? "justify-end" : "justify-between"}`}
+        >
           {!isReadOnly ? (
             <>
               <div className="flex items-center gap-2">
                 <SecondaryButton
                   onClick={onToggleObsession}
-                  className={`min-h-0 gap-1.5 px-2.5 py-1.5 text-[0.72rem] leading-4 sm:text-xs ${activeObsession ? 'border-red-300/50 bg-red-950/25 text-red-100' : ''}`}
+                  className={`min-h-0 gap-1.5 px-2.5 py-1.5 text-[0.72rem] leading-4 sm:text-xs ${activeObsession ? "border-red-300/50 bg-red-950/25 text-red-100" : ""}`}
                   disabled={isObsessionToggleDisabled}
                 >
-                  <Flame className={`h-3.5 w-3.5 ${activeObsession ? 'animate-pulse' : ''}`} />
+                  <Flame
+                    className={`h-3.5 w-3.5 ${activeObsession ? "animate-pulse" : ""}`}
+                  />
                   执念
                 </SecondaryButton>
               </div>
@@ -125,7 +139,9 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
                   <Flame className="h-3.5 w-3.5" />
                   <span>{obsessionPoints}</span>
                 </span>
-                <span className="text-[0.72rem] leading-4 text-[#8f98ab] sm:text-xs">|</span>
+                <span className="text-[0.72rem] leading-4 text-[#8f98ab] sm:text-xs">
+                  |
+                </span>
                 <span className="inline-flex items-center gap-1 text-[0.72rem] leading-4 text-[#d9cbb1] sm:text-xs">
                   <Eye className="h-3.5 w-3.5" />
                   <span>{`${intuitionPoints}/2`}</span>
@@ -140,7 +156,7 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
               className="min-h-0 gap-1.5 px-2.5 py-1.5 text-[0.72rem] leading-4 sm:text-xs"
             >
               <MoreHorizontal className="h-3.5 w-3.5" />
-                  记录菜单
+              菜单
             </SecondaryButton>
             {isUtilityMenuOpen ? (
               <div className="absolute bottom-[calc(100%+0.45rem)] right-0 z-20 min-w-[8.8rem] rounded-[0.95rem] border border-[rgba(116,103,80,0.5)] bg-[rgba(7,13,24,0.96)] p-1.5 shadow-[0_10px_24px_rgba(0,0,0,0.45)]">
@@ -158,7 +174,7 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
                 <button
                   type="button"
                   disabled={isArchiveActionDisabled}
-                  title={archiveActionUnavailableReason ?? '封存记录'}
+                  title={archiveActionUnavailableReason ?? "封存记录"}
                   onClick={() => {
                     if (isArchiveActionDisabled) {
                       return;
@@ -174,7 +190,7 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
                 <button
                   type="button"
                   disabled={isArchiveActionDisabled}
-                  title={archiveActionUnavailableReason ?? '分享记录'}
+                  title={archiveActionUnavailableReason ?? "分享记录"}
                   onClick={() => {
                     if (isArchiveActionDisabled) {
                       return;
@@ -217,13 +233,13 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
             </div>
             {isShareLoading ? (
               <div className="game-card rounded-3xl border border-[rgba(116,103,80,0.5)] bg-[rgba(8,14,26,0.95)] px-6 py-8 text-center text-sm text-[#d9cbb1] shadow-[0_24px_80px_rgba(1,8,20,0.6)]">
-                  正在整理这一段记录的共鸣摘要...
+                正在整理这一段记录的共鸣摘要...
               </div>
             ) : (
               <div className="space-y-3">
                 {shareError ? (
                   <div className="rounded-2xl border border-amber-300/20 bg-amber-100/8 px-4 py-3 text-xs leading-5 text-amber-100/85">
-                      摘要接口暂时不可用，当前展示的是最近一段回响。{shareError}
+                    摘要接口暂时不可用，当前展示的是最近一段回响。{shareError}
                   </div>
                 ) : null}
                 <StoryShareCard
