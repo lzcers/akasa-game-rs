@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Bot, ChevronDown, ChevronUp, Eye } from "lucide-react";
+import { Bot, ChevronDown, Eye, MousePointer2 } from "lucide-react";
 import type { Choice } from "../lib/api";
 import { SecondaryButton } from "./AkashicUI";
 
@@ -161,7 +161,7 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
           aria-expanded="false"
           aria-label="拖拽移动选择入口，点击展开选择"
         >
-          <ChevronUp className="h-3.5 w-3.5" />
+          <MousePointer2 className="h-3.5 w-3.5" />
           选择
         </button>
       </div>
