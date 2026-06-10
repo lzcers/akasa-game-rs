@@ -93,7 +93,7 @@ const storySteps = [
   },
   {
     phase: "记录共鸣中",
-    title: "唤起第一段回响",
+    title: "唤起第一段记录",
     description: "世界与角色设定已经落笔，正在汇入阿卡夏记录，并点亮开场分支。",
     headerTitle: "第一段回响即将展开",
     headerDesc: "世界与角色已经完成共鸣，序章正在从记录深处被唤起。",
@@ -445,7 +445,7 @@ export default function HomePage() {
               className="text-center lg:text-left"
             >
               <p className="text-xs tracking-[0.3em] text-accent/80 mb-3">
-                记录如何回响
+                FEATURE
               </p>
               <h2 className="font-serif text-2xl md:text-3xl text-foreground mb-3">
                 体验特色

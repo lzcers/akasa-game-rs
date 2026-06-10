@@ -1,11 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle, Orbit, Sparkles } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useGameUIStore } from "../store/gameUIStore";
 import type { StartupStage } from "../store/gameUIStore";
 import {
   PrimaryButton,
-  PageTitle,
   ScreenShell,
   SecondaryButton,
   SectionCard,
@@ -14,6 +13,8 @@ import {
 } from "../components/AkashicUI";
 import { useGameInternalStore } from "../store/gameStore";
 import { track } from "../lib/analytics";
+import { appRoutes, routeWithSession } from "../lib/appRoutes";
+import { useNavigate } from "react-router-dom";
 
 type StepStatus = "pending" | "active" | "done";
 
@@ -53,7 +54,7 @@ const startupSteps: StartupStep[] = [
     key: "creating_session",
     label: "写入回响中",
     title: "唤起第一段记录",
-    description: "世界与角色设定已经落笔，正在汇入阿卡夏记录，并唤起开场叙事。",
+    description: "世界记录与角色记录已经落笔，正在汇入阿卡夏记录，并唤起开场叙事。",
   },
 ];
 
@@ -150,15 +151,8 @@ function stageHeadline(
   }
 }
 
-function profileStepFromStage(
-  stage: Exclude<StartupStage, "idle">,
-): ProfileStepKey {
-  return stage === "generating_world" || stage === "generating_protagonist"
-    ? stage
-    : "creating_session";
-}
-
 const GeneratingPage: React.FC = () => {
+  const navigate = useNavigate();
   const {
     startupStage,
     character,
@@ -211,19 +205,31 @@ const GeneratingPage: React.FC = () => {
         ];
   }, [canEnterWorld, stageKey]);
   const messageKey = currentMessages.join("||");
+  const profileSetKey = preparedProfiles
+    ? [
+        preparedProfiles.world,
+        preparedProfiles.protagonist,
+        preparedProfiles.keyStoryBeats,
+      ].join("\n---\n")
+    : "";
   const [messageCursor, setMessageCursor] = useState({ key: "", index: 0 });
+  const [activeProfileCursor, setActiveProfileCursor] = useState({
+    key: "",
+    index: 0,
+  });
+  const carouselRef = useRef<HTMLDivElement>(null);
+  const carouselDragRef = useRef({
+    isDragging: false,
+    startX: 0,
+    scrollLeft: 0,
+  });
+  const [isCarouselDragging, setIsCarouselDragging] = useState(false);
   const messageIndex =
     messageCursor.key === messageKey
       ? Math.min(messageCursor.index, Math.max(currentMessages.length - 1, 0))
       : 0;
-  const [selectedProfileOverride, setSelectedProfileOverride] = useState<{
-    stageKey: Exclude<StartupStage, "idle">;
-    key: ProfileStepKey;
-  } | null>(null);
-  const selectedProfileStep =
-    selectedProfileOverride?.stageKey === stageKey
-      ? selectedProfileOverride.key
-      : profileStepFromStage(stageKey);
+  const activeProfileIndex =
+    activeProfileCursor.key === profileSetKey ? activeProfileCursor.index : 0;
 
   const handleEnterWorld = () => {
     if (preparedProfiles) {
@@ -233,7 +239,11 @@ const GeneratingPage: React.FC = () => {
         generatedKeyStoryBeats: preparedProfiles.keyStoryBeats,
       });
     }
-    void enterWorld();
+    void enterWorld().then((entered) => {
+      if (entered) {
+        navigate(routeWithSession(appRoutes.gameplay, entered.sessionId), { replace: true });
+      }
+    });
   };
   const profilePanels = useMemo(() => {
     if (!preparedProfiles) {
@@ -242,27 +252,23 @@ const GeneratingPage: React.FC = () => {
 
     return {
       generating_world: {
-        eyebrow: "世界设定",
         title: "阿卡夏显影出的世界记录",
         text: preparedProfiles.world,
         className: "border-[#5b6f96]/30 bg-[#0f1624]/80 text-[#c7d5f2]",
       },
       generating_protagonist: {
-        eyebrow: "角色设定",
         title: "阿卡夏显影出的角色记录",
         text: preparedProfiles.protagonist,
         className: "border-[#6f5f96]/30 bg-[#151325]/80 text-[#d8d0f2]",
       },
       creating_session: {
-        eyebrow: "分支引线",
-        title: "第一条即将回响的分支引线",
+        title: "第一条即将回响的剧情线索",
         text: preparedProfiles.keyStoryBeats,
         className: "border-[#8a7755]/30 bg-[#17120f]/80 text-[#efe4cd]/88",
       },
     } satisfies Record<
       ProfileStepKey,
       {
-        eyebrow: string;
         title: string;
         text: string;
         className: string;
@@ -288,15 +294,117 @@ const GeneratingPage: React.FC = () => {
     return () => window.clearInterval(timer);
   }, [currentMessages.length, messageKey]);
 
-  const activeProfilePanel = profilePanels?.[selectedProfileStep];
+  const profileEntries = profilePanels
+    ? profileStepOrder.map((key) => ({
+        key,
+        ...profilePanels[key],
+      }))
+    : [];
+
+  const handleProfileScroll = () => {
+    const carousel = carouselRef.current;
+    if (!carousel) {
+      return;
+    }
+
+    const nextIndex = Math.round(
+      carousel.scrollLeft / Math.max(carousel.clientWidth, 1),
+    );
+    setActiveProfileCursor({
+      key: profileSetKey,
+      index: Math.min(Math.max(nextIndex, 0), Math.max(profileEntries.length - 1, 0)),
+    });
+  };
+
+  const scrollToProfile = (index: number) => {
+    const carousel = carouselRef.current;
+    if (!carousel) {
+      return;
+    }
+
+    carousel.scrollTo({
+      left: carousel.clientWidth * index,
+      behavior: "smooth",
+    });
+    setActiveProfileCursor({
+      key: profileSetKey,
+      index,
+    });
+  };
+
+  const snapToNearestProfile = () => {
+    const carousel = carouselRef.current;
+    if (!carousel) {
+      return;
+    }
+
+    const nextIndex = Math.round(
+      carousel.scrollLeft / Math.max(carousel.clientWidth, 1),
+    );
+    scrollToProfile(
+      Math.min(Math.max(nextIndex, 0), Math.max(profileEntries.length - 1, 0)),
+    );
+  };
+
+  const handleCarouselPointerDown = (
+    event: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+
+    const carousel = event.currentTarget;
+    carouselDragRef.current = {
+      isDragging: true,
+      startX: event.clientX,
+      scrollLeft: carousel.scrollLeft,
+    };
+    carousel.setPointerCapture(event.pointerId);
+    setIsCarouselDragging(true);
+  };
+
+  const handleCarouselPointerMove = (
+    event: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    const drag = carouselDragRef.current;
+    if (!drag.isDragging) {
+      return;
+    }
+
+    const deltaX = event.clientX - drag.startX;
+    if (Math.abs(deltaX) > 3) {
+      event.preventDefault();
+    }
+    event.currentTarget.scrollLeft = drag.scrollLeft - deltaX;
+  };
+
+  const finishCarouselDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!carouselDragRef.current.isDragging) {
+      return;
+    }
+
+    carouselDragRef.current.isDragging = false;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setIsCarouselDragging(false);
+    snapToNearestProfile();
+  };
 
   return (
-    <ScreenShell className="items-center">
-      <StoryFrame className="max-w-3xl p-4 md:p-6">
-        <div className="space-y-4 md:space-y-6">
-          <PageTitle title={headline.title} subtitle={headline.subtitle} />
+    <ScreenShell className="items-stretch px-2 py-2 sm:px-3 sm:py-3 md:items-center md:px-6 md:py-5">
+      <StoryFrame className="flex h-[calc(100svh-1rem)] max-w-3xl p-2.5 md:h-[calc(100svh-2.5rem)] md:p-5">
+        <div className="flex min-h-0 flex-1 flex-col gap-2 md:gap-4">
+          <div className="shrink-0 space-y-1 text-center">
+            <h1 className="text-lg font-semibold tracking-wide text-[#f6eddc] sm:text-2xl md:text-4xl">
+              {headline.title}
+            </h1>
+            <p className="mx-auto line-clamp-2 max-w-2xl text-xs leading-5 text-[#9ca7be] sm:text-sm md:text-base">
+              {headline.subtitle}
+            </p>
+          </div>
 
-          <div className="rounded-[1.1rem] border border-[#6d86b7]/25 bg-[#101827]/78 px-4 py-3 text-center text-sm text-[#c7d5f2] shadow-[0_10px_30px_rgba(3,8,18,0.25)]">
+          <div className="shrink-0 rounded-xl border border-[#6d86b7]/25 bg-[#101827]/78 px-3 py-1.5 text-center text-xs text-[#c7d5f2] shadow-[0_10px_30px_rgba(3,8,18,0.25)] sm:py-2 sm:text-sm">
             {currentMessages[messageIndex]}
           </div>
 
@@ -306,89 +414,171 @@ const GeneratingPage: React.FC = () => {
             </div>
           ) : null}
 
-          <SectionCard className="space-y-4">
-            <div className="flex flex-wrap gap-2">
-              <StatusPill
-                icon={Orbit}
-                className="border-[#3b82f6]/30 bg-[#0f2141]/80 text-[#cfe0ff]"
-              >
-                {world.era}
-              </StatusPill>
-              <StatusPill
-                icon={Sparkles}
-                className="border-[#8b5cf6]/30 bg-[#1b1733]/80 text-[#e3d8ff]"
-              >
-                {character.background || "角色烙印待显影"}
-              </StatusPill>
-            </div>
+          {profilePanels ? (
+            <SectionCard className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:p-3 md:gap-2.5 md:p-4">
+              <div className="grid shrink-0 grid-cols-3 gap-1.5">
+                {startupSteps.map((step) => {
+                  const status = stepStatus(startupStage, step.key);
+                  const iconClassName =
+                    status === "active"
+                      ? "text-[#7dd3fc] animate-spin"
+                      : status === "done"
+                        ? "text-[#f4d58d]"
+                        : "text-[#5f6c86]";
 
-            <div className="space-y-3">
-              {startupSteps.map((step) => {
-                const status = stepStatus(startupStage, step.key);
-                const isSelected = profilePanels
-                  ? selectedProfileStep === step.key
-                  : false;
-                const iconClassName =
-                  status === "active"
-                    ? "text-[#7dd3fc] animate-spin"
-                    : status === "done"
-                      ? "text-[#f4d58d]"
-                      : "text-[#5f6c86]";
-
-                return (
-                  <button
-                    type="button"
-                    key={step.key}
-                    onClick={
-                      profilePanels
-                        ? () =>
-                            setSelectedProfileOverride({
-                              stageKey,
-                              key: step.key,
-                            })
-                        : undefined
-                    }
-                    className={`rounded-[1.1rem] border px-4 py-4 transition-colors md:px-5 ${
-                      status === "active"
-                        ? "border-[#60a5fa]/40 bg-[#101a2c]/92"
-                        : status === "done"
-                          ? "border-[#8a7755]/35 bg-[#14110f]/85"
-                          : "border-white/8 bg-[#0f1420]/70"
-                    } ${profilePanels ? "w-full cursor-pointer text-left hover:border-[#8fa4ca]/45" : "w-full text-left"} ${isSelected ? "ring-1 ring-[#c7d5f2]/45" : ""}`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <LoaderCircle
-                        className={`mt-0.5 h-5 w-5 shrink-0 ${iconClassName}`}
-                      />
-                      <div className="space-y-1">
-                        <p className="text-sm font-semibold tracking-wide text-[#efe4cd]">
+                  return (
+                    <div
+                      key={step.key}
+                      className={`min-w-0 rounded-lg border px-2 py-1 ${
+                        status === "active"
+                          ? "border-[#60a5fa]/40 bg-[#101a2c]/92"
+                          : status === "done"
+                            ? "border-[#8a7755]/35 bg-[#14110f]/85"
+                            : "border-white/8 bg-[#0f1420]/70"
+                      }`}
+                    >
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <LoaderCircle
+                          className={`h-3.5 w-3.5 shrink-0 ${iconClassName}`}
+                        />
+                        <span className="truncate text-[0.66rem] font-semibold text-[#efe4cd] sm:text-xs">
                           {step.label}
-                        </p>
-                        <p className="text-base font-medium text-[#f8f1e3] md:text-lg">
-                          {step.title}
-                        </p>
-                        <p className="text-sm leading-6 text-[#9ca7be]">
-                          {step.description}
-                        </p>
+                        </span>
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+
+              <div
+                ref={carouselRef}
+                onScroll={handleProfileScroll}
+                onPointerDown={handleCarouselPointerDown}
+                onPointerMove={handleCarouselPointerMove}
+                onPointerUp={finishCarouselDrag}
+                onPointerCancel={finishCarouselDrag}
+                onPointerLeave={finishCarouselDrag}
+                className={`flex min-h-0 flex-1 snap-x snap-mandatory gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
+                  isCarouselDragging
+                    ? "cursor-grabbing scroll-auto select-none"
+                    : "cursor-grab scroll-smooth"
+                }`}
+              >
+                {profileEntries.map((panel) => (
+                  <article
+                    key={panel.key}
+                    id={panel.key}
+                    className={`flex h-full min-h-0 w-full min-w-full snap-center flex-col rounded-xl border p-3 md:p-4 ${panel.className}`}
+                  >
+                    <h2 className="shrink-0 text-base font-semibold leading-6 text-[#f8f1e3] md:text-lg">
+                      {panel.title}
+                    </h2>
+                    <p className="akashic-scroll mt-2 min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap pr-1 text-sm leading-6 sm:text-[0.95rem] sm:leading-7 md:text-base">
+                      {panel.text}
+                    </p>
+                  </article>
+                ))}
+              </div>
+
+              <div className="flex shrink-0 justify-center gap-1">
+                {profileEntries.map((panel, index) => (
+                  <button
+                    key={panel.key}
+                    type="button"
+                    aria-label={`切换到${panel.title}`}
+                    aria-current={activeProfileIndex === index ? "true" : undefined}
+                    onClick={() => scrollToProfile(index)}
+                    className="flex h-8 min-w-8 items-center justify-center rounded-full transition-colors hover:bg-white/8"
+                  >
+                    <span
+                      className={`h-1.5 rounded-full transition-all ${
+                        activeProfileIndex === index
+                          ? "w-7 bg-[#d8c58a]"
+                          : "w-3 bg-white/25"
+                      }`}
+                    />
                   </button>
-                );
-              })}
-            </div>
-          </SectionCard>
+                ))}
+              </div>
+            </SectionCard>
+          ) : null}
+
+          {!profilePanels ? (
+            <SectionCard className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                <StatusPill
+                  icon={Orbit}
+                  className="border-[#3b82f6]/30 bg-[#0f2141]/80 text-[#cfe0ff]"
+                >
+                  {world.era}
+                </StatusPill>
+                <StatusPill
+                  icon={Sparkles}
+                  className="border-[#8b5cf6]/30 bg-[#1b1733]/80 text-[#e3d8ff]"
+                >
+                  {character.background || "角色烙印待显影"}
+                </StatusPill>
+              </div>
+
+              <div className="space-y-3">
+                {startupSteps.map((step) => {
+                  const status = stepStatus(startupStage, step.key);
+                  const iconClassName =
+                    status === "active"
+                      ? "text-[#7dd3fc] animate-spin"
+                      : status === "done"
+                        ? "text-[#f4d58d]"
+                        : "text-[#5f6c86]";
+
+                  return (
+                    <button
+                      type="button"
+                      key={step.key}
+                      className={`rounded-xl border px-4 py-4 text-left transition-colors md:px-5 ${
+                        status === "active"
+                          ? "border-[#60a5fa]/40 bg-[#101a2c]/92"
+                          : status === "done"
+                            ? "border-[#8a7755]/35 bg-[#14110f]/85"
+                            : "border-white/8 bg-[#0f1420]/70"
+                      } w-full`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <LoaderCircle
+                          className={`mt-0.5 h-5 w-5 shrink-0 ${iconClassName}`}
+                        />
+                        <div className="space-y-1">
+                          <p className="text-sm font-semibold tracking-wide text-[#efe4cd]">
+                            {step.label}
+                          </p>
+                          <p className="text-base font-medium text-[#f8f1e3] md:text-lg">
+                            {step.title}
+                          </p>
+                          <p className="text-sm leading-6 text-[#9ca7be]">
+                            {step.description}
+                          </p>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </SectionCard>
+          ) : null}
           {preparedProfiles ? (
-            <div className="flex flex-row items-center justify-center gap-3 sm:flex-row">
+            <div className="flex shrink-0 flex-row items-center justify-center gap-2 sm:gap-3">
               <SecondaryButton
-                onClick={() => void startGame()}
-                className="min-w-44"
+                onClick={() => {
+                  setActiveProfileCursor({ key: "", index: 0 });
+                  void startGame();
+                }}
+                className="min-h-9 min-w-0 flex-1 px-3 py-2 text-xs sm:flex-none sm:px-4 sm:text-sm"
               >
                 重新共鸣
               </SecondaryButton>
               <PrimaryButton
                 onClick={handleEnterWorld}
                 disabled={!canEnterWorld && isLoading}
-                className="min-w-44"
+                className="min-h-9 min-w-0 flex-1 px-3 py-2 text-xs sm:flex-none sm:px-4 sm:text-sm"
               >
                 {canEnterWorld
                   ? "步入回响"
@@ -397,40 +587,6 @@ const GeneratingPage: React.FC = () => {
                     : "再次步入回响"}
               </PrimaryButton>
             </div>
-          ) : null}
-          {activeProfilePanel ? (
-            <SectionCard className="space-y-4">
-              <div className="flex items-start justify-between gap-4">
-                <p className="text-xs font-medium tracking-[0.24em] text-[#8fa4ca]"></p>
-                <div className="flex gap-2">
-                  {profileStepOrder.map((key) => (
-                    <button
-                      key={key}
-                      type="button"
-                      aria-label={`切换到${profilePanels[key].eyebrow}`}
-                      onClick={() =>
-                        setSelectedProfileOverride({ stageKey, key })
-                      }
-                      className={`h-2.5 w-2.5 rounded-full transition-colors ${selectedProfileStep === key ? "bg-[#d8c58a]" : "bg-white/18 hover:bg-white/35"}`}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              <div
-                className={`rounded-[1.1rem] border p-4 md:p-5 ${activeProfilePanel.className}`}
-              >
-                <p className="text-sm font-semibold tracking-wide text-[#efe4cd]">
-                  {activeProfilePanel.eyebrow}
-                </p>
-                <p className="mt-2 text-base font-medium text-[#f8f1e3] md:text-lg">
-                  {activeProfilePanel.title}
-                </p>
-                <p className="mt-4 whitespace-pre-wrap text-sm leading-7">
-                  {activeProfilePanel.text}
-                </p>
-              </div>
-            </SectionCard>
           ) : null}
         </div>
       </StoryFrame>

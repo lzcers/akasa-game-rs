@@ -39,7 +39,7 @@ export default function ChangelogPage() {
                 记录编年
               </p>
               <h1 className="font-serif text-3xl md:text-4xl text-foreground mb-3">
-                记录更新
+                更新日志
               </h1>
             </div>
 

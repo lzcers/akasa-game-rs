@@ -5,7 +5,7 @@ import { useState } from "react";
 const navItems = [
   { path: "/", label: "回响入口" },
   { path: "/feedback", label: "回音信箱" },
-  { path: "/changelog", label: "记录更新" },
+  { path: "/changelog", label: "更新日志" },
 ];
 
 export default function Layout() {

@@ -13,6 +13,22 @@ function canUseLocalStorage() {
   return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 }
 
+export function createStoredSaveSlotId() {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.randomUUID === 'function') {
+    return `slot-${cryptoApi.randomUUID().replace(/-/g, '')}`;
+  }
+
+  if (typeof cryptoApi?.getRandomValues === 'function') {
+    const randomBytes = new Uint8Array(16);
+    cryptoApi.getRandomValues(randomBytes);
+    const randomToken = Array.from(randomBytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    return `slot-${randomToken}`;
+  }
+
+  return `slot-${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+}
+
 export function readStoredSaveSlots(): StoredSaveSlot[] {
   if (!canUseLocalStorage()) {
     return [];
