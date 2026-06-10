@@ -4,15 +4,17 @@ import {
   type GameInternalState,
   type RoundState,
 } from '../gameStore';
+import { summarizeFatePlanning } from './fatePlanningSummary';
+import { parseJsonValue } from './jsonValue';
 import {
-  parseJsonValue,
   protagonistActionChoices,
   protagonistActionText,
-  summarizeFatePlanning,
+} from './protagonistChoices';
+import {
   taskLabel,
   taskRawContent,
   taskText,
-} from '../gameStoreHelpers';
+} from './taskContent';
 
 interface StreamTaskUIState {
   stateView: RuntimeStateView | null;

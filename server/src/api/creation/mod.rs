@@ -48,7 +48,7 @@ pub async fn generate_creation_draft(
     "name": "2到4个汉字的中文名",
     "gender": "男或女",
     "age": 18到80之间的整数,
-    "background": "一句命运烙印，12到32个中文字符，带明确钩子",
+    "background": "一句命运烙印，12到20个中文字符，带明确钩子",
     "appearance": "45到110个中文字符的人物描述，包含外貌、气质、弱点或行动习惯",
     "traits": {
       "intellect": 1到10的整数,

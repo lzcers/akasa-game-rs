@@ -1,6 +1,13 @@
-import React, { useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Download, FolderOpen, Trash2, TriangleAlert, Upload } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import React, { useMemo, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  Download,
+  FolderOpen,
+  Trash2,
+  TriangleAlert,
+  Upload,
+} from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import {
   PageTitle,
   PrimaryButton,
@@ -9,7 +16,7 @@ import {
   SectionCard,
   StoryFrame,
   StatusPill,
-} from '../components/AkashicUI';
+} from "../components/AkashicUI";
 import {
   createStoredSaveSlotId,
   readStoredSaveArchive,
@@ -18,20 +25,20 @@ import {
   upsertStoredSaveSlot,
   writeStoredSaveArchive,
   type StoredSaveSlot,
-} from '../lib/saveSlots';
-import { appRoutes, routeWithSession } from '../lib/appRoutes';
-import { useGameUIStore } from '../store/gameUIStore';
+} from "../lib/saveSlots";
+import { appRoutes, routeWithSession } from "../lib/appRoutes";
+import { useGameUIStore } from "../store/gameUIStore";
 
 function formatTimeLabel(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
   }).format(date);
 }
 
@@ -42,21 +49,23 @@ interface SharedArchiveFile {
 }
 
 function isSharedArchiveFile(value: unknown): value is SharedArchiveFile {
-  if (!value || typeof value !== 'object') {
+  if (!value || typeof value !== "object") {
     return false;
   }
 
   const archiveFile = value as Record<string, unknown>;
-  return typeof archiveFile.sessionId === 'string'
-    && typeof archiveFile.title === 'string'
-    && typeof archiveFile.compressedArchive === 'string';
+  return (
+    typeof archiveFile.sessionId === "string" &&
+    typeof archiveFile.title === "string" &&
+    typeof archiveFile.compressedArchive === "string"
+  );
 }
 
 function buildArchiveFileName(slot: StoredSaveSlot) {
   const baseName = (slot.title || slot.slotId)
     .trim()
-    .replace(/[\\/:*?"<>|]+/g, '-')
-    .replace(/\s+/g, '-')
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
     .toLowerCase();
   return `${baseName || slot.slotId}.json`;
 }
@@ -66,8 +75,13 @@ const ArchiveListPage: React.FC = () => {
   const loadSave = useGameUIStore((state) => state.loadSave);
   const isLoading = useGameUIStore((state) => state.isLoading);
   const error = useGameUIStore((state) => state.error);
-  const [slots, setSlots] = useState<StoredSaveSlot[]>(() => readStoredSaveSlots());
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [slots, setSlots] = useState<StoredSaveSlot[]>(() =>
+    readStoredSaveSlots(),
+  );
+  const [feedback, setFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const refreshSlots = () => {
@@ -80,7 +94,9 @@ const ArchiveListPage: React.FC = () => {
     setFeedback(null);
     try {
       const loaded = await loadSave(slotId);
-      navigate(routeWithSession(appRoutes.gameplay, loaded.sessionId), { replace: true });
+      navigate(routeWithSession(appRoutes.gameplay, loaded.sessionId), {
+        replace: true,
+      });
     } catch {
       // Store already exposes the failure reason.
     }
@@ -88,7 +104,9 @@ const ArchiveListPage: React.FC = () => {
 
   const handleDelete = (slot: StoredSaveSlot) => {
     setFeedback(null);
-    const confirmed = window.confirm(`确认删除本地记录“${slot.title || slot.slotId}”吗？`);
+    const confirmed = window.confirm(
+      `确认删除本地记录“${slot.title || slot.slotId}”吗？`,
+    );
     if (!confirmed) {
       return;
     }
@@ -102,7 +120,7 @@ const ArchiveListPage: React.FC = () => {
     const archive = readStoredSaveArchive(slot.slotId);
     if (!archive) {
       setFeedback({
-        type: 'error',
+        type: "error",
         message: `未找到记录“${slot.title || slot.slotId}”的本地数据。`,
       });
       return;
@@ -114,16 +132,16 @@ const ArchiveListPage: React.FC = () => {
       compressedArchive: archive,
     };
     const blob = new Blob([JSON.stringify(sharedArchiveFile, null, 2)], {
-      type: 'application/json;charset=utf-8',
+      type: "application/json;charset=utf-8",
     });
     const url = window.URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
+    const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = buildArchiveFileName(slot);
     anchor.click();
     window.URL.revokeObjectURL(url);
     setFeedback({
-      type: 'success',
+      type: "success",
       message: `已导出“${slot.title || slot.slotId}”记录。`,
     });
   };
@@ -133,9 +151,11 @@ const ArchiveListPage: React.FC = () => {
     importInputRef.current?.click();
   };
 
-  const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportFile = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
     const file = event.target.files?.[0];
-    event.target.value = '';
+    event.target.value = "";
     if (!file) {
       return;
     }
@@ -144,7 +164,7 @@ const ArchiveListPage: React.FC = () => {
       const rawText = await file.text();
       const parsed = JSON.parse(rawText) as unknown;
       if (!isSharedArchiveFile(parsed)) {
-        throw new Error('该文件不是可用的回响记录。');
+        throw new Error("该文件不是可用的回响记录。");
       }
 
       const slotId = createStoredSaveSlotId();
@@ -153,19 +173,20 @@ const ArchiveListPage: React.FC = () => {
       upsertStoredSaveSlot({
         slotId,
         sessionId: parsed.sessionId,
-        title: parsed.title || file.name.replace(/\.json$/i, ''),
+        title: parsed.title || file.name.replace(/\.json$/i, ""),
         createdAt: archivedAt,
         updatedAt: archivedAt,
       });
       refreshSlots();
       setFeedback({
-        type: 'success',
+        type: "success",
         message: `已导入记录“${file.name}”。`,
       });
     } catch (importError) {
       setFeedback({
-        type: 'error',
-        message: importError instanceof Error ? importError.message : '导入记录失败。',
+        type: "error",
+        message:
+          importError instanceof Error ? importError.message : "导入记录失败。",
       });
     }
   };
@@ -173,9 +194,7 @@ const ArchiveListPage: React.FC = () => {
   return (
     <ScreenShell>
       <StoryFrame className="overflow-hidden p-6 md:p-8">
-        <div
-          className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-20"
-        />
+        <div className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-20" />
         <div className="relative z-10 space-y-6">
           <input
             ref={importInputRef}
@@ -185,19 +204,26 @@ const ArchiveListPage: React.FC = () => {
             onChange={handleImportFile}
           />
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <SecondaryButton onClick={() => navigate(appRoutes.lobby)} disabled={isLoading}>
+            <SecondaryButton
+              onClick={() => navigate(appRoutes.lobby)}
+              disabled={isLoading}
+            >
               <ArrowLeft className="h-4 w-4" />
-                返回回响厅
+              返回回响厅
             </SecondaryButton>
-            <PrimaryButton type="button" onClick={handleImportButtonClick} disabled={isLoading}>
+            <PrimaryButton
+              type="button"
+              onClick={handleImportButtonClick}
+              disabled={isLoading}
+            >
               <Upload className="h-4 w-4" />
-                导入记录
+              导入记录
             </PrimaryButton>
           </div>
 
           <PageTitle
-              title="回响档案"
-              subtitle="这里封存着当前设备上的阿卡夏记录，可随时导入、导出或续读。"
+            title="回响档案"
+            subtitle="这里封存着当前设备上的阿卡夏记录，可随时导入、导出或续读。"
           />
 
           {error ? (
@@ -212,13 +238,15 @@ const ArchiveListPage: React.FC = () => {
 
           {feedback ? (
             <StatusPill
-              icon={feedback.type === 'error' ? TriangleAlert : null}
+              icon={feedback.type === "error" ? TriangleAlert : null}
               className={
-                feedback.type === 'error'
-                  ? 'border-[#7f3b3b]/50 bg-[#2a1216]/85 text-[#ffd7d7]'
-                  : 'border-[#36593c]/50 bg-[#15251a]/85 text-[#d9ffe0]'
+                feedback.type === "error"
+                  ? "border-[#7f3b3b]/50 bg-[#2a1216]/85 text-[#ffd7d7]"
+                  : "border-[#36593c]/50 bg-[#15251a]/85 text-[#d9ffe0]"
               }
-              iconClassName={feedback.type === 'error' ? 'text-[#ff9b9b]' : undefined}
+              iconClassName={
+                feedback.type === "error" ? "text-[#ff9b9b]" : undefined
+              }
             >
               {feedback.message}
             </StatusPill>
@@ -226,9 +254,11 @@ const ArchiveListPage: React.FC = () => {
 
           {!hasSlots ? (
             <SectionCard className="space-y-3">
-                <p className="text-base text-[#e9edf7]">当前设备上还没有封存任何记录。</p>
+              <p className="text-base text-[#e9edf7]">
+                当前设备上还没有封存任何记录。
+              </p>
               <p className="text-sm leading-7 text-[#98a3ba]">
-                  先开启一段回响并封存，或直接导入一份已有记录。
+                先开启一段回响并保存，或直接导入一份已有记录。
               </p>
             </SectionCard>
           ) : (
@@ -238,16 +268,22 @@ const ArchiveListPage: React.FC = () => {
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="space-y-1">
-                        <h3 className="text-lg text-[#f2eadf]">{slot.title || '未命名记录'}</h3>
+                        <h3 className="text-lg text-[#f2eadf]">
+                          {slot.title || "未命名记录"}
+                        </h3>
                         <p className="text-xs tracking-[0.12em] text-[#8f98ab]">
-                            记录编号：{slot.slotId}
+                          记录编号：{slot.slotId}
                         </p>
                       </div>
-                        <StatusPill icon={null}>最近回响 {formatTimeLabel(slot.updatedAt)}</StatusPill>
+                      <StatusPill icon={null}>
+                        最近回响 {formatTimeLabel(slot.updatedAt)}
+                      </StatusPill>
                     </div>
-                      <p className="text-sm text-[#b6c0d6]">回响编号：{slot.sessionId}</p>
+                    <p className="text-sm text-[#b6c0d6]">
+                      回响编号：{slot.sessionId}
+                    </p>
                     <p className="text-sm text-[#8f98ab]">
-                        首次封存于 {formatTimeLabel(slot.createdAt)}
+                      首次保存于 {formatTimeLabel(slot.createdAt)}
                     </p>
                   </div>
                   <div className="flex flex-col gap-3 sm:flex-row">
@@ -257,7 +293,7 @@ const ArchiveListPage: React.FC = () => {
                       className="flex-1"
                     >
                       <FolderOpen className="h-4 w-4" />
-                        {isLoading ? '读取中...' : '续读记录'}
+                      {isLoading ? "读取中..." : "续读记录"}
                     </PrimaryButton>
                     <SecondaryButton
                       type="button"
@@ -266,7 +302,7 @@ const ArchiveListPage: React.FC = () => {
                       className="flex-1"
                     >
                       <Download className="h-4 w-4" />
-                        导出记录
+                      导出记录
                     </SecondaryButton>
                     <SecondaryButton
                       type="button"
@@ -275,7 +311,7 @@ const ArchiveListPage: React.FC = () => {
                       className="flex-1 text-[#ffb6b6] hover:border-[#7f3b3b]/60 hover:bg-[#2a1216]/85 hover:text-[#ffd7d7]"
                     >
                       <Trash2 className="h-4 w-4" />
-                        删除记录
+                      删除记录
                     </SecondaryButton>
                   </div>
                 </SectionCard>

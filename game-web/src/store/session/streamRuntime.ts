@@ -5,9 +5,9 @@ import {
   openGameSessionStream,
 } from '../../lib/api';
 import { useGameInternalStore } from '../gameStore';
-import { applyTaskUpdate } from '../gameStoreHelpers';
 import { reduceStreamTask } from './streamReducer';
 import { applySessionSnapshotToStores } from './stateSync';
+import { applyTaskUpdate } from './taskUpdates';
 import type { GameUIStoreState } from '../gameUIStore';
 
 interface SessionStreamHandlers {

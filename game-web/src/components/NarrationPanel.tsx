@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Clock3, MousePointer2, Sparkles } from "lucide-react";
 import Typewriter from "./Typewriter";
-import { STREAM_PLACEHOLDER_TEXT } from "../store/gameStoreHelpers";
+import { STREAM_PLACEHOLDER_TEXT } from "../store/session/taskContent";
 import type { NarrationRoundEntry } from "./gameplayTypes";
 
 interface NarrationHistoryItemProps {

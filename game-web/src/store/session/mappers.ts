@@ -8,10 +8,8 @@ import {
   type GameInternalState,
   type RoundState,
 } from '../gameStore';
-import {
-  STREAM_PLACEHOLDER_TEXT,
-  toChoiceFromSession,
-} from '../gameStoreHelpers';
+import { toChoiceFromSession } from './choiceMapping';
+import { STREAM_PLACEHOLDER_TEXT } from './taskContent';
 
 function titleFromWorldState(
   worldState: SessionRoundHistoryData['worldState'] | GameSessionWorldStateData['worldState'] | null | undefined,

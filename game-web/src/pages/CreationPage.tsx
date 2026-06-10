@@ -28,7 +28,7 @@ import {
   cloneWorld,
   initialCharacter,
   initialWorld,
-} from "../store/gameStoreHelpers";
+} from "../store/ui/defaults";
 import {
   readCreationDraft,
   removeCreationDraft,
@@ -286,15 +286,20 @@ const CreationPage: React.FC = () => {
     );
   };
 
-  const handleResetDraft = () => {
+  const handleClearWorld = () => {
+    removeCreationDraft();
+    updateWorld(cloneWorld(initialWorld));
+    setDraftFeedback("已清空世界记录");
+  };
+
+  const handleClearCharacter = () => {
     removeCreationDraft();
     updateCharacter(cloneCharacter(initialCharacter));
-    updateWorld(cloneWorld(initialWorld));
     setAgeInput({
       sourceAge: initialCharacter.age,
       value: String(initialCharacter.age),
     });
-    setDraftFeedback("已清空本次记录草稿");
+    setDraftFeedback("已清空角色记录");
   };
 
   const handleGenerateCharacter = async () => {
@@ -385,9 +390,21 @@ const CreationPage: React.FC = () => {
           <section className="space-y-3">
             <div className="space-y-1.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-lg font-semibold text-[#f6eddc] md:text-xl">
-                  写入世界记录
-                </h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-semibold text-[#f6eddc] md:text-xl">
+                    写入世界记录
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={handleClearWorld}
+                    disabled={formActionDisabled}
+                    aria-label="清除世界记录"
+                    title="清除世界记录"
+                    className="flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/6 text-[#c5cedc] transition-all hover:border-[#d8c18f]/30 hover:bg-white/10 hover:text-[#efe4cd] active:scale-90 active:border-[#d8c18f]/35 active:bg-[#d8c18f]/16 active:text-[#efe4cd] focus-visible:border-[#d8c18f]/45 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                  </button>
+                </div>
                 <SecondaryButton
                   type="button"
                   onClick={() => void handleGenerateWorld()}
@@ -431,9 +448,21 @@ const CreationPage: React.FC = () => {
           <section className="space-y-3">
             <div className="space-y-1.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-lg font-semibold text-[#f6eddc] md:text-xl">
-                  写入角色记录
-                </h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-semibold text-[#f6eddc] md:text-xl">
+                    写入角色记录
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={handleClearCharacter}
+                    disabled={formActionDisabled}
+                    aria-label="清除角色记录"
+                    title="清除角色记录"
+                    className="flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/6 text-[#c5cedc] transition-all hover:border-[#d8c18f]/30 hover:bg-white/10 hover:text-[#efe4cd] active:scale-90 active:border-[#d8c18f]/35 active:bg-[#d8c18f]/16 active:text-[#efe4cd] focus-visible:border-[#d8c18f]/45 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                  </button>
+                </div>
                 <SecondaryButton
                   type="button"
                   onClick={() => void handleGenerateCharacter()}
@@ -704,8 +733,8 @@ const CreationPage: React.FC = () => {
             </SectionCard>
           </section>
 
-          <div className="sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-20 mt-2 grid touch-pan-y grid-cols-4 gap-1.5 rounded-xl border border-[#6f6655]/50 bg-[#0a1222]/94 p-1.5 shadow-[0_12px_28px_rgba(2,8,18,0.44)] backdrop-blur-xl sm:static sm:inset-auto sm:mt-1 sm:flex sm:flex-row sm:items-center sm:justify-end sm:gap-2 sm:rounded-none sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">
-            <div className="col-span-4 flex min-h-5 items-center px-1 sm:min-h-10 sm:min-w-56 sm:flex-1 sm:px-0">
+          <div className="sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-20 mt-2 grid touch-pan-y grid-cols-3 gap-1.5 rounded-xl border border-[#6f6655]/50 bg-[#0a1222]/94 p-1.5 shadow-[0_12px_28px_rgba(2,8,18,0.44)] backdrop-blur-xl sm:static sm:inset-auto sm:mt-1 sm:flex sm:flex-row sm:items-center sm:justify-end sm:gap-2 sm:rounded-none sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">
+            <div className="col-span-3 flex min-h-5 items-center px-1 sm:min-h-10 sm:min-w-56 sm:flex-1 sm:px-0">
               {draftFeedback ? (
                 <span className="text-xs font-semibold leading-5 text-[#f6eddc] drop-shadow-[0_0_10px_rgba(246,237,220,0.24)] sm:text-sm">
                   {draftFeedback}
@@ -719,20 +748,12 @@ const CreationPage: React.FC = () => {
               返回大厅
             </SecondaryButton>
             <SecondaryButton
-              onClick={handleResetDraft}
-              disabled={formActionDisabled}
-              className="flex min-h-8 w-full items-center justify-center gap-0.5 whitespace-nowrap rounded-lg px-1 py-0.5 text-[11px] leading-4 sm:min-h-10 sm:w-auto sm:gap-2 sm:rounded-full sm:px-3.5 sm:py-2 sm:text-sm md:min-h-11 md:px-4 md:py-2.5"
-            >
-              <RotateCcw className="h-3 w-3 sm:h-4 sm:w-4" />
-              清空
-            </SecondaryButton>
-            <SecondaryButton
               onClick={handleSaveDraft}
               disabled={formActionDisabled}
               className="flex min-h-8 w-full items-center justify-center gap-0.5 whitespace-nowrap rounded-lg px-1 py-0.5 text-[11px] leading-4 sm:min-h-10 sm:w-auto sm:gap-2 sm:rounded-full sm:px-3.5 sm:py-2 sm:text-sm md:min-h-11 md:px-4 md:py-2.5"
             >
               <Save className="h-3 w-3 sm:h-4 sm:w-4" />
-              封存
+              保存
             </SecondaryButton>
             <PrimaryButton
               onClick={handleStartGame}

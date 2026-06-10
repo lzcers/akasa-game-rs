@@ -9,7 +9,7 @@ import {
   type GameInternalState,
   useGameInternalStore,
 } from '../gameStore';
-import { STREAM_PLACEHOLDER_TEXT } from '../gameStoreHelpers';
+import { STREAM_PLACEHOLDER_TEXT } from '../session/taskContent';
 
 const OPENING_ROUND = 1;
 const FIRST_ROUND_READY_TIMEOUT_MS = 45000;

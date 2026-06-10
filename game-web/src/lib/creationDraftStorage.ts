@@ -1,5 +1,5 @@
 import type { Character, World } from './api';
-import { cloneCharacter, cloneWorld } from '../store/gameStoreHelpers';
+import { cloneCharacter, cloneWorld } from '../store/ui/defaults';
 
 interface CreationDraft {
   character: Character;

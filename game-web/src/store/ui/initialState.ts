@@ -6,7 +6,7 @@ import {
   initialCharacter,
   initialStory,
   initialWorld,
-} from '../gameStoreHelpers';
+} from './defaults';
 
 export const initialUIState: GameUIState = {
   character: initialCharacter,

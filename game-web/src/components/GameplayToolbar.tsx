@@ -132,7 +132,9 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
               />
               执念
             </SecondaryButton>
-          ) : <span aria-hidden="true" />}
+          ) : (
+            <span aria-hidden="true" />
+          )}
           <div className="flex min-w-0 items-center justify-center gap-1.5 justify-self-center text-[0.72rem] font-semibold leading-4 text-[#d9cbb1] sm:gap-2 sm:text-xs">
             <span className="inline-flex items-center gap-1">
               <Clock3 className="h-3.5 w-3.5" />
@@ -190,7 +192,7 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
                   className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] disabled:cursor-not-allowed disabled:text-[#8f98ab] disabled:hover:bg-transparent sm:text-xs"
                 >
                   <Save className="h-3.5 w-3.5" />
-                  封存
+                  保存
                 </button>
                 <button
                   type="button"
