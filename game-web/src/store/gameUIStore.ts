@@ -865,6 +865,7 @@ const createGameUIActions = (
           ...(state.roundStates[activeRound] ?? {}),
           round: activeRound,
           selectedChoiceText,
+          selectedChoiceAction: nextInput.action,
           choices: [],
           choicesStatus: 'idle',
           isAwaitingNarration: false,

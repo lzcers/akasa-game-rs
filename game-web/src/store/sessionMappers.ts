@@ -110,6 +110,7 @@ function roundStateFromHistoryEntry(
   const selectedChoiceText = entry.selectedChoiceText?.trim()
     || deriveSelectedChoiceText(entry)
     || null;
+  const selectedChoiceAction = entry.committedAction?.trim() || null;
   const narrationText = entry.narrationText.trim()
     || (isCurrentRound ? latestHistoryFromSession(session) : '');
 
@@ -124,6 +125,7 @@ function roundStateFromHistoryEntry(
     choices,
     choicesStatus: choices.length > 0 || isAwaitingCurrentRound ? 'ready' : 'idle',
     selectedChoiceText,
+    selectedChoiceAction,
     isAwaitingNarration: false,
   });
 }
@@ -150,6 +152,7 @@ function currentRoundStateFromSession(
       choices: session.choices.map(toChoiceFromSession),
       choicesStatus: session.choices.length > 0 || session.phase === 'awaiting_player' ? 'ready' : 'idle',
       selectedChoiceText: null,
+      selectedChoiceAction: null,
       isAwaitingNarration: false,
     }),
   };

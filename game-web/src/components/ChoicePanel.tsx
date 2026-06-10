@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from "react";
-import { Bot, Eye } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Bot, ChevronDown, ChevronUp, Eye } from "lucide-react";
 import type { Choice } from "../lib/api";
 import { SecondaryButton } from "./AkashicUI";
 
@@ -13,8 +13,10 @@ interface ChoicePanelProps {
   obsessionInput: string;
   autoChoiceEnabled?: boolean;
   showAutoChoiceToggle?: boolean;
+  isCollapsed?: boolean;
   isChoiceInteractionDisabled: boolean;
   isObsessionSubmitDisabled: boolean;
+  onToggleCollapsed?: () => void;
   onChoiceClick: (choice: Choice) => void | Promise<void>;
   onContinue: () => void | Promise<void>;
   onAutoChoiceToggle?: (enabled: boolean) => void;
@@ -36,8 +38,10 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
   obsessionInput,
   autoChoiceEnabled = false,
   showAutoChoiceToggle = false,
+  isCollapsed = false,
   isChoiceInteractionDisabled,
   isObsessionSubmitDisabled,
+  onToggleCollapsed,
   onChoiceClick,
   onContinue,
   onAutoChoiceToggle,
@@ -46,7 +50,87 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
   onObsessionSubmit,
 }) => {
   const obsessionInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const collapsedDragStartRef = useRef<{
+    pointerId: number;
+    clientX: number;
+    clientY: number;
+    offsetX: number;
+    offsetY: number;
+  } | null>(null);
+  const suppressCollapsedClickRef = useRef(false);
+  const [collapsedOffset, setCollapsedOffset] = useState({ x: 0, y: 0 });
+  const [isCollapsedDragging, setIsCollapsedDragging] = useState(false);
   const submitObsessionAction = () => onObsessionSubmit(obsessionInput.trim());
+
+  const releaseCollapsedPointer = (
+    event: React.PointerEvent<HTMLButtonElement>,
+  ) => {
+    collapsedDragStartRef.current = null;
+    setIsCollapsedDragging(false);
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const handleCollapsedPointerDown = (
+    event: React.PointerEvent<HTMLButtonElement>,
+  ) => {
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+
+    collapsedDragStartRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      offsetX: collapsedOffset.x,
+      offsetY: collapsedOffset.y,
+    };
+    suppressCollapsedClickRef.current = false;
+    setIsCollapsedDragging(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handleCollapsedPointerMove = (
+    event: React.PointerEvent<HTMLButtonElement>,
+  ) => {
+    const start = collapsedDragStartRef.current;
+    if (!start || start.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const deltaX = event.clientX - start.clientX;
+    const deltaY = event.clientY - start.clientY;
+    if (Math.abs(deltaX) > 4 || Math.abs(deltaY) > 4) {
+      suppressCollapsedClickRef.current = true;
+    }
+
+    setCollapsedOffset({
+      x: start.offsetX + deltaX,
+      y: start.offsetY + deltaY,
+    });
+  };
+
+  const handleCollapsedPointerUp = (
+    event: React.PointerEvent<HTMLButtonElement>,
+  ) => {
+    const start = collapsedDragStartRef.current;
+    if (!start || start.pointerId !== event.pointerId) {
+      return;
+    }
+
+    releaseCollapsedPointer(event);
+  };
+
+  const handleCollapsedClick = () => {
+    if (suppressCollapsedClickRef.current) {
+      suppressCollapsedClickRef.current = false;
+      return;
+    }
+
+    onToggleCollapsed?.();
+  };
 
   useEffect(() => {
     if (!activeObsession) {
@@ -60,11 +144,44 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
     return null;
   }
 
+  if (isCollapsed) {
+    return (
+      <div className="flex w-full justify-center">
+        <button
+          type="button"
+          onPointerDown={handleCollapsedPointerDown}
+          onPointerMove={handleCollapsedPointerMove}
+          onPointerUp={handleCollapsedPointerUp}
+          onPointerCancel={releaseCollapsedPointer}
+          onClick={handleCollapsedClick}
+          className={`inline-flex h-9 touch-none items-center gap-1.5 rounded-full border border-[rgba(116,103,80,0.45)] bg-[rgba(5,11,22,0.84)] px-3 text-[0.72rem] font-semibold text-[#f3ead8] shadow-[0_10px_28px_rgba(0,0,0,0.38)] backdrop-blur-md transition-colors hover:border-[rgba(215,188,146,0.72)] hover:bg-[rgba(18,26,41,0.9)] sm:text-xs ${isCollapsedDragging ? "cursor-grabbing" : "cursor-grab"}`}
+          style={{
+            transform: `translate3d(${collapsedOffset.x}px, ${collapsedOffset.y}px, 0)`,
+          }}
+          aria-expanded="false"
+          aria-label="拖拽移动选择入口，点击展开选择"
+        >
+          <ChevronUp className="h-3.5 w-3.5" />
+          选择
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex w-full">
-      <div className="game-choices flex-1 rounded-[1.1rem] border border-[rgba(116,103,80,0.35)] bg-[rgba(5,11,22,0.55)] px-1.5 py-2">
-        {showAutoChoiceToggle ? (
-          <div className="mb-2 flex items-center justify-end px-0.5">
+      <div className="game-choices flex-1 rounded-[1.1rem] border border-[rgba(116,103,80,0.42)] bg-[rgba(5,11,22,0.86)] px-1.5 py-2 shadow-[0_18px_48px_rgba(0,0,0,0.42)] backdrop-blur-md">
+        <div className="flex items-center justify-between gap-2 px-0.5 mb-0.5">
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            className="inline-flex h-8 items-center gap-1.5 rounded-full px-2 text-[0.68rem] font-medium text-[#d9cbb1] transition-colors hover:bg-[rgba(188,169,124,0.12)] hover:text-[#f3ead8] sm:text-xs"
+            aria-expanded="true"
+          >
+            <ChevronDown className="h-3.5 w-3.5" />
+            收起
+          </button>
+          {showAutoChoiceToggle ? (
             <button
               type="button"
               role="switch"
@@ -91,11 +208,13 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
                 />
               </span>
             </button>
-          </div>
-        ) : null}
+          ) : (
+            <span />
+          )}
+        </div>
 
         {!activeObsession ? (
-          <div className="akashic-scroll max-h-[28dvh] touch-pan-y space-y-1 overflow-y-auto pr-0.5 py-0.5">
+          <div className="scrollbar-none max-h-[24dvh] touch-pan-y space-y-1 overflow-y-auto pr-0.5 py-0.5">
             {hasChoices ? (
               choices.map((choice) => (
                 <div key={choice.id} className="space-y-1.5">
@@ -141,7 +260,7 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
                 className="akashic-choice h-10 w-full text-[#f3ead8] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <div className="flex min-h-7 items-center justify-center text-sm font-semibold leading-5 sm:text-[0.95rem]">
-                    继续回响
+                  继续回响
                 </div>
               </button>
             )}
@@ -161,7 +280,7 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
                 }
               }}
               disabled={isChoiceInteractionDisabled}
-                placeholder="写下想强行写入记录的行动"
+              placeholder="写下想强行写入记录的行动"
               className="min-h-24 w-full resize-none rounded-[0.85rem] border border-red-300/25 bg-[rgba(16,8,14,0.72)] px-3 py-2 text-sm leading-5 text-[#f7efe2] outline-none transition-colors placeholder:text-red-100/35 focus:border-red-300/45 disabled:cursor-not-allowed disabled:opacity-60"
             />
 
@@ -173,7 +292,7 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
                 disabled={isObsessionSubmitDisabled}
                 className="min-h-0 px-3 py-1.5 text-[0.72rem] leading-4 text-red-100 disabled:cursor-not-allowed disabled:opacity-60 sm:text-xs"
               >
-                  写入执念
+                写入执念
               </SecondaryButton>
             </div>
           </div>

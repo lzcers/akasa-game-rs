@@ -4,5 +4,6 @@ export interface NarrationRoundEntry {
   narrationText: string;
   narrationStatus: 'pending' | 'running' | 'done' | 'error' | null;
   selectedChoiceText: string | null;
+  selectedChoiceAction: string | null;
   isAwaitingNarration: boolean;
 }

@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         match snapshot.phase {
             TurnPhase::Failed => {
                 print_failure(&snapshot);
-                return Err(format!("故事引擎在第 {} 轮失败", snapshot.active_turn_id).into());
+                return Err(format!("故事引擎在第 {} 章失败", snapshot.active_turn_id).into());
             }
             TurnPhase::Ended => {
                 println!(

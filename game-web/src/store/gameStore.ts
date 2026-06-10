@@ -11,6 +11,7 @@ export interface RoundState {
   choices: Choice[];
   choicesStatus: RoundChoicesStatus;
   selectedChoiceText: string | null;
+  selectedChoiceAction: string | null;
   isAwaitingNarration: boolean;
 }
 
@@ -41,6 +42,7 @@ export function createRoundState(round: number, overrides: Partial<RoundState> =
     choices: [],
     choicesStatus: 'idle',
     selectedChoiceText: null,
+    selectedChoiceAction: null,
     isAwaitingNarration: false,
     ...overrides,
   };

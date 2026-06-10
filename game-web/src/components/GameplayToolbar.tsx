@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  Clock3,
   Eye,
   Flame,
   House,
@@ -14,6 +15,7 @@ import { generateGameSessionStorySummary } from "../lib/api";
 
 interface GameplayToolbarProps {
   isReadOnly?: boolean;
+  currentRound: number;
   activeObsession: boolean;
   isObsessionToggleDisabled: boolean;
   obsessionPoints: number;
@@ -31,6 +33,7 @@ interface GameplayToolbarProps {
 
 const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
   isReadOnly = false,
+  currentRound,
   activeObsession,
   isObsessionToggleDisabled,
   obsessionPoints,
@@ -116,44 +119,46 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
 
   return (
     <>
-      <div className="game-opts inset-x-0 rounded-full border border-[rgba(116,103,80,0.4)] bg-[rgba(8,14,26,0.82)] px-2 py-2 backdrop-blur-md">
-        <div
-          className={`relative flex items-center gap-2 ${isReadOnly ? "justify-end" : "justify-between"}`}
-        >
+      <div className="game-opts inset-x-0 rounded-full border border-[rgba(116,103,80,0.34)] bg-[rgba(8,14,26,0.82)] px-1.5 py-1 backdrop-blur-md">
+        <div className="relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5">
           {!isReadOnly ? (
-            <>
-              <div className="flex items-center gap-2">
-                <SecondaryButton
-                  onClick={onToggleObsession}
-                  className={`min-h-0 gap-1.5 px-2.5 py-1.5 text-[0.72rem] leading-4 sm:text-xs ${activeObsession ? "border-red-300/50 bg-red-950/25 text-red-100" : ""}`}
-                  disabled={isObsessionToggleDisabled}
-                >
-                  <Flame
-                    className={`h-3.5 w-3.5 ${activeObsession ? "animate-pulse" : ""}`}
-                  />
-                  执念
-                </SecondaryButton>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1 text-[0.72rem] leading-4 text-[#d9cbb1] sm:text-xs">
+            <SecondaryButton
+              onClick={onToggleObsession}
+              className={`min-h-0 shrink-0 gap-1.5 px-2 py-1 text-[0.72rem] leading-4 sm:text-xs ${activeObsession ? "border-red-300/50 bg-red-950/25 text-red-100" : ""}`}
+              disabled={isObsessionToggleDisabled}
+            >
+              <Flame
+                className={`h-3.5 w-3.5 ${activeObsession ? "animate-pulse" : ""}`}
+              />
+              执念
+            </SecondaryButton>
+          ) : <span aria-hidden="true" />}
+          <div className="flex min-w-0 items-center justify-center gap-1.5 justify-self-center text-[0.72rem] font-semibold leading-4 text-[#d9cbb1] sm:gap-2 sm:text-xs">
+            <span className="inline-flex items-center gap-1">
+              <Clock3 className="h-3.5 w-3.5" />
+              <span>{currentRound}</span>
+            </span>
+            {!isReadOnly ? (
+              <>
+                <span className="text-[#8f98ab]">|</span>
+                <span className="inline-flex items-center gap-1">
                   <Flame className="h-3.5 w-3.5" />
                   <span>{obsessionPoints}</span>
                 </span>
-                <span className="text-[0.72rem] leading-4 text-[#8f98ab] sm:text-xs">
-                  |
-                </span>
-                <span className="inline-flex items-center gap-1 text-[0.72rem] leading-4 text-[#d9cbb1] sm:text-xs">
+                <span className="text-[#8f98ab]">|</span>
+                <span className="inline-flex items-center gap-1">
                   <Eye className="h-3.5 w-3.5" />
                   <span>{`${intuitionPoints}/2`}</span>
                 </span>
-              </div>
-            </>
-          ) : null}
-          <div className="relative">
+              </>
+            ) : null}
+          </div>
+          <div className="relative shrink-0">
             <SecondaryButton
               type="button"
               onClick={() => setIsUtilityMenuOpen((prev) => !prev)}
-              className="min-h-0 gap-1.5 px-2.5 py-1.5 text-[0.72rem] leading-4 sm:text-xs"
+              className="min-h-0 gap-1.5 px-2 py-1 text-[0.72rem] leading-4 sm:text-xs"
+              aria-label="打开菜单"
             >
               <MoreHorizontal className="h-3.5 w-3.5" />
               菜单
