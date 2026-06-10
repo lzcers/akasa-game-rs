@@ -98,3 +98,73 @@ jobs:
           labels: ${{ steps.meta-caddy.outputs.labels }}
           cache-from: type=gha,scope=akashic-caddy
           cache-to: type=gha,mode=max,scope=akashic-caddy
+
+  deploy:
+    needs: docker
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+      IMAGE_TAG: latest
+    steps:
+      - name: Checkout compose file
+        uses: actions/checkout@v6
+
+      - name: Validate deployment settings
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DOCKER_REGISTRY_USERNAME: ${{ secrets.DOCKER_REGISTRY_USERNAME }}
+          DOCKER_REGISTRY_PASSWORD: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
+        run: |
+          test -n "$REGISTRY" || (echo "Set repository variable DOCKER_REGISTRY" && exit 1)
+          test -n "$IMAGE_NAMESPACE" || (echo "Set repository variable DOCKER_NAMESPACE" && exit 1)
+          test -n "$DEPLOY_HOST" || (echo "Set repository variable DEPLOY_HOST" && exit 1)
+          test -n "$DEPLOY_USER" || (echo "Set repository variable DEPLOY_USER" && exit 1)
+          test -n "$DEPLOY_PATH" || (echo "Set repository variable DEPLOY_PATH, for example /opt/akashic" && exit 1)
+          test -n "$DEPLOY_SSH_PRIVATE_KEY" || (echo "Set repository secret DEPLOY_SSH_PRIVATE_KEY" && exit 1)
+          test -n "$DOCKER_REGISTRY_USERNAME" || (echo "Set repository secret DOCKER_REGISTRY_USERNAME" && exit 1)
+          test -n "$DOCKER_REGISTRY_PASSWORD" || (echo "Set repository secret DOCKER_REGISTRY_PASSWORD" && exit 1)
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload compose file
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
+          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" docker-compose.prod.yml "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/docker-compose.prod.yml"
+
+      - name: Deploy on host
+        env:
+          DOCKER_REGISTRY_USERNAME: ${{ secrets.DOCKER_REGISTRY_USERNAME }}
+          DOCKER_REGISTRY_PASSWORD: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
+        run: |
+          printf '%s' "$DOCKER_REGISTRY_PASSWORD" | ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "docker login '$REGISTRY' --username '$DOCKER_REGISTRY_USERNAME' --password-stdin"
+
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "DEPLOY_PATH='$DEPLOY_PATH' \
+             DOCKER_REGISTRY='$REGISTRY' \
+             DOCKER_NAMESPACE='$IMAGE_NAMESPACE' \
+             DOCKER_IMAGE_PREFIX='$IMAGE_PREFIX' \
+             IMAGE_TAG='$IMAGE_TAG' \
+             bash -s" <<'EOF'
+          set -euo pipefail
+          cd "$DEPLOY_PATH"
+          if [ ! -f .env ]; then
+            echo "Missing $DEPLOY_PATH/.env on deployment host. Create it with runtime secrets before deploying."
+            exit 1
+          fi
+          docker compose -f docker-compose.prod.yml pull
+          docker compose -f docker-compose.prod.yml up -d --remove-orphans
+          docker image prune -f
+          EOF
