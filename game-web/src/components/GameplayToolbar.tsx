@@ -164,7 +164,7 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
               菜单
             </SecondaryButton>
             {isUtilityMenuOpen ? (
-              <div className="absolute bottom-[calc(100%+0.45rem)] right-0 z-20 min-w-[8.8rem] rounded-[0.95rem] border border-[rgba(116,103,80,0.5)] bg-[rgba(7,13,24,0.96)] p-1.5 shadow-[0_10px_24px_rgba(0,0,0,0.45)]">
+              <div className="absolute bottom-[calc(100%+0.45rem)] right-0 z-[80] min-w-[8.8rem] rounded-[0.95rem] border border-[rgba(116,103,80,0.5)] bg-[rgba(7,13,24,0.96)] p-1.5 shadow-[0_10px_24px_rgba(0,0,0,0.45)]">
                 <button
                   type="button"
                   onClick={() => {
@@ -219,7 +219,7 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
         </div>
       </div>
       {isShareCardOpen ? (
-        <div className="fixed inset-0 z-40 flex items-end justify-center bg-[rgba(5,8,15,0.72)] px-3 py-4 backdrop-blur-sm sm:items-center sm:px-6">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-[rgba(5,8,15,0.72)] px-3 py-4 backdrop-blur-sm sm:items-center sm:px-6">
           <div
             className="absolute inset-0"
             onClick={() => setShareCardOpenKey(null)}

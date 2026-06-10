@@ -377,7 +377,27 @@ const GeneratingPage: React.FC = () => {
               })}
             </div>
           </SectionCard>
-
+          {preparedProfiles ? (
+            <div className="flex flex-row items-center justify-center gap-3 sm:flex-row">
+              <SecondaryButton
+                onClick={() => void startGame()}
+                className="min-w-44"
+              >
+                重新共鸣
+              </SecondaryButton>
+              <PrimaryButton
+                onClick={handleEnterWorld}
+                disabled={!canEnterWorld && isLoading}
+                className="min-w-44"
+              >
+                {canEnterWorld
+                  ? "步入回响"
+                  : isLoading
+                    ? "共鸣中..."
+                    : "再次步入回响"}
+              </PrimaryButton>
+            </div>
+          ) : null}
           {activeProfilePanel ? (
             <SectionCard className="space-y-4">
               <div className="flex items-start justify-between gap-4">
@@ -411,28 +431,6 @@ const GeneratingPage: React.FC = () => {
                 </p>
               </div>
             </SectionCard>
-          ) : null}
-
-          {preparedProfiles ? (
-            <div className="flex flex-row items-center justify-center gap-3 sm:flex-row">
-              <SecondaryButton
-                onClick={() => void startGame()}
-                className="min-w-44"
-              >
-                重新共鸣
-              </SecondaryButton>
-              <PrimaryButton
-                onClick={handleEnterWorld}
-                disabled={!canEnterWorld && isLoading}
-                className="min-w-44"
-              >
-                {canEnterWorld
-                  ? "步入回响"
-                  : isLoading
-                    ? "共鸣中..."
-                    : "再次步入回响"}
-              </PrimaryButton>
-            </div>
           ) : null}
         </div>
       </StoryFrame>

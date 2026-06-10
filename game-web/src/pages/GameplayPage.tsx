@@ -92,7 +92,7 @@ const GameplayPage: React.FC = () => {
     previews: {},
   });
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [collapsedChoicePanelRound, setCollapsedChoicePanelRound] = useState<
+  const [expandedChoicePanelRound, setExpandedChoicePanelRound] = useState<
     number | null
   >(null);
   const autoChoiceKeyRef = useRef<string | null>(null);
@@ -118,7 +118,7 @@ const GameplayPage: React.FC = () => {
   const activeObsession = hasCurrentRoundControls
     ? roundControls.activeObsession
     : false;
-  const isChoicePanelCollapsed = collapsedChoicePanelRound === currentRound;
+  const isChoicePanelCollapsed = expandedChoicePanelRound !== currentRound;
   const obsessionInput = hasCurrentRoundControls
     ? roundControls.obsessionInput
     : "";
@@ -457,7 +457,7 @@ const GameplayPage: React.FC = () => {
               onTypewriterComplete={handleTypewriterComplete}
             />
             {!isEndingReviewMode ? (
-              <div className="pointer-events-none absolute inset-x-1 bottom-1 z-20 sm:inset-x-3">
+              <div className="pointer-events-none absolute inset-x-1 bottom-1 z-10 sm:inset-x-3">
                 <div className="pointer-events-auto mx-auto w-full max-w-3xl">
                   <ChoicePanel
                     hasChoices={hasChoices}
@@ -474,8 +474,8 @@ const GameplayPage: React.FC = () => {
                     isObsessionSubmitDisabled={isObsessionSubmitDisabled}
                     onToggleCollapsed={() => {
                       const isExpandingChoicePanel =
-                        collapsedChoicePanelRound === currentRound;
-                      setCollapsedChoicePanelRound((prev) =>
+                        expandedChoicePanelRound !== currentRound;
+                      setExpandedChoicePanelRound((prev) =>
                         prev === currentRound ? null : currentRound,
                       );
                       if (isExpandingChoicePanel) {
@@ -513,7 +513,7 @@ const GameplayPage: React.FC = () => {
               </div>
             ) : null}
           </div>
-          <div className="shrink-0 touch-pan-y">
+          <div className="relative z-40 shrink-0 touch-pan-y">
             <GameplayToolbar
               isReadOnly={isEndingReviewMode}
               currentRound={currentRound}
@@ -532,8 +532,8 @@ const GameplayPage: React.FC = () => {
                   return;
                 }
                 const wasChoicePanelCollapsed =
-                  collapsedChoicePanelRound === currentRound;
-                setCollapsedChoicePanelRound(null);
+                  expandedChoicePanelRound !== currentRound;
+                setExpandedChoicePanelRound(currentRound);
                 setRoundControls((prev) => ({
                   round: currentRound,
                   activeObsession:
