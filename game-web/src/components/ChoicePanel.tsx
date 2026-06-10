@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Bot, ChevronDown, Eye, MousePointer2 } from "lucide-react";
+import { Bot, ChevronDown, Eye, Flame, MousePointer2 } from "lucide-react";
 import type { Choice } from "../lib/api";
 import { SecondaryButton } from "./AkashicUI";
 
@@ -10,6 +10,7 @@ interface ChoicePanelProps {
   previews: Record<string, string>;
   remainingIntuitionPoints: number;
   activeObsession: boolean;
+  isObsessionToggleDisabled: boolean;
   obsessionInput: string;
   autoChoiceEnabled?: boolean;
   showAutoChoiceToggle?: boolean;
@@ -17,6 +18,7 @@ interface ChoicePanelProps {
   isChoiceInteractionDisabled: boolean;
   isObsessionSubmitDisabled: boolean;
   onToggleCollapsed?: () => void;
+  onToggleObsession: () => void;
   onChoiceClick: (choice: Choice) => void | Promise<void>;
   onContinue: () => void | Promise<void>;
   onAutoChoiceToggle?: (enabled: boolean) => void;
@@ -35,6 +37,7 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
   previews,
   remainingIntuitionPoints,
   activeObsession,
+  isObsessionToggleDisabled,
   obsessionInput,
   autoChoiceEnabled = false,
   showAutoChoiceToggle = false,
@@ -42,6 +45,7 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
   isChoiceInteractionDisabled,
   isObsessionSubmitDisabled,
   onToggleCollapsed,
+  onToggleObsession,
   onChoiceClick,
   onContinue,
   onAutoChoiceToggle,
@@ -169,48 +173,64 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
   }
 
   return (
-    <div className="flex w-full">
+    <div className="relative flex w-full pt-3">
+      <button
+        type="button"
+        onClick={onToggleCollapsed}
+        className="absolute right-0 -top-5 z-10 inline-flex h-7 items-center gap-1 rounded-full border border-[rgba(116,103,80,0.45)] bg-[rgba(5,11,22,0.92)] px-2 text-[0.68rem] font-medium text-[#d9cbb1] shadow-[0_8px_18px_rgba(0,0,0,0.36)] backdrop-blur-md transition-colors hover:border-[rgba(215,188,146,0.72)] hover:text-[#f3ead8] sm:text-xs"
+        aria-expanded="true"
+      >
+        <ChevronDown className="h-3.5 w-3.5" />
+        收起
+      </button>
       <div className="game-choices flex-1 rounded-[1.1rem] border border-[rgba(116,103,80,0.42)] bg-[rgba(5,11,22,0.86)] px-1.5 py-2 shadow-[0_18px_48px_rgba(0,0,0,0.42)] backdrop-blur-md">
-        <div className="flex items-center justify-between gap-2 px-0.5 mb-0.5">
-          <button
-            type="button"
-            onClick={onToggleCollapsed}
-            className="inline-flex h-8 items-center gap-1.5 rounded-full px-2 text-[0.68rem] font-medium text-[#d9cbb1] transition-colors hover:bg-[rgba(188,169,124,0.12)] hover:text-[#f3ead8] sm:text-xs"
-            aria-expanded="true"
-          >
-            <ChevronDown className="h-3.5 w-3.5" />
-            收起
-          </button>
-          {showAutoChoiceToggle ? (
-            <button
-              type="button"
-              role="switch"
-              aria-checked={autoChoiceEnabled}
-              onClick={() => onAutoChoiceToggle?.(!autoChoiceEnabled)}
-              className="inline-flex h-8 items-center gap-2 rounded-full border border-[rgba(116,103,80,0.48)] bg-[rgba(18,26,41,0.72)] px-3 text-[0.68rem] font-medium text-[#d9cbb1] transition-colors hover:border-[rgba(215,188,146,0.72)] hover:text-[#f3ead8] sm:text-xs"
-              title="开发测试：自动选择第一个可用选项"
-            >
-              <Bot className="h-3.5 w-3.5" />
-              <span>自动选择</span>
-              <span
-                className={[
-                  "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full border transition-colors",
-                  autoChoiceEnabled
-                    ? "border-[#d1b78d] bg-[#d1b78d]/85"
-                    : "border-[#746750]/70 bg-[#1d283b]",
-                ].join(" ")}
+        <div className="mb-0.5 flex items-center justify-between gap-2 px-0.5">
+          <div className="flex min-w-0 items-center gap-1.5">
+            {showAutoChoiceToggle ? (
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autoChoiceEnabled}
+                onClick={() => onAutoChoiceToggle?.(!autoChoiceEnabled)}
+                className="inline-flex h-8 items-center gap-2 rounded-full border border-[rgba(116,103,80,0.48)] bg-[rgba(18,26,41,0.72)] px-3 text-[0.68rem] font-medium text-[#d9cbb1] transition-colors hover:border-[rgba(215,188,146,0.72)] hover:text-[#f3ead8] sm:text-xs"
+                title="开发测试：自动选择第一个可用选项"
               >
+                <Bot className="h-3.5 w-3.5" />
+                <span>自动选择</span>
                 <span
                   className={[
-                    "h-3 w-3 rounded-full bg-[#f7efe2] transition-transform",
-                    autoChoiceEnabled ? "translate-x-3.5" : "translate-x-0.5",
+                    "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full border transition-colors",
+                    autoChoiceEnabled
+                      ? "border-[#d1b78d] bg-[#d1b78d]/85"
+                      : "border-[#746750]/70 bg-[#1d283b]",
                   ].join(" ")}
-                />
-              </span>
-            </button>
-          ) : (
-            <span />
-          )}
+                >
+                  <span
+                    className={[
+                      "h-3 w-3 rounded-full bg-[#f7efe2] transition-transform",
+                      autoChoiceEnabled ? "translate-x-3.5" : "translate-x-0.5",
+                    ].join(" ")}
+                  />
+                </span>
+              </button>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={onToggleObsession}
+            disabled={isObsessionToggleDisabled}
+            aria-label="切换执念"
+            title="执念"
+            className={`relative h-10 min-h-10 w-10 overflow-hidden rounded-full border border-red-300/35 bg-red-950/18 text-red-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all hover:border-red-300/50 hover:bg-red-950/24 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 ${
+              activeObsession
+                ? "border-red-300/65 bg-red-950/34 text-red-50 shadow-[0_0_16px_rgba(248,113,113,0.18)]"
+                : ""
+            }`}
+          >
+            <Flame
+              className={`relative z-10 mx-auto h-4 w-4 ${activeObsession ? "animate-pulse" : ""}`}
+            />
+          </button>
         </div>
 
         {!activeObsession ? (

@@ -29,6 +29,7 @@ function setSessionSwitchLoadingState(set: SetGameUIState) {
     isLoading: true,
     startupStage: 'idle',
     preparedProfiles: null,
+    generatedProfiles: null,
     error: null,
     skipRestoredNarrationAnimation: true,
   });
@@ -59,6 +60,7 @@ export function activateSessionSnapshot(
     isLoading: false,
     startupStage: 'idle',
     preparedProfiles: null,
+    generatedProfiles: session.generatedProfiles,
     error: null,
     skipRestoredNarrationAnimation: true,
   });

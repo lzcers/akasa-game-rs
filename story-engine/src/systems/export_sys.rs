@@ -6,7 +6,7 @@ use bevy_ecs::{
 };
 
 use crate::{
-    components::{outcome::NarrationOutcome, turn_flow::TurnFlow},
+    components::{outcome::NarrationOutcome, session::SessionProfiles, turn_flow::TurnFlow},
     resources::{
         agent_task::{AgentTaskManager, TaskStatus},
         export::{ExportState, SessionSnapshot, TaskView},
@@ -24,30 +24,38 @@ pub fn export_system(
         Ref<WorldSnapshot>,
         Ref<SessionHistoryLog>,
         Ref<ProtagonistDecisionState>,
+        Ref<SessionProfiles>,
         &ExportState,
     )>,
     agents: Query<(Entity, &ChildOf, Option<&NarrationOutcome>)>,
     agent_tasks: Res<AgentTaskManager>,
 ) {
-    for (session_entity, flow, world_snapshot, history_log, decision_state, export_state) in
-        sessions.iter().filter(
-            |(_, flow, world_snapshot, history_log, decision_state, _)| {
-                let is_active = !matches!(
-                    flow.stage,
-                    crate::components::turn_flow::TurnStage::Idle
-                        | crate::components::turn_flow::TurnStage::AwaitingPlayer
-                        | crate::components::turn_flow::TurnStage::TurnCompleted
-                        | crate::components::turn_flow::TurnStage::Ended
-                        | crate::components::turn_flow::TurnStage::Failed
-                );
-                is_active
-                    || flow.is_changed()
-                    || world_snapshot.is_changed()
-                    || history_log.is_changed()
-                    || decision_state.is_changed()
-            },
-        )
-    {
+    for (
+        session_entity,
+        flow,
+        world_snapshot,
+        history_log,
+        decision_state,
+        profiles,
+        export_state,
+    ) in sessions.iter().filter(
+        |(_, flow, world_snapshot, history_log, decision_state, profiles, _)| {
+            let is_active = !matches!(
+                flow.stage,
+                crate::components::turn_flow::TurnStage::Idle
+                    | crate::components::turn_flow::TurnStage::AwaitingPlayer
+                    | crate::components::turn_flow::TurnStage::TurnCompleted
+                    | crate::components::turn_flow::TurnStage::Ended
+                    | crate::components::turn_flow::TurnStage::Failed
+            );
+            is_active
+                || flow.is_changed()
+                || world_snapshot.is_changed()
+                || history_log.is_changed()
+                || decision_state.is_changed()
+                || profiles.is_changed()
+        },
+    ) {
         let latest_narration = agents
             .iter()
             .filter(|(_, owner, _)| owner.parent() == session_entity)
@@ -73,6 +81,9 @@ pub fn export_system(
             .cloned();
 
         export_state.publish_snapshot(SessionSnapshot {
+            world_profile: profiles.world_profile.clone(),
+            protagonist_profile: profiles.protagonist_profile.clone(),
+            key_story_beats: profiles.key_story_beats.clone(),
             phase: flow.stage,
             turn_index: flow.turn_index,
             active_turn_id: flow.active_turn_id,

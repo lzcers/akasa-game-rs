@@ -76,6 +76,7 @@ pub struct ControlGameSessionRequest {
 #[serde(rename_all = "camelCase")]
 pub struct GameSessionWorldStateData {
     pub session_id: String,
+    pub generated_profiles: GeneratedProfilesData,
     pub status: String,
     pub phase: TurnPhase,
     pub turn_index: u64,
@@ -87,6 +88,14 @@ pub struct GameSessionWorldStateData {
     pub latest_narration: String,
     pub current_protagonist_action: String,
     pub choices: Vec<PendingProtagonistChoice>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeneratedProfilesData {
+    pub world: String,
+    pub protagonist: String,
+    pub key_story_beats: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

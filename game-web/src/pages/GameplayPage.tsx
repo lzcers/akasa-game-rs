@@ -35,6 +35,7 @@ const GameplayPage: React.FC = () => {
     turnIndex,
     latestBroadcastItems,
     latestBroadcastSummary,
+    generatedProfiles,
     isEnding,
     isLoading,
     error,
@@ -46,6 +47,7 @@ const GameplayPage: React.FC = () => {
       latestBroadcastItems:
         state.stateView?.latestBroadcastItems ?? EMPTY_BROADCAST_ITEMS,
       latestBroadcastSummary: state.stateView?.latestBroadcastSummary ?? "",
+      generatedProfiles: state.generatedProfiles,
       isEnding: state.stateView?.isEnding ?? false,
       isLoading: state.isLoading,
       error: state.error,
@@ -431,6 +433,24 @@ const GameplayPage: React.FC = () => {
     }
   };
 
+  const handleToggleObsession = () => {
+    if (isEndingReviewMode) {
+      return;
+    }
+    const wasChoicePanelCollapsed = expandedChoicePanelRound !== currentRound;
+    setExpandedChoicePanelRound(currentRound);
+    setRoundControls((prev) => ({
+      round: currentRound,
+      activeObsession:
+        wasChoicePanelCollapsed || prev.round !== currentRound
+          ? true
+          : !prev.activeObsession,
+      obsessionInput: prev.round === currentRound ? prev.obsessionInput : "",
+      previews: prev.round === currentRound ? prev.previews : {},
+    }));
+    setFeedback(null);
+  };
+
   return (
     <ScreenShell className="h-full min-h-0 items-stretch overflow-hidden py-2 sm:py-2 md:py-2">
       <StoryFrame className="relative flex h-full max-w-5xl flex-col overflow-hidden px-2.5 py-2.5 sm:px-3 sm:py-3">
@@ -467,6 +487,7 @@ const GameplayPage: React.FC = () => {
                     previews={previews}
                     remainingIntuitionPoints={intuitionPoints}
                     activeObsession={activeObsession}
+                    isObsessionToggleDisabled={isObsessionToggleDisabled}
                     obsessionInput={obsessionInput}
                     autoChoiceEnabled={autoChoiceEnabled}
                     showAutoChoiceToggle={import.meta.env.DEV}
@@ -495,6 +516,7 @@ const GameplayPage: React.FC = () => {
                     onChoiceClick={handleChoiceClick}
                     onContinue={handleContinueClick}
                     onAutoChoiceToggle={setAutoChoiceEnabled}
+                    onToggleObsession={handleToggleObsession}
                     onPreview={handlePreview}
                     onObsessionInputChange={(nextValue) => {
                       setRoundControls((prev) => ({
@@ -519,35 +541,15 @@ const GameplayPage: React.FC = () => {
             <GameplayToolbar
               isReadOnly={isEndingReviewMode}
               currentRound={currentRound}
-              activeObsession={!isEndingReviewMode && activeObsession}
-              isObsessionToggleDisabled={isObsessionToggleDisabled}
               obsessionPoints={obsessionPoints}
               intuitionPoints={intuitionPoints}
               sessionId={sessionId}
               shareSummaryFallback={shareSummaryFallback}
               shareGameUrl={shareGameUrl}
+              generatedProfiles={generatedProfiles}
               archiveActionKey={archiveActionKey}
               isArchiveActionDisabled={!canArchiveLatestCompletedRound}
               archiveActionUnavailableReason={archiveActionUnavailableReason}
-              onToggleObsession={() => {
-                if (isEndingReviewMode) {
-                  return;
-                }
-                const wasChoicePanelCollapsed =
-                  expandedChoicePanelRound !== currentRound;
-                setExpandedChoicePanelRound(currentRound);
-                setRoundControls((prev) => ({
-                  round: currentRound,
-                  activeObsession:
-                    wasChoicePanelCollapsed || prev.round !== currentRound
-                      ? true
-                      : !prev.activeObsession,
-                  obsessionInput:
-                    prev.round === currentRound ? prev.obsessionInput : "",
-                  previews: prev.round === currentRound ? prev.previews : {},
-                }));
-                setFeedback(null);
-              }}
               onBackToLobby={() => {
                 suppressSessionRestore(sessionId);
                 navigate(appRoutes.lobby, { replace: true });

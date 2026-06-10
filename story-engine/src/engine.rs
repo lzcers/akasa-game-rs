@@ -45,6 +45,9 @@ pub struct RuntimeDebugObserverResource {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
+    pub world_profile: String,
+    pub protagonist_profile: String,
+    pub key_story_beats: String,
     pub phase: TurnPhase,
     pub turn_index: u64,
     pub active_turn_id: u64,
@@ -241,6 +244,9 @@ impl AkashicSessionEngine {
 impl Session {
     fn from_snapshot(snapshot: SessionSnapshot) -> Self {
         Self {
+            world_profile: snapshot.world_profile,
+            protagonist_profile: snapshot.protagonist_profile,
+            key_story_beats: snapshot.key_story_beats,
             phase: snapshot.phase,
             turn_index: snapshot.turn_index,
             active_turn_id: snapshot.active_turn_id,

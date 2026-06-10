@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  BookOpenText,
   Clock3,
   Eye,
   Flame,
@@ -12,21 +13,20 @@ import {
 import { SecondaryButton } from "./AkashicUI";
 import StoryShareCard from "./StoryShareCard";
 import { generateGameSessionStorySummary } from "../lib/api";
+import type { GeneratedProfiles } from "../lib/api";
 
 interface GameplayToolbarProps {
   isReadOnly?: boolean;
   currentRound: number;
-  activeObsession: boolean;
-  isObsessionToggleDisabled: boolean;
   obsessionPoints: number;
   intuitionPoints: number;
   sessionId?: string | null;
   shareSummaryFallback: string;
   shareGameUrl: string;
+  generatedProfiles?: GeneratedProfiles | null;
   archiveActionKey: string;
   isArchiveActionDisabled: boolean;
   archiveActionUnavailableReason: string | null;
-  onToggleObsession: () => void;
   onBackToLobby: () => void;
   onSave: () => void | Promise<void>;
 }
@@ -34,27 +34,50 @@ interface GameplayToolbarProps {
 const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
   isReadOnly = false,
   currentRound,
-  activeObsession,
-  isObsessionToggleDisabled,
   obsessionPoints,
   intuitionPoints,
   sessionId,
   shareSummaryFallback,
   shareGameUrl,
+  generatedProfiles,
   archiveActionKey,
   isArchiveActionDisabled,
   archiveActionUnavailableReason,
-  onToggleObsession,
   onBackToLobby,
   onSave,
 }) => {
   const [isUtilityMenuOpen, setIsUtilityMenuOpen] = useState(false);
+  const [isRecordViewerOpen, setIsRecordViewerOpen] = useState(false);
   const [shareCardOpenKey, setShareCardOpenKey] = useState<string | null>(null);
   const [shareSummary, setShareSummary] = useState<string | null>(null);
   const [shareError, setShareError] = useState<string | null>(null);
   const [isShareLoading, setIsShareLoading] = useState(false);
   const isShareCardOpen =
     shareCardOpenKey === archiveActionKey && !isArchiveActionDisabled;
+  const hasGeneratedProfiles = Boolean(
+    generatedProfiles?.world.trim() && generatedProfiles?.protagonist.trim(),
+  );
+
+  const recordPanels = useMemo(() => {
+    if (!generatedProfiles) {
+      return [];
+    }
+
+    return [
+      {
+        key: "world",
+        title: "阿卡夏显影出的世界记录",
+        text: generatedProfiles.world,
+        className: "border-[#5b6f96]/30 bg-[#0f1624]/92 text-[#c7d5f2]",
+      },
+      {
+        key: "protagonist",
+        title: "阿卡夏显影出的角色记录",
+        text: generatedProfiles.protagonist,
+        className: "border-[#6f5f96]/30 bg-[#151325]/92 text-[#d8d0f2]",
+      },
+    ];
+  }, [generatedProfiles]);
 
   const resolvedShareSummary = useMemo(() => {
     const fetchedSummary = shareSummary?.trim();
@@ -65,19 +88,20 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
   }, [shareSummary, shareSummaryFallback]);
 
   useEffect(() => {
-    if (!isShareCardOpen) {
+    if (!isShareCardOpen && !isRecordViewerOpen) {
       return undefined;
     }
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setShareCardOpenKey(null);
+        setIsRecordViewerOpen(false);
       }
     };
 
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [isShareCardOpen]);
+  }, [isRecordViewerOpen, isShareCardOpen]);
 
   useEffect(() => {
     if (!isShareCardOpen || !sessionId) {
@@ -120,22 +144,8 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
   return (
     <>
       <div className="game-opts inset-x-0 rounded-full border border-[rgba(116,103,80,0.34)] bg-[rgba(8,14,26,0.82)] px-1.5 py-1 backdrop-blur-md">
-        <div className="relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5">
-          {!isReadOnly ? (
-            <SecondaryButton
-              onClick={onToggleObsession}
-              className={`min-h-0 shrink-0 gap-1.5 px-2 py-1 text-[0.72rem] leading-4 sm:text-xs ${activeObsession ? "border-red-300/50 bg-red-950/25 text-red-100" : ""}`}
-              disabled={isObsessionToggleDisabled}
-            >
-              <Flame
-                className={`h-3.5 w-3.5 ${activeObsession ? "animate-pulse" : ""}`}
-              />
-              执念
-            </SecondaryButton>
-          ) : (
-            <span aria-hidden="true" />
-          )}
-          <div className="flex min-w-0 items-center justify-center gap-1.5 justify-self-center text-[0.72rem] font-semibold leading-4 text-[#d9cbb1] sm:gap-2 sm:text-xs">
+        <div className="relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5">
+          <div className="flex min-w-0 items-center ml-3 justify-start gap-1.5 text-[0.72rem] font-semibold leading-4 text-[#d9cbb1] sm:gap-2 sm:text-xs">
             <span className="inline-flex items-center gap-1">
               <Clock3 className="h-3.5 w-3.5" />
               <span>{currentRound}</span>
@@ -180,6 +190,22 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
                 </button>
                 <button
                   type="button"
+                  disabled={!hasGeneratedProfiles}
+                  title={hasGeneratedProfiles ? "查看记录" : "记录仍在显影中"}
+                  onClick={() => {
+                    if (!hasGeneratedProfiles) {
+                      return;
+                    }
+                    setIsRecordViewerOpen(true);
+                    setIsUtilityMenuOpen(false);
+                  }}
+                  className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] disabled:cursor-not-allowed disabled:text-[#8f98ab] disabled:hover:bg-transparent sm:text-xs"
+                >
+                  <BookOpenText className="h-3.5 w-3.5" />
+                  查看记录
+                </button>
+                <button
+                  type="button"
                   disabled={isArchiveActionDisabled}
                   title={archiveActionUnavailableReason ?? "封存记录"}
                   onClick={() => {
@@ -192,7 +218,7 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
                   className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] disabled:cursor-not-allowed disabled:text-[#8f98ab] disabled:hover:bg-transparent sm:text-xs"
                 >
                   <Save className="h-3.5 w-3.5" />
-                  保存
+                  存档
                 </button>
                 <button
                   type="button"
@@ -220,6 +246,42 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
           </div>
         </div>
       </div>
+      {isRecordViewerOpen ? (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-[rgba(5,8,15,0.72)] px-3 py-4 backdrop-blur-sm sm:items-center sm:px-6">
+          <div
+            className="absolute inset-0"
+            onClick={() => setIsRecordViewerOpen(false)}
+            aria-hidden="true"
+          />
+          <div className="relative z-10 flex max-h-[88svh] w-full max-w-4xl flex-col">
+            <div className="mb-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsRecordViewerOpen(false)}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[rgba(116,103,80,0.5)] bg-[rgba(8,14,26,0.9)] text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)]"
+                aria-label="关闭记录查看"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="game-card grid min-h-0 gap-3 overflow-y-auto rounded-3xl border border-[rgba(116,103,80,0.5)] bg-[rgba(8,14,26,0.95)] p-3 shadow-[0_24px_80px_rgba(1,8,20,0.6)] sm:p-4 md:grid-cols-2">
+              {recordPanels.map((panel) => (
+                <article
+                  key={panel.key}
+                  className={`flex min-h-[18rem] flex-col rounded-xl border p-3 md:min-h-[28rem] md:p-4 ${panel.className}`}
+                >
+                  <h2 className="shrink-0 text-base font-semibold leading-6 text-[#f8f1e3] md:text-lg">
+                    {panel.title}
+                  </h2>
+                  <p className="akashic-scroll mt-2 min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap pr-1 text-sm leading-6 sm:text-[0.95rem] sm:leading-7 md:text-base">
+                    {panel.text}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
       {isShareCardOpen ? (
         <div className="fixed inset-0 z-[60] flex items-end justify-center bg-[rgba(5,8,15,0.72)] px-3 py-4 backdrop-blur-sm sm:items-center sm:px-6">
           <div

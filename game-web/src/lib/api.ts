@@ -193,6 +193,7 @@ export interface TaskView {
 
 export interface GameSessionWorldStateData {
   sessionId: string;
+  generatedProfiles: GeneratedProfiles;
   status: string;
   phase: TurnPhase;
   turnIndex: number;
@@ -378,6 +379,7 @@ export function openGameSessionStream(
   sessionId: string,
   handlers: {
     onTaskUpdated: (event: TaskUpdatedEvent, lastEventId: string) => void;
+    onOpen?: () => void;
     onError?: () => void;
   },
   since?: string | null,
@@ -386,6 +388,12 @@ export function openGameSessionStream(
   const eventSource = new EventSource(
     withApiOrigin(`/api/game-sessions/${sessionId}/stream${search}`),
   );
+
+  if (handlers.onOpen) {
+    eventSource.addEventListener('open', () => {
+      handlers.onOpen?.();
+    });
+  }
 
   eventSource.addEventListener('task.updated', (rawEvent) => {
     const event = rawEvent as MessageEvent<string>;

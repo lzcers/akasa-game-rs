@@ -12,6 +12,7 @@ import type { GameUIStoreState } from '../gameUIStore';
 
 interface SessionStreamHandlers {
   onTaskUpdated: (task: TaskView, boundRound?: number | null) => void;
+  onStreamConnected: () => void;
   onStreamError: () => void;
   onSnapshotSyncRequested: (sessionId: string) => void;
 }
@@ -27,6 +28,7 @@ let lastStreamEventId: string | null = null;
 let activeStreamTasks = new Map<string, TaskView>();
 let activeStreamTaskRounds = new Map<string, number>();
 let endingSnapshotSyncTimer: number | null = null;
+const STREAM_RECONNECTING_MESSAGE = '连接有些不稳定，正在为你续接这段记录...';
 
 export function isSessionStreamActive(sessionId: string): boolean {
   return activeStreamSessionId === sessionId;
@@ -60,10 +62,17 @@ export function connectSessionStream(sessionId: string, handlers: SessionStreamH
   activeSessionStream = openGameSessionStream(
     sessionId,
     {
+      onOpen: () => {
+        if (!isSessionStreamActive(sessionId)) {
+          return;
+        }
+        handlers.onStreamConnected();
+      },
       onTaskUpdated: (event, lastEventId) => {
         if (!isSessionStreamActive(sessionId)) {
           return;
         }
+        handlers.onStreamConnected();
         lastStreamEventId = lastEventId || lastStreamEventId;
         if (event.kind === 'narration' || event.kind === 'protagonist_action') {
           activeStreamTaskRounds.set(event.entity, Math.max(event.round, 1));
@@ -125,6 +134,7 @@ async function syncActiveSessionSnapshot(
 
     runtime.set({
       stateView: applySessionSnapshotToStores(session),
+      generatedProfiles: session.generatedProfiles,
       isLoading: false,
       error: session.phase === 'failed' ? '故事推进失败，请稍后重试。' : null,
     });
@@ -150,9 +160,14 @@ export function connectGameSessionStream(
     onSnapshotSyncRequested: (nextSessionId) => {
       void syncActiveSessionSnapshot(runtime, nextSessionId);
     },
+    onStreamConnected: () => {
+      if (runtime.get().error === STREAM_RECONNECTING_MESSAGE) {
+        runtime.set({ error: null });
+      }
+    },
     onStreamError: () => {
       runtime.set({
-        error: '连接有些不稳定，正在为你续接这段记录...',
+        error: STREAM_RECONNECTING_MESSAGE,
       });
     },
   });

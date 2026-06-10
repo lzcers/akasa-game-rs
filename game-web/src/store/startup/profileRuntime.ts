@@ -42,6 +42,7 @@ export function beginStartupProfileGeneration(runtime: StartupProfileRuntime) {
     isLoading: true,
     startupStage: 'generating_world',
     preparedProfiles: null,
+    generatedProfiles: null,
     stateView: null,
   });
   navigateTo(appRoutes.generating, { replace: true });
@@ -101,6 +102,7 @@ export async function markStartupProfilesReady(
   runtime.set({
     startupStage: 'creating_session',
     preparedProfiles: generatedProfiles,
+    generatedProfiles,
   });
   await waitForNextPaint();
 }

@@ -37,6 +37,8 @@ export interface GameUIState {
   startupStage: StartupStage;
   // 已生成但尚未正式注入会话的世界/主角设定。
   preparedProfiles: GeneratedProfiles | null;
+  // 当前会话生成页显影出的记录文案，用于故事内回看。
+  generatedProfiles: GeneratedProfiles | null;
   // 全局错误消息。
   error: string | null;
   // 从存档恢复后，当前已存在叙事应直接展示，不再重新打字。

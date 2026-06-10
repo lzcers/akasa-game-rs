@@ -15,6 +15,9 @@ const DEFAULT_EXPORT_EVENT_BUFFER: usize = 4096;
 #[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSnapshot {
+    pub world_profile: String,
+    pub protagonist_profile: String,
+    pub key_story_beats: String,
     pub phase: TurnPhase,
     pub turn_index: u64,
     pub active_turn_id: u64,

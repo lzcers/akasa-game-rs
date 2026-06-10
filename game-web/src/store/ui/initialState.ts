@@ -16,6 +16,7 @@ export const initialUIState: GameUIState = {
   isLoading: false,
   startupStage: 'idle',
   preparedProfiles: null,
+  generatedProfiles: null,
   error: null,
   skipRestoredNarrationAnimation: false,
 };
@@ -29,6 +30,7 @@ export function resetUIState(): GameUIState {
     isLoading: false,
     startupStage: 'idle',
     preparedProfiles: null,
+    generatedProfiles: null,
     error: null,
     skipRestoredNarrationAnimation: false,
   };

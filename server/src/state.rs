@@ -24,7 +24,8 @@ use crate::{
     api::game_sessions::{
         ControlGameSessionData, ControlGameSessionRequest, CreateGameSessionData,
         CreateGameSessionRequest, GameSessionControlCommand, GameSessionWorldStateData,
-        RoundHistoryData, SaveExportData, SessionActionInput, WorldStateData,
+        GeneratedProfilesData, RoundHistoryData, SaveExportData, SessionActionInput,
+        WorldStateData,
     },
     api::site::{AnalyticsBatchRequest, SubmitFeedbackData, ValidatedFeedbackRequest},
     email::{FeedbackEmail, FeedbackMailer},
@@ -931,6 +932,11 @@ fn apply_action(
 fn world_state_from_session(session_id: &str, snapshot: &Session) -> GameSessionWorldStateData {
     GameSessionWorldStateData {
         session_id: session_id.to_string(),
+        generated_profiles: GeneratedProfilesData {
+            world: snapshot.world_profile.clone(),
+            protagonist: snapshot.protagonist_profile.clone(),
+            key_story_beats: snapshot.key_story_beats.clone(),
+        },
         status: status_from_phase(snapshot.phase).to_string(),
         phase: snapshot.phase,
         turn_index: visible_turn_index(snapshot),
@@ -1277,6 +1283,11 @@ mod tests {
     fn game_session_world_state_serializes_world_state_as_camel_case() {
         let dto = GameSessionWorldStateData {
             session_id: "session-test".to_string(),
+            generated_profiles: GeneratedProfilesData {
+                world: "world".to_string(),
+                protagonist: "protagonist".to_string(),
+                key_story_beats: "beats".to_string(),
+            },
             status: "awaiting_player".to_string(),
             phase: TurnPhase::AwaitingPlayer,
             turn_index: 2,
@@ -1438,6 +1449,9 @@ mod tests {
         let payload = sample_payload();
 
         Session {
+            world_profile: payload.world_profile,
+            protagonist_profile: payload.protagonist_profile,
+            key_story_beats: payload.key_story_beats,
             phase: payload.turn_state.phase,
             turn_index: payload.turn_state.turn_index,
             active_turn_id: payload.turn_state.active_turn_id + 1,
