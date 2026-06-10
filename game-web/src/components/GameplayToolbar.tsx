@@ -11,6 +11,8 @@ import {
   X,
 } from "lucide-react";
 import { SecondaryButton } from "./AkashicUI";
+import GeneratedProfilesCarousel from "./GeneratedProfilesCarousel";
+import { generatedProfilePanels } from "./generatedProfilePanels";
 import StoryShareCard from "./StoryShareCard";
 import { generateGameSessionStorySummary } from "../lib/api";
 import type { GeneratedProfiles } from "../lib/api";
@@ -55,29 +57,22 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
   const isShareCardOpen =
     shareCardOpenKey === archiveActionKey && !isArchiveActionDisabled;
   const hasGeneratedProfiles = Boolean(
-    generatedProfiles?.world.trim() && generatedProfiles?.protagonist.trim(),
+    generatedProfiles?.world.trim() &&
+    generatedProfiles?.protagonist.trim() &&
+    generatedProfiles?.keyStoryBeats.trim(),
   );
 
-  const recordPanels = useMemo(() => {
-    if (!generatedProfiles) {
-      return [];
-    }
-
-    return [
-      {
-        key: "world",
-        title: "阿卡夏显影出的世界记录",
-        text: generatedProfiles.world,
-        className: "border-[#5b6f96]/30 bg-[#0f1624]/92 text-[#c7d5f2]",
-      },
-      {
-        key: "protagonist",
-        title: "阿卡夏显影出的角色记录",
-        text: generatedProfiles.protagonist,
-        className: "border-[#6f5f96]/30 bg-[#151325]/92 text-[#d8d0f2]",
-      },
-    ];
-  }, [generatedProfiles]);
+  const recordPanels = useMemo(
+    () => (generatedProfiles ? generatedProfilePanels(generatedProfiles) : []),
+    [generatedProfiles],
+  );
+  const recordSetKey = generatedProfiles
+    ? [
+        generatedProfiles.world,
+        generatedProfiles.protagonist,
+        generatedProfiles.keyStoryBeats,
+      ].join("\n---\n")
+    : "";
 
   const resolvedShareSummary = useMemo(() => {
     const fetchedSummary = shareSummary?.trim();
@@ -191,7 +186,9 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
                 <button
                   type="button"
                   disabled={!hasGeneratedProfiles}
-                  title={hasGeneratedProfiles ? "查看记录" : "记录仍在显影中"}
+                  title={
+                    hasGeneratedProfiles ? "查看回响记录" : "记录仍在显影中"
+                  }
                   onClick={() => {
                     if (!hasGeneratedProfiles) {
                       return;
@@ -202,7 +199,7 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
                   className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] disabled:cursor-not-allowed disabled:text-[#8f98ab] disabled:hover:bg-transparent sm:text-xs"
                 >
                   <BookOpenText className="h-3.5 w-3.5" />
-                  查看记录
+                  查看回响记录
                 </button>
                 <button
                   type="button"
@@ -253,7 +250,7 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
             onClick={() => setIsRecordViewerOpen(false)}
             aria-hidden="true"
           />
-          <div className="relative z-10 flex max-h-[88svh] w-full max-w-4xl flex-col">
+          <div className="relative z-10 flex max-h-[88svh] w-full max-w-3xl flex-col">
             <div className="mb-3 flex justify-end">
               <button
                 type="button"
@@ -264,20 +261,11 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="game-card grid min-h-0 gap-3 overflow-y-auto rounded-3xl border border-[rgba(116,103,80,0.5)] bg-[rgba(8,14,26,0.95)] p-3 shadow-[0_24px_80px_rgba(1,8,20,0.6)] sm:p-4 md:grid-cols-2">
-              {recordPanels.map((panel) => (
-                <article
-                  key={panel.key}
-                  className={`flex min-h-[18rem] flex-col rounded-xl border p-3 md:min-h-[28rem] md:p-4 ${panel.className}`}
-                >
-                  <h2 className="shrink-0 text-base font-semibold leading-6 text-[#f8f1e3] md:text-lg">
-                    {panel.title}
-                  </h2>
-                  <p className="akashic-scroll mt-2 min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap pr-1 text-sm leading-6 sm:text-[0.95rem] sm:leading-7 md:text-base">
-                    {panel.text}
-                  </p>
-                </article>
-              ))}
+            <div className="game-card flex h-[min(74svh,42rem)] min-h-[24rem] flex-col rounded-3xl border border-[rgba(116,103,80,0.5)] bg-[rgba(8,14,26,0.95)] p-3 shadow-[0_24px_80px_rgba(1,8,20,0.6)] sm:p-4">
+              <GeneratedProfilesCarousel
+                panels={recordPanels}
+                resetKey={recordSetKey}
+              />
             </div>
           </div>
         </div>

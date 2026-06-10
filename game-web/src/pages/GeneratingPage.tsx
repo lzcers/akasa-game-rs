@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { LoaderCircle, Orbit, Sparkles } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useGameUIStore } from "../store/gameUIStore";
@@ -11,6 +11,8 @@ import {
   StatusPill,
   StoryFrame,
 } from "../components/AkashicUI";
+import GeneratedProfilesCarousel from "../components/GeneratedProfilesCarousel";
+import { generatedProfilePanels } from "../components/generatedProfilePanels";
 import { useGameInternalStore } from "../store/gameStore";
 import { track } from "../lib/analytics";
 import { appRoutes, routeWithSession } from "../lib/appRoutes";
@@ -63,12 +65,6 @@ const stageOrder: Exclude<StartupStage, "idle">[] = [
   "generating_protagonist",
   "creating_session",
   "ready_to_enter",
-];
-
-const profileStepOrder: ProfileStepKey[] = [
-  "generating_world",
-  "generating_protagonist",
-  "creating_session",
 ];
 
 const rotatingMessages: Record<Exclude<StartupStage, "idle">, string[]> = {
@@ -205,31 +201,11 @@ const GeneratingPage: React.FC = () => {
         ];
   }, [canEnterWorld, stageKey]);
   const messageKey = currentMessages.join("||");
-  const profileSetKey = preparedProfiles
-    ? [
-        preparedProfiles.world,
-        preparedProfiles.protagonist,
-        preparedProfiles.keyStoryBeats,
-      ].join("\n---\n")
-    : "";
   const [messageCursor, setMessageCursor] = useState({ key: "", index: 0 });
-  const [activeProfileCursor, setActiveProfileCursor] = useState({
-    key: "",
-    index: 0,
-  });
-  const carouselRef = useRef<HTMLDivElement>(null);
-  const carouselDragRef = useRef({
-    isDragging: false,
-    startX: 0,
-    scrollLeft: 0,
-  });
-  const [isCarouselDragging, setIsCarouselDragging] = useState(false);
   const messageIndex =
     messageCursor.key === messageKey
       ? Math.min(messageCursor.index, Math.max(currentMessages.length - 1, 0))
       : 0;
-  const activeProfileIndex =
-    activeProfileCursor.key === profileSetKey ? activeProfileCursor.index : 0;
 
   const handleEnterWorld = () => {
     if (preparedProfiles) {
@@ -245,36 +221,17 @@ const GeneratingPage: React.FC = () => {
       }
     });
   };
-  const profilePanels = useMemo(() => {
-    if (!preparedProfiles) {
-      return null;
-    }
-
-    return {
-      generating_world: {
-        title: "阿卡夏显影出的世界记录",
-        text: preparedProfiles.world,
-        className: "border-[#5b6f96]/30 bg-[#0f1624]/80 text-[#c7d5f2]",
-      },
-      generating_protagonist: {
-        title: "阿卡夏显影出的角色记录",
-        text: preparedProfiles.protagonist,
-        className: "border-[#6f5f96]/30 bg-[#151325]/80 text-[#d8d0f2]",
-      },
-      creating_session: {
-        title: "第一条即将回响的剧情线索",
-        text: preparedProfiles.keyStoryBeats,
-        className: "border-[#8a7755]/30 bg-[#17120f]/80 text-[#efe4cd]/88",
-      },
-    } satisfies Record<
-      ProfileStepKey,
-      {
-        title: string;
-        text: string;
-        className: string;
-      }
-    >;
-  }, [preparedProfiles]);
+  const profilePanels = useMemo(
+    () => (preparedProfiles ? generatedProfilePanels(preparedProfiles) : []),
+    [preparedProfiles],
+  );
+  const profileSetKey = preparedProfiles
+    ? [
+        preparedProfiles.world,
+        preparedProfiles.protagonist,
+        preparedProfiles.keyStoryBeats,
+      ].join("\n---\n")
+    : "";
 
   useEffect(() => {
     if (currentMessages.length <= 1) {
@@ -293,103 +250,6 @@ const GeneratingPage: React.FC = () => {
 
     return () => window.clearInterval(timer);
   }, [currentMessages.length, messageKey]);
-
-  const profileEntries = profilePanels
-    ? profileStepOrder.map((key) => ({
-        key,
-        ...profilePanels[key],
-      }))
-    : [];
-
-  const handleProfileScroll = () => {
-    const carousel = carouselRef.current;
-    if (!carousel) {
-      return;
-    }
-
-    const nextIndex = Math.round(
-      carousel.scrollLeft / Math.max(carousel.clientWidth, 1),
-    );
-    setActiveProfileCursor({
-      key: profileSetKey,
-      index: Math.min(Math.max(nextIndex, 0), Math.max(profileEntries.length - 1, 0)),
-    });
-  };
-
-  const scrollToProfile = (index: number) => {
-    const carousel = carouselRef.current;
-    if (!carousel) {
-      return;
-    }
-
-    carousel.scrollTo({
-      left: carousel.clientWidth * index,
-      behavior: "smooth",
-    });
-    setActiveProfileCursor({
-      key: profileSetKey,
-      index,
-    });
-  };
-
-  const snapToNearestProfile = () => {
-    const carousel = carouselRef.current;
-    if (!carousel) {
-      return;
-    }
-
-    const nextIndex = Math.round(
-      carousel.scrollLeft / Math.max(carousel.clientWidth, 1),
-    );
-    scrollToProfile(
-      Math.min(Math.max(nextIndex, 0), Math.max(profileEntries.length - 1, 0)),
-    );
-  };
-
-  const handleCarouselPointerDown = (
-    event: React.PointerEvent<HTMLDivElement>,
-  ) => {
-    if (event.pointerType === "mouse" && event.button !== 0) {
-      return;
-    }
-
-    const carousel = event.currentTarget;
-    carouselDragRef.current = {
-      isDragging: true,
-      startX: event.clientX,
-      scrollLeft: carousel.scrollLeft,
-    };
-    carousel.setPointerCapture(event.pointerId);
-    setIsCarouselDragging(true);
-  };
-
-  const handleCarouselPointerMove = (
-    event: React.PointerEvent<HTMLDivElement>,
-  ) => {
-    const drag = carouselDragRef.current;
-    if (!drag.isDragging) {
-      return;
-    }
-
-    const deltaX = event.clientX - drag.startX;
-    if (Math.abs(deltaX) > 3) {
-      event.preventDefault();
-    }
-    event.currentTarget.scrollLeft = drag.scrollLeft - deltaX;
-  };
-
-  const finishCarouselDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!carouselDragRef.current.isDragging) {
-      return;
-    }
-
-    carouselDragRef.current.isDragging = false;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    setIsCarouselDragging(false);
-    snapToNearestProfile();
-  };
 
   return (
     <ScreenShell className="items-stretch px-2 py-2 sm:px-3 sm:py-3 md:items-center md:px-6 md:py-5">
@@ -414,7 +274,7 @@ const GeneratingPage: React.FC = () => {
             </div>
           ) : null}
 
-          {profilePanels ? (
+          {preparedProfiles ? (
             <SectionCard className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:p-3 md:gap-2.5 md:p-4">
               <div className="grid shrink-0 grid-cols-3 gap-1.5">
                 {startupSteps.map((step) => {
@@ -450,60 +310,14 @@ const GeneratingPage: React.FC = () => {
                 })}
               </div>
 
-              <div
-                ref={carouselRef}
-                onScroll={handleProfileScroll}
-                onPointerDown={handleCarouselPointerDown}
-                onPointerMove={handleCarouselPointerMove}
-                onPointerUp={finishCarouselDrag}
-                onPointerCancel={finishCarouselDrag}
-                onPointerLeave={finishCarouselDrag}
-                className={`flex min-h-0 flex-1 snap-x snap-mandatory gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
-                  isCarouselDragging
-                    ? "cursor-grabbing scroll-auto select-none"
-                    : "cursor-grab scroll-smooth"
-                }`}
-              >
-                {profileEntries.map((panel) => (
-                  <article
-                    key={panel.key}
-                    id={panel.key}
-                    className={`flex h-full min-h-0 w-full min-w-full snap-center flex-col rounded-xl border p-3 md:p-4 ${panel.className}`}
-                  >
-                    <h2 className="shrink-0 text-base font-semibold leading-6 text-[#f8f1e3] md:text-lg">
-                      {panel.title}
-                    </h2>
-                    <p className="akashic-scroll mt-2 min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap pr-1 text-sm leading-6 sm:text-[0.95rem] sm:leading-7 md:text-base">
-                      {panel.text}
-                    </p>
-                  </article>
-                ))}
-              </div>
-
-              <div className="flex shrink-0 justify-center gap-1">
-                {profileEntries.map((panel, index) => (
-                  <button
-                    key={panel.key}
-                    type="button"
-                    aria-label={`切换到${panel.title}`}
-                    aria-current={activeProfileIndex === index ? "true" : undefined}
-                    onClick={() => scrollToProfile(index)}
-                    className="flex h-8 min-w-8 items-center justify-center rounded-full transition-colors hover:bg-white/8"
-                  >
-                    <span
-                      className={`h-1.5 rounded-full transition-all ${
-                        activeProfileIndex === index
-                          ? "w-7 bg-[#d8c58a]"
-                          : "w-3 bg-white/25"
-                      }`}
-                    />
-                  </button>
-                ))}
-              </div>
+              <GeneratedProfilesCarousel
+                panels={profilePanels}
+                resetKey={profileSetKey}
+              />
             </SectionCard>
           ) : null}
 
-          {!profilePanels ? (
+          {!preparedProfiles ? (
             <SectionCard className="space-y-2 p-2.5">
               <div className="flex flex-wrap gap-1.5">
                 <StatusPill
@@ -570,7 +384,6 @@ const GeneratingPage: React.FC = () => {
             <div className="flex shrink-0 flex-row items-center justify-center gap-2 sm:gap-3">
               <SecondaryButton
                 onClick={() => {
-                  setActiveProfileCursor({ key: "", index: 0 });
                   void startGame();
                 }}
                 className="min-h-9 min-w-0 flex-1 px-3 py-2 text-xs sm:flex-none sm:px-4 sm:text-sm"
