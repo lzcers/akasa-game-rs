@@ -1,9 +1,9 @@
-import type { RuntimeStateView, TaskView } from '../lib/api';
+import type { RuntimeStateView, TaskView } from '../../lib/api';
 import {
   createRoundState,
   type GameInternalState,
   type RoundState,
-} from './gameStore';
+} from '../gameStore';
 import {
   parseJsonValue,
   protagonistActionChoices,
@@ -12,7 +12,7 @@ import {
   taskLabel,
   taskRawContent,
   taskText,
-} from './gameStoreHelpers';
+} from '../gameStoreHelpers';
 
 interface StreamTaskUIState {
   stateView: RuntimeStateView | null;

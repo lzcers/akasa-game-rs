@@ -218,6 +218,7 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
 
       event.preventDefault();
       event.stopPropagation();
+      event.currentTarget.setPointerCapture(event.pointerId);
       scrollbarDragRef.current = {
         pointerId: event.pointerId,
         clientY: event.clientY,
@@ -236,6 +237,7 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
       }
 
       event.preventDefault();
+      event.stopPropagation();
       scrollByThumbDelta(event.clientY - dragStart.clientY);
     };
 
@@ -274,6 +276,8 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
         return;
       }
 
+      event.preventDefault();
+      event.stopPropagation();
       const trackRect = trackElement.getBoundingClientRect();
       const nextThumbTop =
         event.clientY - trackRect.top - scrollThumb.height / 2;
@@ -432,7 +436,7 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
           <div
             id="narration-scroll"
             ref={scrollContainerRef}
-            className="scrollbar-none min-h-0 flex-1 touch-pan-y overflow-y-auto"
+            className="scrollbar-none min-h-0 flex-1 touch-pan-y overscroll-contain overflow-y-auto"
             onScroll={updateNarrationScrollbar}
           >
             <div className="h-full space-y-5 text-[1rem] font-semibold leading-[1.82] text-[#f6eddc] sm:text-[1rem] md:text-[1.2rem]">
@@ -464,12 +468,12 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
           </div>
           <div
             ref={scrollTrackRef}
-            className={`absolute bottom-2 -right-4 top-2 w-5 transition-opacity ${scrollThumb.visible ? "opacity-100" : "pointer-events-none opacity-0"}`}
+            className={`absolute bottom-2 -right-4 top-2 w-5 touch-none select-none transition-opacity ${scrollThumb.visible ? "opacity-100" : "pointer-events-none opacity-0"}`}
             onPointerDown={handleScrollbarTrackPointerDown}
             aria-hidden={!scrollThumb.visible}
           >
             <div
-              className={`absolute left-1/2 w-[3px] -translate-x-1/2 rounded-full bg-[#d8c18f]/55 transition-colors hover:bg-[#e4d1a9]/80 ${isScrollbarDragging ? "cursor-grabbing bg-[#f0dfc2]/90" : "cursor-grab"}`}
+              className={`absolute left-1/2 w-[3px] -translate-x-1/2 touch-none select-none rounded-full bg-[#d8c18f]/55 transition-colors hover:bg-[#e4d1a9]/80 ${isScrollbarDragging ? "cursor-grabbing bg-[#f0dfc2]/90" : "cursor-grab"}`}
               style={{
                 height: `${scrollThumb.height}px`,
                 transform: `translate(-50%, ${scrollThumb.top}px)`,

@@ -1,4 +1,4 @@
-import type { GameUIState } from './gameUIStore';
+import type { GameUIState } from '../gameUIStore';
 import {
   cloneCharacter,
   cloneStory,
@@ -6,7 +6,7 @@ import {
   initialCharacter,
   initialStory,
   initialWorld,
-} from './gameStoreHelpers';
+} from '../gameStoreHelpers';
 
 export const initialUIState: GameUIState = {
   character: initialCharacter,

@@ -221,6 +221,18 @@ impl AkashicSessionEngine {
             .map_err(|_| "故事引擎运行时已停止，无法接收 Simulator 添加结果".to_string())?
     }
 
+    pub async fn close(&self) -> Result<(), String> {
+        let (tx, rx) = oneshot::channel();
+        self.command_tx
+            .send(EngineCommand::CloseSession {
+                session_id: self.session_id.clone(),
+                tx,
+            })
+            .map_err(|_| "故事引擎运行时已停止，无法关闭会话".to_string())?;
+        rx.await
+            .map_err(|_| "故事引擎运行时已停止，无法接收会话关闭结果".to_string())?
+    }
+
     pub async fn wait_until_ready(&self) -> Result<(), String> {
         Ok(())
     }
@@ -269,6 +281,30 @@ mod tests {
         assert_eq!(second_archive.simulators.len(), 1);
         assert_eq!(first.session_id(), "first");
         assert_eq!(second.session_id(), "second");
+    }
+
+    #[tokio::test]
+    async fn close_removes_only_target_session() {
+        let engine = AkashicEngine::with_model(ChatModel::new());
+        let first = engine
+            .create_session("first", "world-a", "hero-a", "beats-a")
+            .await
+            .unwrap();
+        let second = engine
+            .create_session("second", "world-b", "hero-b", "beats-b")
+            .await
+            .unwrap();
+
+        first.close().await.unwrap();
+
+        assert_eq!(
+            first.export_archive_state().await.err().unwrap(),
+            "未找到会话 `first`"
+        );
+        assert_eq!(
+            second.export_archive_state().await.unwrap().world_profile,
+            "world-b"
+        );
     }
 
     #[tokio::test]

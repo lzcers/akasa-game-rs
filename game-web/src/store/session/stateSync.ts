@@ -1,11 +1,11 @@
-import type { GameSessionWorldStateData, RuntimeStateView } from '../lib/api';
-import { useGameInternalStore } from './gameStore';
-import { useGameValueStore } from './gameValueStore';
+import type { GameSessionWorldStateData, RuntimeStateView } from '../../lib/api';
+import { useGameInternalStore } from '../gameStore';
+import { useGameValueStore } from '../gameValueStore';
 import {
   effectiveDisplayRound,
   internalStateFromSession,
   stateViewFromSession,
-} from './sessionMappers';
+} from './mappers';
 
 interface ApplySessionSnapshotOptions {
   resetValues?: boolean;

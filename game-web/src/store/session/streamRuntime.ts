@@ -1,11 +1,24 @@
-import type { TaskView } from '../lib/api';
-import { openGameSessionStream } from '../lib/api';
-import { applyTaskUpdate } from './gameStoreHelpers';
+import type { StoreApi } from 'zustand';
+import type { TaskView } from '../../lib/api';
+import {
+  getGameSession,
+  openGameSessionStream,
+} from '../../lib/api';
+import { useGameInternalStore } from '../gameStore';
+import { applyTaskUpdate } from '../gameStoreHelpers';
+import { reduceStreamTask } from './streamReducer';
+import { applySessionSnapshotToStores } from './stateSync';
+import type { GameUIStoreState } from '../gameUIStore';
 
 interface SessionStreamHandlers {
   onTaskUpdated: (task: TaskView, boundRound?: number | null) => void;
   onStreamError: () => void;
   onSnapshotSyncRequested: (sessionId: string) => void;
+}
+
+interface GameSessionStreamRuntime {
+  set: StoreApi<GameUIStoreState>['setState'];
+  get: StoreApi<GameUIStoreState>['getState'];
 }
 
 let activeSessionStream: EventSource | null = null;
@@ -73,4 +86,74 @@ export function connectSessionStream(sessionId: string, handlers: SessionStreamH
     },
     lastStreamEventId,
   );
+}
+
+function applyStreamTaskToStores(
+  runtime: GameSessionStreamRuntime,
+  task: TaskView,
+  boundRound?: number | null,
+) {
+  const { internalStatePatch, uiStatePatch } = reduceStreamTask({
+    internalState: useGameInternalStore.getState(),
+    uiState: runtime.get(),
+    task,
+    boundRound,
+  });
+
+  if (internalStatePatch) {
+    useGameInternalStore.setState(internalStatePatch);
+  }
+
+  if (uiStatePatch) {
+    runtime.set(uiStatePatch);
+  }
+}
+
+async function syncActiveSessionSnapshot(
+  runtime: GameSessionStreamRuntime,
+  sessionId: string,
+) {
+  if (!isSessionStreamActive(sessionId)) {
+    return;
+  }
+
+  try {
+    const session = await getGameSession(sessionId);
+    if (!isSessionStreamActive(sessionId)) {
+      return;
+    }
+
+    runtime.set({
+      stateView: applySessionSnapshotToStores(session),
+      isLoading: false,
+      error: session.phase === 'failed' ? '故事推进失败，请稍后重试。' : null,
+    });
+  } catch (error) {
+    if (!isSessionStreamActive(sessionId)) {
+      return;
+    }
+    runtime.set({
+      isLoading: false,
+      error: error instanceof Error ? error.message : '同步故事状态失败。',
+    });
+  }
+}
+
+export function connectGameSessionStream(
+  sessionId: string,
+  runtime: GameSessionStreamRuntime,
+) {
+  connectSessionStream(sessionId, {
+    onTaskUpdated: (task, boundRound) => {
+      applyStreamTaskToStores(runtime, task, boundRound);
+    },
+    onSnapshotSyncRequested: (nextSessionId) => {
+      void syncActiveSessionSnapshot(runtime, nextSessionId);
+    },
+    onStreamError: () => {
+      runtime.set({
+        error: '连接有些不稳定，正在为你续接这段记录...',
+      });
+    },
+  });
 }

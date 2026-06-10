@@ -435,13 +435,6 @@ const GameplayPage: React.FC = () => {
     <ScreenShell className="h-full min-h-0 items-stretch overflow-hidden py-2 sm:py-2 md:py-2">
       <StoryFrame className="relative flex h-full max-w-5xl flex-col overflow-hidden px-2.5 py-2.5 sm:px-3 sm:py-3">
         <div className="pointer-events-none absolute inset-0 bg-linear-to-b from-transparent via-[#08111d]/35 to-[#08111d]" />
-        {statusMessage ? (
-          <div className="pointer-events-none absolute inset-x-4 top-4 z-30 flex justify-center">
-            <p className="max-w-[min(42rem,calc(100vw-2rem))] rounded-full border border-[rgba(116,103,80,0.45)] bg-[rgba(8,14,26,0.88)] px-3 py-1 text-xs text-[#d9cbb1] shadow-[0_12px_28px_rgba(0,0,0,0.35)] backdrop-blur-md sm:text-sm">
-              {statusMessage}
-            </p>
-          </div>
-        ) : null}
         <div className="relative z-10 flex min-h-0 flex-1 flex-col gap-2">
           <div className="relative flex min-h-0 flex-1 flex-col">
             <NarrationPanel
@@ -458,7 +451,15 @@ const GameplayPage: React.FC = () => {
             />
             {!isEndingReviewMode ? (
               <div className="pointer-events-none absolute inset-x-1 bottom-1 z-10 sm:inset-x-3">
-                <div className="pointer-events-auto mx-auto w-full max-w-3xl">
+                <div className="mx-auto w-full max-w-3xl">
+                  {statusMessage ? (
+                    <div className="mb-1.5 flex justify-center px-2">
+                      <p className="pointer-events-none max-w-full rounded-lg border border-[rgba(116,103,80,0.45)] bg-[rgba(8,14,26,0.88)] px-3 py-1 text-left text-xs leading-5 text-[#d9cbb1] shadow-[0_12px_28px_rgba(0,0,0,0.35)] backdrop-blur-md sm:text-sm">
+                        {statusMessage}
+                      </p>
+                    </div>
+                  ) : null}
+                  <div className="pointer-events-auto">
                   <ChoicePanel
                     hasChoices={hasChoices}
                     canContinue={canContinueWithoutChoice}
@@ -509,6 +510,7 @@ const GameplayPage: React.FC = () => {
                     }}
                     onObsessionSubmit={handleObsessionSubmit}
                   />
+                  </div>
                 </div>
               </div>
             ) : null}

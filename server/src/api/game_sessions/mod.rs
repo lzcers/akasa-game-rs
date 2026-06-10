@@ -212,6 +212,7 @@ pub async fn stream_game_session(
         .open_game_session_stream(&path.session_id, since)
         .await?;
     let session_id = live_stream.session_id.clone();
+    let lease = live_stream.lease;
 
     let handshake_stream = stream::iter([Ok::<_, Infallible>(sse_json_event(
         "stream.handshake",
@@ -228,12 +229,15 @@ pub async fn stream_game_session(
             .map(|event| Ok::<_, Infallible>(task_updated_sse(event))),
     );
     let live_stream = stream::unfold(
-        Some((live_stream.event_rx, session_id)),
+        Some((live_stream.event_rx, session_id, lease)),
         |state| async move {
-            let (mut event_rx, session_id) = state?;
+            let (mut event_rx, session_id, lease) = state?;
 
             match event_rx.recv().await {
-                Ok(event) => Some((Ok(task_updated_sse(event)), Some((event_rx, session_id)))),
+                Ok(event) => Some((
+                    Ok(task_updated_sse(event)),
+                    Some((event_rx, session_id, lease)),
+                )),
                 Err(broadcast::error::RecvError::Lagged(skipped)) => Some((
                     Ok(sse_json_event(
                         "stream.warning",
@@ -243,7 +247,7 @@ pub async fn stream_game_session(
                             skipped,
                         },
                     )),
-                    Some((event_rx, session_id)),
+                    Some((event_rx, session_id, lease)),
                 )),
                 Err(broadcast::error::RecvError::Closed) => Some((
                     Ok(sse_done_event("stream_game_session.done", Some(session_id))),

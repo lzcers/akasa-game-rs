@@ -504,23 +504,25 @@ const GeneratingPage: React.FC = () => {
           ) : null}
 
           {!profilePanels ? (
-            <SectionCard className="space-y-4">
-              <div className="flex flex-wrap gap-2">
+            <SectionCard className="space-y-2 p-2.5">
+              <div className="flex flex-wrap gap-1.5">
                 <StatusPill
                   icon={Orbit}
-                  className="border-[#3b82f6]/30 bg-[#0f2141]/80 text-[#cfe0ff]"
+                  iconClassName="h-3.5 w-3.5"
+                  className="max-w-full border-[#3b82f6]/30 bg-[#0f2141]/80 px-2 py-1 text-[0.68rem] text-[#cfe0ff]"
                 >
                   {world.era}
                 </StatusPill>
                 <StatusPill
                   icon={Sparkles}
-                  className="border-[#8b5cf6]/30 bg-[#1b1733]/80 text-[#e3d8ff]"
+                  iconClassName="h-3.5 w-3.5"
+                  className="max-w-full border-[#8b5cf6]/30 bg-[#1b1733]/80 px-2 py-1 text-[0.68rem] text-[#e3d8ff]"
                 >
                   {character.background || "角色烙印待显影"}
                 </StatusPill>
               </div>
 
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {startupSteps.map((step) => {
                   const status = stepStatus(startupStage, step.key);
                   const iconClassName =
@@ -534,7 +536,7 @@ const GeneratingPage: React.FC = () => {
                     <button
                       type="button"
                       key={step.key}
-                      className={`rounded-xl border px-4 py-4 text-left transition-colors md:px-5 ${
+                      className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
                         status === "active"
                           ? "border-[#60a5fa]/40 bg-[#101a2c]/92"
                           : status === "done"
@@ -542,18 +544,18 @@ const GeneratingPage: React.FC = () => {
                             : "border-white/8 bg-[#0f1420]/70"
                       } w-full`}
                     >
-                      <div className="flex items-start gap-3">
+                      <div className="flex items-start gap-2.5">
                         <LoaderCircle
-                          className={`mt-0.5 h-5 w-5 shrink-0 ${iconClassName}`}
+                          className={`mt-0.5 h-4 w-4 shrink-0 ${iconClassName}`}
                         />
-                        <div className="space-y-1">
-                          <p className="text-sm font-semibold tracking-wide text-[#efe4cd]">
+                        <div className="min-w-0 space-y-0.5">
+                          <p className="truncate text-xs font-semibold text-[#efe4cd]">
                             {step.label}
                           </p>
-                          <p className="text-base font-medium text-[#f8f1e3] md:text-lg">
+                          <p className="text-sm font-medium leading-5 text-[#f8f1e3]">
                             {step.title}
                           </p>
-                          <p className="text-sm leading-6 text-[#9ca7be]">
+                          <p className="line-clamp-2 text-xs leading-5 text-[#9ca7be]">
                             {step.description}
                           </p>
                         </div>

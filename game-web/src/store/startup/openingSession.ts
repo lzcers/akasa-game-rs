@@ -2,14 +2,14 @@ import type {
   Character,
   RuntimeStateView,
   World,
-} from '../lib/api';
+} from '../../lib/api';
 import {
   createRoundState,
   initialInternalState,
   type GameInternalState,
   useGameInternalStore,
-} from './gameStore';
-import { STREAM_PLACEHOLDER_TEXT } from './gameStoreHelpers';
+} from '../gameStore';
+import { STREAM_PLACEHOLDER_TEXT } from '../gameStoreHelpers';
 
 const OPENING_ROUND = 1;
 const FIRST_ROUND_READY_TIMEOUT_MS = 45000;

@@ -3,26 +3,26 @@ import {
   cloneGameSession,
   getGameSession,
   loadGameSessionFromArchive,
-} from '../lib/api';
+} from '../../lib/api';
 import {
   getAnalyticsSourceSessionId,
   track,
-} from '../lib/analytics';
-import { readStoredSaveArchive } from '../lib/saveSlots';
-import { useGameInternalStore } from './gameStore';
+} from '../../lib/analytics';
+import { readStoredSaveArchive } from '../../lib/saveSlots';
+import { useGameInternalStore } from '../gameStore';
 import {
   getActiveCloneRequest,
   trackCloneRequest,
-} from './gameCloneRequestRuntime';
+} from './cloneRequestRuntime';
 import {
   isSessionStreamActive,
-} from './gameSessionStreamRuntime';
+} from './streamRuntime';
 import {
   activateSessionSnapshot,
   beginSessionSwitch,
   failSessionSwitch,
-} from './gameSessionSwitch';
-import type { GameUIStoreState } from './gameUIStore';
+} from './switchRuntime';
+import type { GameUIStoreState } from '../gameUIStore';
 
 export interface SessionRestoreRuntime {
   set: StoreApi<GameUIStoreState>['setState'];

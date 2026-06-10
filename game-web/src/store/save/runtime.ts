@@ -1,12 +1,12 @@
 import type { StoreApi } from 'zustand';
-import { exportGameSaveArchive } from '../lib/api';
+import { exportGameSaveArchive } from '../../lib/api';
 import {
   createStoredSaveSlotId,
   upsertStoredSaveSlot,
   writeStoredSaveArchive,
-} from '../lib/saveSlots';
-import { useGameInternalStore } from './gameStore';
-import type { GameUIStoreState } from './gameUIStore';
+} from '../../lib/saveSlots';
+import { useGameInternalStore } from '../gameStore';
+import type { GameUIStoreState } from '../gameUIStore';
 
 type SetGameUIState = StoreApi<GameUIStoreState>['setState'];
 

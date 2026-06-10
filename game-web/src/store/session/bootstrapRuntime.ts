@@ -1,7 +1,7 @@
 import type { StoreApi } from 'zustand';
-import { submitGameSessionControl } from '../lib/api';
-import { useGameInternalStore } from './gameStore';
-import type { GameUIStoreState } from './gameUIStore';
+import { submitGameSessionControl } from '../../lib/api';
+import { useGameInternalStore } from '../gameStore';
+import type { GameUIStoreState } from '../gameUIStore';
 
 export interface SessionBootstrapRuntime {
   set: StoreApi<GameUIStoreState>['setState'];

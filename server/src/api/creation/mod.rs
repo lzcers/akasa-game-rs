@@ -33,11 +33,11 @@ pub async fn generate_creation_draft(
             r#"你是一名互动文字游戏创建页的 AI 表单生成器，负责生成可直接填入表单的中文内容。
 
 总体目标：
-1. 生成内容应偏女性向、女女关系潜力、都市奇幻/都市异能/豪门职场/娱乐圈/校园怪谈/近未来等方向，但每次都要有不同组合，不要固定套路。
+1. 生成内容应保持随机、多样、中性，不偏男频、女频、男性向、女性向、男男、女女或固定恋爱范式；题材、主角性别、关系张力和叙事欲望每次都要有不同组合，不要固定套路。
 2. 内容用于长期互动叙事的开局表单，不是人物小传或世界百科。字段要精炼、具体、可演绎，有欲望、秘密、代价、关系张力或异常规则。
 3. 所有角色必须是成年人；不要生成露骨性内容、未成年人恋爱、现实名人、真实品牌或侵权 IP。
 4. 可以参考用户当前表单来避开重复，并让新内容与当前另一组表单能够搭配；不要照抄当前表单。
-5. 如果用户已经填写姓名、性别或有效成年年龄，生成 character 时必须原样保留这些已填写字段，只围绕它们补全命运烙印、人物描述和属性倾向。
+5. 如果用户已经填写姓名、性别或有效成年年龄，生成 character 时必须原样保留这些已填写字段，只围绕它们补全命运烙印、人物描述和属性倾向；如果姓名或性别未指定，必须自行生成姓名并随机选择“男”或“女”，绝不能输出“未填写”。
 6. 生成 world 时，必须让世界背景与当前人物表单相容，让世界的秩序、压力和核心矛盾能自然牵引该角色。
 7. 生成 character 时，必须让角色与当前世界表单相容，尤其要服从世界背景、世界描述中的秩序、异常机制、禁忌和冲突结构。
 8. 只输出一个合法 JSON 对象，不要代码块、标题、解释、注释或对象外文本。
@@ -46,7 +46,7 @@ pub async fn generate_creation_draft(
 {
   "character": {
     "name": "2到4个汉字的中文名",
-    "gender": "女",
+    "gender": "男或女",
     "age": 18到80之间的整数,
     "background": "一句命运烙印，12到32个中文字符，带明确钩子",
     "appearance": "45到110个中文字符的人物描述，包含外貌、气质、弱点或行动习惯",
@@ -64,7 +64,7 @@ pub async fn generate_creation_draft(
 character 约束：
 - 六项 traits 总和必须恰好等于 30。
 - 不要生成完美六边形；至少有一项不高于 3，至少有一项不低于 7。
-- background 要像“命运烙印”，不是职业标签，例如可以包含契约、秘密、异能、旧爱、财阀、女巫、影后、白月光、记忆错位等元素。
+- background 要像“命运烙印”，不是职业标签，例如可以包含契约、秘密、异能、旧爱、权力交易、地下组织、异常档案、白月光、记忆错位等元素。
 - appearance 要能直接显示在表单里，保持一段话，不要分点。
 
 当 target 是 "world" 时，输出结构必须是：
@@ -78,7 +78,7 @@ character 约束：
 world 约束：
 - era 要适合放在下拉输入框里，不能太长。
 - description 要能直接填入创建页文本框，具体但不冗长。
-- 世界应天然适配女性主角与女女关系张力，但不要把所有冲突都写成恋爱。"#,
+- 世界应能适配不同性别主角和多种关系张力，不要默认女性主角、男性主角或特定恋爱方向，也不要把所有冲突都写成恋爱。"#,
         ),
         Message::user(build_creation_draft_prompt(&request, &variant_id)),
     ];
@@ -145,14 +145,14 @@ fn build_creation_draft_prompt(request: &GenerateCreationDraftRequest, variant_i
 请根据 target 只生成对应的表单片段。
 
 生成规则：
-- 当 target 是 character：如果当前姓名不是“未填写”，返回的 character.name 必须等于当前姓名；如果当前性别是“男”或“女”，返回的 character.gender 必须等于当前性别；如果当前年龄是 18 到 80 之间的成年人年龄，返回的 character.age 必须等于当前年龄。角色其余字段必须贴合当前世界表单。
+- 当 target 是 character：如果当前姓名已填写，返回的 character.name 必须等于当前姓名；如果当前姓名未指定，必须生成 2 到 4 个汉字的中文名，不能返回“未填写”；如果当前性别是“男”或“女”，返回的 character.gender 必须等于当前性别；如果当前性别未指定，必须随机返回“男”或“女”，不能返回“未填写”；如果当前年龄是 18 到 80 之间的成年人年龄，返回的 character.age 必须等于当前年龄。角色其余字段必须贴合当前世界表单。
 - character 的 background、appearance、traits 必须围绕本次生成变体ID改换方向，不得复用当前命运烙印、人物描述或完全相同的属性分布。
 - 当 target 是 world：返回的 world 必须贴合当前人物表单，尤其要能解释当前人物的命运烙印、行动倾向和关系张力如何在这个世界中被放大。
 - world 的 era、description 必须围绕本次生成变体ID改换方向，不得复用当前世界背景或当前世界描述。
 - 如果另一组表单尚未填写完整，可以自由补足，但不能与已填写内容冲突。"#,
         variant_id = variant_id,
-        name = empty_placeholder(&request.character.name),
-        gender = empty_placeholder(&request.character.gender),
+        name = creation_name_prompt_value(&request.character.name),
+        gender = creation_gender_prompt_value(&request.character.gender),
         age = request.character.age,
         background = current_background,
         appearance = current_appearance,
@@ -173,6 +173,23 @@ fn empty_placeholder(value: &str) -> String {
         "未填写".to_string()
     } else {
         value.to_string()
+    }
+}
+
+fn creation_name_prompt_value(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        "未指定（请生成2到4个汉字中文名，不要输出“未填写”）".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn creation_gender_prompt_value(value: &str) -> String {
+    match value.trim() {
+        "男" => "男".to_string(),
+        "女" => "女".to_string(),
+        _ => "未指定（请随机选择男或女，不要输出“未填写”）".to_string(),
     }
 }
 
@@ -213,11 +230,11 @@ fn validate_generated_creation_draft(
 
 fn validate_creation_character(character: CreationCharacter) -> Result<CreationCharacter, String> {
     let name = trim_required(character.name, "`character.name`")?;
-    let gender = normalize_creation_gender(character.gender);
     let age = character.age.clamp(18, 80);
     let background = trim_required(character.background, "`character.background`")?;
     let appearance = trim_required(character.appearance, "`character.appearance`")?;
     let traits = normalize_creation_traits(character.traits);
+    let gender = normalize_creation_gender(character.gender, &name, age, &traits);
 
     Ok(CreationCharacter {
         name,
@@ -269,10 +286,35 @@ fn locked_character_age(character: &CreationCharacter) -> Option<u16> {
     (18..=80).contains(&character.age).then_some(character.age)
 }
 
-fn normalize_creation_gender(gender: String) -> String {
+fn normalize_creation_gender(
+    gender: String,
+    name: &str,
+    age: u16,
+    traits: &CreationTraits,
+) -> String {
     match gender.trim() {
         "男" => "男".to_string(),
-        _ => "女".to_string(),
+        "女" => "女".to_string(),
+        _ => fallback_creation_gender(name, age, traits),
+    }
+}
+
+fn fallback_creation_gender(name: &str, age: u16, traits: &CreationTraits) -> String {
+    let seed = name
+        .bytes()
+        .map(u16::from)
+        .sum::<u16>()
+        .saturating_add(age)
+        .saturating_add(u16::from(traits.intellect))
+        .saturating_add(u16::from(traits.physique))
+        .saturating_add(u16::from(traits.endurance))
+        .saturating_add(u16::from(traits.courage))
+        .saturating_add(u16::from(traits.rationality))
+        .saturating_add(u16::from(traits.altruism));
+    if seed % 2 == 0 {
+        "男".to_string()
+    } else {
+        "女".to_string()
     }
 }
 
@@ -568,6 +610,17 @@ mod tests {
         assert!(world_prompt.contains("被冷艳继承者认作宿命例外的人"));
         assert!(!world_prompt.contains("旧世界背景不应进入世界生成提示"));
         assert!(!world_prompt.contains("旧世界描述不应进入世界生成提示"));
+    }
+
+    #[test]
+    fn build_creation_draft_prompt_treats_blank_identity_as_generation_targets() {
+        let request = creation_request(GenerateCreationDraftTarget::Character);
+        let prompt = build_creation_draft_prompt(&request, "variant-random");
+
+        assert!(prompt.contains("- 姓名：未指定（请生成2到4个汉字中文名，不要输出“未填写”）"));
+        assert!(prompt.contains("- 性别：未指定（请随机选择男或女，不要输出“未填写”）"));
+        assert!(prompt.contains("如果当前姓名未指定，必须生成 2 到 4 个汉字的中文名"));
+        assert!(prompt.contains("如果当前性别未指定，必须随机返回“男”或“女”"));
     }
 
     #[test]

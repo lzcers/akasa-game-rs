@@ -1,16 +1,16 @@
 import type { StoreApi } from 'zustand';
-import type { GameSessionWorldStateData } from '../lib/api';
-import { appRoutes } from '../lib/appRoutes';
-import { navigateTo } from '../lib/navigation';
-import { setAnalyticsGameSessionId } from '../lib/analytics';
-import { initialInternalState, useGameInternalStore } from './gameStore';
-import type { GameUIStoreState } from './gameUIStore';
-import { applySessionSnapshotToStores } from './sessionStateSync';
+import type { GameSessionWorldStateData } from '../../lib/api';
+import { appRoutes } from '../../lib/appRoutes';
+import { navigateTo } from '../../lib/navigation';
+import { setAnalyticsGameSessionId } from '../../lib/analytics';
+import { initialInternalState, useGameInternalStore } from '../gameStore';
+import type { GameUIStoreState } from '../gameUIStore';
+import { applySessionSnapshotToStores } from './stateSync';
 import {
   clearStartupStageTimer,
   invalidateStartupFlow,
-} from './gameStartupRuntime';
-import { resetUIState } from './gameUIInitialState';
+} from '../startup/lifecycle';
+import { resetUIState } from '../ui/initialState';
 
 type SetGameUIState = StoreApi<GameUIStoreState>['setState'];
 type CloseSessionStream = () => void;

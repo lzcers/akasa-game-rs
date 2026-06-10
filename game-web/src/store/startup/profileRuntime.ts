@@ -1,26 +1,26 @@
 import type { StoreApi } from 'zustand';
-import { generateProfiles } from '../lib/api';
+import { generateProfiles } from '../../lib/api';
 import type {
   Character,
   GeneratedProfiles,
   World,
-} from '../lib/api';
-import { track } from '../lib/analytics';
-import { appRoutes } from '../lib/appRoutes';
-import { navigateTo } from '../lib/navigation';
+} from '../../lib/api';
+import { track } from '../../lib/analytics';
+import { appRoutes } from '../../lib/appRoutes';
+import { navigateTo } from '../../lib/navigation';
 import {
   initialInternalState,
   useGameInternalStore,
-} from './gameStore';
-import { useGameValueStore } from './gameValueStore';
+} from '../gameStore';
+import { useGameValueStore } from '../gameValueStore';
 import {
   clearStartupStageTimer,
   isStartupFlowCurrent,
   scheduleStartupStageProgress,
   sleep,
   waitForNextPaint,
-} from './gameStartupRuntime';
-import type { GameUIStoreState } from './gameUIStore';
+} from './lifecycle';
+import type { GameUIStoreState } from '../gameUIStore';
 
 const MIN_GENERATING_PAGE_MS = 1200;
 

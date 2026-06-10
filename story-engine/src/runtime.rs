@@ -63,6 +63,10 @@ pub(crate) enum EngineCommand {
         simulator: Agent,
         tx: oneshot::Sender<Result<(), String>>,
     },
+    CloseSession {
+        session_id: String,
+        tx: oneshot::Sender<Result<(), String>>,
+    },
     ExportArchiveState {
         session_id: String,
         tx: oneshot::Sender<Result<SessionArchiveState, String>>,
@@ -151,6 +155,10 @@ impl SessionRuntime {
                 tx,
             } => {
                 let _ = tx.send(self.add_simulator(&session_id, simulator));
+            }
+            EngineCommand::CloseSession { session_id, tx } => {
+                self.remove_session(&session_id);
+                let _ = tx.send(Ok(()));
             }
             EngineCommand::ExportArchiveState { session_id, tx } => {
                 let _ = tx.send(self.export_archive_state(&session_id));

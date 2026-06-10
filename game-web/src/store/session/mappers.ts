@@ -2,16 +2,16 @@ import type {
   GameSessionWorldStateData,
   RuntimeStateView,
   SessionRoundHistoryData,
-} from '../lib/api';
+} from '../../lib/api';
 import {
   createRoundState,
   type GameInternalState,
   type RoundState,
-} from './gameStore';
+} from '../gameStore';
 import {
   STREAM_PLACEHOLDER_TEXT,
   toChoiceFromSession,
-} from './gameStoreHelpers';
+} from '../gameStoreHelpers';
 
 function titleFromWorldState(
   worldState: SessionRoundHistoryData['worldState'] | GameSessionWorldStateData['worldState'] | null | undefined,

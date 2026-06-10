@@ -1,9 +1,9 @@
-import type { PlayerActionInput } from '../lib/api';
+import type { PlayerActionInput } from '../../lib/api';
 import {
   createRoundState,
   type GameInternalState,
   type RoundState,
-} from './gameStore';
+} from '../gameStore';
 
 interface ChoiceSubmission {
   input: PlayerActionInput;

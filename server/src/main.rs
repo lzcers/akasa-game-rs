@@ -2,6 +2,7 @@ mod analytics;
 mod api;
 mod email;
 mod error;
+mod session_archive;
 mod state;
 
 use std::{env, net::SocketAddr, path::PathBuf};
@@ -18,7 +19,11 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
 
     let options = ServerOptions::from_env_and_args();
-    let state = AppState::new(default_analytics_events_path(), options.local_debug);
+    let state = AppState::new(
+        default_analytics_events_path(),
+        default_session_archives_path(),
+        options.local_debug,
+    );
 
     let app = build_router(state)
         .layer(CorsLayer::permissive())
@@ -57,6 +62,10 @@ fn init_tracing() {
 
 fn default_analytics_events_path() -> PathBuf {
     PathBuf::from("db-data/analytics.sqlite3")
+}
+
+fn default_session_archives_path() -> PathBuf {
+    PathBuf::from("db-data/session-archives.sqlite3")
 }
 
 #[derive(Debug, Default)]
