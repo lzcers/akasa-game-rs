@@ -17,13 +17,12 @@ use axum::{
 };
 use futures::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
-use story_engine::resources::agent_task_manager::{TaskChunkKind, TaskStatus};
 use story_engine::utils::{build_chat_model, parse_json_response};
 use tokio::sync::broadcast;
 
 use crate::{
     error::AppError,
-    state::{AppState, LiveTaskUpdate},
+    state::{AppState, LiveEngineEvent},
 };
 
 use super::dto::ApiResponse;
@@ -62,17 +61,6 @@ pub struct StreamQuery {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct TaskUpdateData {
-    event_id: Option<u64>,
-    round: u64,
-    entity: String,
-    kind: TaskKind,
-    status: TaskStatus,
-    chunk_kind: Option<TaskChunkKind>,
-    chunk: Option<String>,
-    error: Option<String>,
-}
-
 #[derive(Deserialize)]
 struct StorySummaryPayload {
     summary: String,
@@ -239,7 +227,7 @@ pub async fn stream_game_session(
         live_stream
             .replayed_events
             .into_iter()
-            .map(|event| Ok::<_, Infallible>(task_updated_sse(event))),
+            .map(|event| Ok::<_, Infallible>(engine_event_sse(event))),
     );
     let live_stream = stream::unfold(
         Some((live_stream.event_rx, session_id, lease)),
@@ -248,7 +236,7 @@ pub async fn stream_game_session(
 
             match event_rx.recv().await {
                 Ok(event) => Some((
-                    Ok(task_updated_sse(event)),
+                    Ok(engine_event_sse(event)),
                     Some((event_rx, session_id, lease)),
                 )),
                 Err(broadcast::error::RecvError::Lagged(skipped)) => Some((
@@ -302,22 +290,9 @@ fn last_event_id_from_headers(headers: &HeaderMap) -> Option<u64> {
         .and_then(|value| value.parse().ok())
 }
 
-fn task_updated_sse(update: LiveTaskUpdate) -> Event {
+fn engine_event_sse(update: LiveEngineEvent) -> Event {
     let event_id = update.event_id;
-    sse_json_event("task.updated", task_update_from_delta(update)).id(event_id.to_string())
-}
-
-fn task_update_from_delta(update: LiveTaskUpdate) -> TaskUpdateData {
-    TaskUpdateData {
-        event_id: Some(update.event_id),
-        round: update.round,
-        entity: update.entity,
-        kind: update.kind,
-        status: update.status,
-        chunk_kind: None,
-        chunk: update.chunk,
-        error: update.error,
-    }
+    sse_json_event("engine.event", update).id(event_id.to_string())
 }
 
 fn format_story_narrations(narrations: &[String]) -> String {
@@ -375,35 +350,5 @@ mod tests {
         headers.insert("Last-Event-ID", "17".parse().expect("valid header"));
 
         assert_eq!(last_event_id_from_headers(&headers), Some(17));
-    }
-
-    #[test]
-    fn task_update_from_delta_omits_output() {
-        let update = LiveTaskUpdate {
-            event_id: 42,
-            round: 7,
-            entity: "UpperNarrator".to_string(),
-            kind: TaskKind::Narration,
-            status: TaskStatus::Done,
-            chunk: None,
-            error: None,
-        };
-
-        let dto = task_update_from_delta(update);
-        let value = serde_json::to_value(dto).expect("task update dto should serialize");
-
-        assert_eq!(
-            value.get("eventId").and_then(serde_json::Value::as_u64),
-            Some(42)
-        );
-        assert_eq!(
-            value.get("status").and_then(serde_json::Value::as_str),
-            Some("done")
-        );
-        assert_eq!(
-            value.get("round").and_then(serde_json::Value::as_u64),
-            Some(7)
-        );
-        assert!(value.get("output").is_none());
     }
 }

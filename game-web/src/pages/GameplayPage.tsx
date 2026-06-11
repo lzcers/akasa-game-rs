@@ -132,11 +132,10 @@ const GameplayPage: React.FC = () => {
   );
   const hasChoices = currentRoundChoices.length > 0;
   const isNarrationStreaming =
-    activeRoundState?.narrationStatus === "pending" ||
     activeRoundState?.narrationStatus === "running";
   const shouldType =
     Boolean(activeRoundState?.isAwaitingNarration) || isNarrationStreaming;
-  const typingKey = `${currentRound}:${activeRoundState?.isAwaitingNarration ? "1" : "0"}:${activeRoundState?.narrationText ?? ""}`;
+  const typingKey = `${currentRound}:${activeRoundState?.isAwaitingNarration ? "1" : "0"}`;
   const isTyping = shouldType && completedTypingKey !== typingKey;
   const isChoiceInteractionDisabled =
     isEndingReviewMode || isTyping || isLoading;
@@ -158,7 +157,6 @@ const GameplayPage: React.FC = () => {
           (entry) =>
             entry.narrationText.trim() &&
             !entry.isAwaitingNarration &&
-            entry.narrationStatus !== "pending" &&
             entry.narrationStatus !== "running",
         ),
     [narrationHistory],

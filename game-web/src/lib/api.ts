@@ -179,18 +179,6 @@ export interface PlayerActionInput {
   action: string;
 }
 
-export interface TaskView {
-  entity: string;
-  kind: string;
-  status: 'pending' | 'running' | 'done' | 'error';
-  attempts: number;
-  maxAttempts: number;
-  lastError: string | null;
-  chunks: string[];
-  output: string | null;
-  error: string | null;
-}
-
 export interface GameSessionWorldStateData {
   sessionId: string;
   generatedProfiles: GeneratedProfiles;
@@ -199,10 +187,8 @@ export interface GameSessionWorldStateData {
   turnIndex: number;
   activeTurnId: number;
   worldState: SessionWorldState;
-  currentTask: TaskView | null;
-  tasks: TaskView[];
   latestNarration: string;
-  currentProtagonistAction: string;
+  currentOutcome: string;
   choices: PendingProtagonistChoice[];
 }
 
@@ -231,14 +217,68 @@ export type GameSessionControlInput =
   | { control: { type: 'continue' }; action?: undefined }
   | { control?: undefined; action: PlayerActionInput };
 
-export interface TaskUpdatedEvent {
-  eventId?: number;
-  round: number;
-  entity: string;
-  kind: string;
-  status: 'pending' | 'running' | 'done' | 'error';
-  chunk?: string | null;
-  error?: string | null;
+export type EngineEvent =
+  | {
+      type: 'session_created';
+      session_id: string;
+      world_profile: string;
+      protagonist_profile: string;
+      key_story_beats: string;
+    }
+  | {
+      type: 'task_update';
+      session_id: string;
+      round: number;
+      entity_name: string;
+      chunk: string;
+    }
+  | {
+      type: 'task_completed';
+      session_id: string;
+      round: number;
+      entity_name: string;
+      content: string;
+    }
+  | {
+      type: 'player_input';
+      session_id: string;
+      round: number;
+      action_type: PlayerActionType;
+      action: string;
+    }
+  | {
+      type: 'agent_context_update';
+      session_id: string;
+      round: number;
+      agent_name: string;
+      context: unknown;
+    }
+  | {
+      type: 'flow_turn_update';
+      session_id: string;
+      round: number;
+      stage: TurnPhase;
+      entity_name: string;
+      output_type: 'json' | 'text';
+      content: string;
+    }
+  | {
+      type: 'flow_turn_completed' | 'flow_turn_end';
+      session_id: string;
+      round: number;
+    }
+  | {
+      type: 'flow_turn_error';
+      session_id: string;
+      round: number;
+      stage: TurnPhase;
+      entity_name: string;
+      msg: string;
+    };
+
+export interface LiveEngineEvent {
+  eventId: number;
+  event: EngineEvent;
 }
 
 const API_ORIGIN = import.meta.env.PROD ? 'https://game.akasa.fun' : '';
@@ -407,7 +447,7 @@ export function submitGameSessionControl(
 export function openGameSessionStream(
   sessionId: string,
   handlers: {
-    onTaskUpdated: (event: TaskUpdatedEvent, lastEventId: string) => void;
+    onEngineEvent: (event: LiveEngineEvent, lastEventId: string) => void;
     onOpen?: () => void;
     onError?: () => void;
   },
@@ -424,9 +464,9 @@ export function openGameSessionStream(
     });
   }
 
-  eventSource.addEventListener('task.updated', (rawEvent) => {
+  eventSource.addEventListener('engine.event', (rawEvent) => {
     const event = rawEvent as MessageEvent<string>;
-    handlers.onTaskUpdated(JSON.parse(event.data) as TaskUpdatedEvent, event.lastEventId);
+    handlers.onEngineEvent(JSON.parse(event.data) as LiveEngineEvent, event.lastEventId);
   });
 
   if (handlers.onError) {

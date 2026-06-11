@@ -476,7 +476,7 @@ impl SessionArchiveRepository {
     }
 
     pub async fn record_flow_turn_completed(&self, session_id: &str, round: u64) -> Result<()> {
-        self.update_session_turn_state(session_id, TurnPhase::AwaitingPlayer, round, round)
+        self.update_session_turn_state(session_id, TurnPhase::TurnCompleted, round, round)
             .await?;
         self.set_flow_turn_timestamp(session_id, round, "completed_at")
             .await
@@ -1150,7 +1150,7 @@ mod tests {
             .await
             .expect("metadata should load")
             .expect("metadata should exist");
-        assert_eq!(metadata.phase, TurnPhase::AwaitingPlayer);
+        assert_eq!(metadata.phase, TurnPhase::TurnCompleted);
         assert_eq!(metadata.turn_index, 1);
         assert_eq!(metadata.active_turn_id, 1);
 

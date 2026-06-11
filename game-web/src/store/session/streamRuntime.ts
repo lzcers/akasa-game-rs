@@ -1,20 +1,18 @@
 import type { StoreApi } from 'zustand';
-import type { TaskView } from '../../lib/api';
+import type { LiveEngineEvent } from '../../lib/api';
 import {
   getGameSession,
   openGameSessionStream,
 } from '../../lib/api';
 import { useGameInternalStore } from '../gameStore';
-import { reduceStreamTask } from './streamReducer';
+import { reduceStreamEvent } from './streamReducer';
 import { applySessionSnapshotToStores } from './stateSync';
-import { applyTaskUpdate } from './taskUpdates';
 import type { GameUIStoreState } from '../gameUIStore';
 
 interface SessionStreamHandlers {
-  onTaskUpdated: (task: TaskView, boundRound?: number | null) => void;
+  onEngineEvent: (event: LiveEngineEvent) => void;
   onStreamConnected: () => void;
   onStreamError: () => void;
-  onSnapshotSyncRequested: (sessionId: string) => void;
 }
 
 interface GameSessionStreamRuntime {
@@ -25,8 +23,6 @@ interface GameSessionStreamRuntime {
 let activeSessionStream: EventSource | null = null;
 let activeStreamSessionId: string | null = null;
 let lastStreamEventId: string | null = null;
-let activeStreamTasks = new Map<string, TaskView>();
-let activeStreamTaskRounds = new Map<string, number>();
 let endingSnapshotSyncTimer: number | null = null;
 const STREAM_RECONNECTING_MESSAGE = '连接有些不稳定，正在为你续接这段记录...';
 
@@ -39,15 +35,13 @@ export function closeSessionStream() {
   activeSessionStream = null;
   activeStreamSessionId = null;
   lastStreamEventId = null;
-  activeStreamTasks = new Map();
-  activeStreamTaskRounds = new Map();
   if (endingSnapshotSyncTimer !== null) {
     window.clearTimeout(endingSnapshotSyncTimer);
     endingSnapshotSyncTimer = null;
   }
 }
 
-function scheduleSnapshotSync(sessionId: string, handler: SessionStreamHandlers['onSnapshotSyncRequested']) {
+function scheduleSnapshotSync(sessionId: string, handler: (sessionId: string) => void) {
   if (endingSnapshotSyncTimer !== null) {
     window.clearTimeout(endingSnapshotSyncTimer);
   }
@@ -68,23 +62,13 @@ export function connectSessionStream(sessionId: string, handlers: SessionStreamH
         }
         handlers.onStreamConnected();
       },
-      onTaskUpdated: (event, lastEventId) => {
+      onEngineEvent: (event, lastEventId) => {
         if (!isSessionStreamActive(sessionId)) {
           return;
         }
         handlers.onStreamConnected();
         lastStreamEventId = lastEventId || lastStreamEventId;
-        if (event.kind === 'narration' || event.kind === 'protagonist_action') {
-          activeStreamTaskRounds.set(event.entity, Math.max(event.round, 1));
-        }
-        const nextTask = applyTaskUpdate(activeStreamTasks, event);
-        handlers.onTaskUpdated(nextTask, activeStreamTaskRounds.get(event.entity));
-        if (event.kind === 'narration' && event.status === 'done') {
-          scheduleSnapshotSync(sessionId, handlers.onSnapshotSyncRequested);
-        }
-        if (event.status === 'error') {
-          scheduleSnapshotSync(sessionId, handlers.onSnapshotSyncRequested);
-        }
+        handlers.onEngineEvent(event);
       },
       onError: () => {
         if (!isSessionStreamActive(sessionId)) {
@@ -97,16 +81,14 @@ export function connectSessionStream(sessionId: string, handlers: SessionStreamH
   );
 }
 
-function applyStreamTaskToStores(
+function applyStreamEventToStores(
   runtime: GameSessionStreamRuntime,
-  task: TaskView,
-  boundRound?: number | null,
+  event: LiveEngineEvent,
 ) {
-  const { internalStatePatch, uiStatePatch } = reduceStreamTask({
+  const { internalStatePatch, uiStatePatch, shouldSyncSnapshot } = reduceStreamEvent({
     internalState: useGameInternalStore.getState(),
     uiState: runtime.get(),
-    task,
-    boundRound,
+    event: event.event,
   });
 
   if (internalStatePatch) {
@@ -116,6 +98,8 @@ function applyStreamTaskToStores(
   if (uiStatePatch) {
     runtime.set(uiStatePatch);
   }
+
+  return shouldSyncSnapshot;
 }
 
 async function syncActiveSessionSnapshot(
@@ -154,11 +138,12 @@ export function connectGameSessionStream(
   runtime: GameSessionStreamRuntime,
 ) {
   connectSessionStream(sessionId, {
-    onTaskUpdated: (task, boundRound) => {
-      applyStreamTaskToStores(runtime, task, boundRound);
-    },
-    onSnapshotSyncRequested: (nextSessionId) => {
-      void syncActiveSessionSnapshot(runtime, nextSessionId);
+    onEngineEvent: (event) => {
+      if (applyStreamEventToStores(runtime, event)) {
+        scheduleSnapshotSync(sessionId, (nextSessionId) => {
+          void syncActiveSessionSnapshot(runtime, nextSessionId);
+        });
+      }
     },
     onStreamConnected: () => {
       if (runtime.get().error === STREAM_RECONNECTING_MESSAGE) {

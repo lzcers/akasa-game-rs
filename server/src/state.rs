@@ -15,10 +15,7 @@ use story_engine::{
     },
     engine::{AkashicEngine, AkashicSessionEngine},
     profile::DEFAULT_KEY_STORY_BEATS,
-    resources::{
-        agent_task_manager::TaskStatus,
-        session_events::{AgentContextUpdate, EngineEvent, FlowTurnUpdate, SessionCreated},
-    },
+    resources::session_events::{AgentContextUpdate, EngineEvent, FlowTurnUpdate, SessionCreated},
 };
 use tokio::sync::{Mutex, broadcast};
 use uuid::Uuid;
@@ -30,7 +27,7 @@ use crate::{
         ControlGameSessionData, ControlGameSessionRequest, CreateGameSessionData,
         CreateGameSessionRequest, GameSessionControlCommand, GameSessionWorldStateData,
         GeneratedProfilesData, RoundHistoryData, SaveExportData, SessionActionInput,
-        SessionRoundsPageData, TaskKind, WorldStateData,
+        SessionRoundsPageData, WorldStateData,
     },
     api::site::{AnalyticsBatchRequest, SubmitFeedbackData, ValidatedFeedbackRequest},
     database::AppDatabase,
@@ -70,7 +67,7 @@ enum SessionSlot {
 
 struct HotSession {
     engine: AkashicSessionEngine,
-    events_tx: broadcast::Sender<LiveTaskUpdate>,
+    events_tx: broadcast::Sender<LiveEngineEvent>,
     live_events: Arc<Mutex<LiveEventLog>>,
 }
 
@@ -83,14 +80,14 @@ struct ColdSession {
 struct HotSessionAccess {
     session_id: String,
     engine: AkashicSessionEngine,
-    events_tx: broadcast::Sender<LiveTaskUpdate>,
+    events_tx: broadcast::Sender<LiveEngineEvent>,
     live_events: Arc<Mutex<LiveEventLog>>,
 }
 
 pub struct LiveSessionStream {
     pub session_id: String,
-    pub replayed_events: Vec<LiveTaskUpdate>,
-    pub event_rx: broadcast::Receiver<LiveTaskUpdate>,
+    pub replayed_events: Vec<LiveEngineEvent>,
+    pub event_rx: broadcast::Receiver<LiveEngineEvent>,
     pub lease: LiveSessionLease,
 }
 
@@ -99,21 +96,17 @@ pub struct LiveSessionLease {
     sessions: Arc<Mutex<HashMap<String, SessionRecord>>>,
 }
 
-#[derive(Clone, Debug)]
-pub struct LiveTaskUpdate {
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveEngineEvent {
     pub event_id: u64,
-    pub round: u64,
-    pub entity: String,
-    pub kind: TaskKind,
-    pub status: TaskStatus,
-    pub chunk: Option<String>,
-    pub error: Option<String>,
+    pub event: EngineEvent,
 }
 
 #[derive(Default)]
 struct LiveEventLog {
     next_event_id: u64,
-    history: VecDeque<LiveTaskUpdate>,
+    history: VecDeque<LiveEngineEvent>,
     capacity: usize,
 }
 
@@ -991,24 +984,11 @@ impl LiveEventLog {
         }
     }
 
-    fn push_task_update(
-        &mut self,
-        round: u64,
-        entity: impl Into<String>,
-        status: TaskStatus,
-        chunk: Option<String>,
-        error: Option<String>,
-    ) -> LiveTaskUpdate {
-        let entity = entity.into();
+    fn push(&mut self, event: EngineEvent) -> LiveEngineEvent {
         self.next_event_id += 1;
-        let event = LiveTaskUpdate {
+        let event = LiveEngineEvent {
             event_id: self.next_event_id,
-            round,
-            kind: task_kind_for_entity(&entity),
-            entity,
-            status,
-            chunk,
-            error,
+            event,
         };
         self.history.push_back(event.clone());
         while self.history.len() > self.capacity {
@@ -1082,161 +1062,140 @@ fn build_hot_session(
     tokio::spawn(async move {
         loop {
             match event_rx.recv().await {
-                Ok(EngineEvent::SessionCreated(created)) => {
-                    if let Err(error) = session_archive_repo.save_session_created(&created).await {
-                        tracing::warn!(
-                            "failed to persist created session {}: {:?}",
-                            created.session_id,
-                            error
-                        );
-                    }
-                }
-                Ok(EngineEvent::TaskUpdate(update)) => {
-                    let event = {
+                Ok(event) => {
+                    let live_event = {
                         let mut live_events = live_events_for_task.lock().await;
-                        live_events.push_task_update(
-                            update.round,
-                            update.entity_name,
-                            TaskStatus::Running,
-                            Some(update.chunk),
-                            None,
-                        )
+                        live_events.push(event.clone())
                     };
-                    let _ = events_tx_for_task.send(event);
-                }
-                Ok(EngineEvent::TaskCompleted(completed)) => {
-                    let event = {
-                        let mut live_events = live_events_for_task.lock().await;
-                        live_events.push_task_update(
-                            completed.round,
-                            completed.entity_name,
-                            TaskStatus::Done,
-                            None,
-                            None,
-                        )
-                    };
-                    let _ = events_tx_for_task.send(event);
-                }
-                Ok(EngineEvent::PlayerInput(input)) => {
-                    if let Err(error) = session_archive_repo.save_player_input(&input).await {
-                        tracing::warn!(
-                            "failed to persist player input for {} / {}: {:?}",
-                            input.session_id,
-                            input.round,
-                            error
-                        );
+                    let _ = events_tx_for_task.send(live_event);
+
+                    match event {
+                        EngineEvent::SessionCreated(created) => {
+                            if let Err(error) =
+                                session_archive_repo.save_session_created(&created).await
+                            {
+                                tracing::warn!(
+                                    "failed to persist created session {}: {:?}",
+                                    created.session_id,
+                                    error
+                                );
+                            }
+                        }
+                        EngineEvent::TaskUpdate(_) | EngineEvent::TaskCompleted(_) => {}
+                        EngineEvent::PlayerInput(input) => {
+                            if let Err(error) = session_archive_repo.save_player_input(&input).await
+                            {
+                                tracing::warn!(
+                                    "failed to persist player input for {} / {}: {:?}",
+                                    input.session_id,
+                                    input.round,
+                                    error
+                                );
+                            }
+                        }
+                        EngineEvent::AgentContextUpdate(update) => {
+                            if let Err(error) =
+                                session_archive_repo.save_agent_context(&update).await
+                            {
+                                tracing::warn!(
+                                    "failed to persist agent context for {} / {}: {:?}",
+                                    update.session_id,
+                                    update.agent_name,
+                                    error
+                                );
+                            }
+                        }
+                        EngineEvent::FlowTurnUpdate(update) => {
+                            let Some(round) = round_history_from_flow_turn_update(&update) else {
+                                continue;
+                            };
+                            if let Err(error) = session_archive_repo
+                                .update_session_turn_state(
+                                    &update.session_id,
+                                    update.stage,
+                                    if update.stage == TurnPhase::TurnCompleted {
+                                        update.round
+                                    } else {
+                                        update.round.saturating_sub(1)
+                                    },
+                                    update.round,
+                                )
+                                .await
+                            {
+                                tracing::warn!(
+                                    "failed to update session turn state for {}: {:?}",
+                                    update.session_id,
+                                    error
+                                );
+                            }
+                            if let Err(error) = session_archive_repo
+                                .save_rounds(&update.session_id, std::slice::from_ref(&round))
+                                .await
+                            {
+                                tracing::warn!(
+                                    "failed to persist session rounds for {}: {:?}",
+                                    session_id_for_event_task,
+                                    error
+                                );
+                            }
+                        }
+                        EngineEvent::FlowTurnCompleted(completed) => {
+                            if let Err(error) = session_archive_repo
+                                .record_flow_turn_completed(&completed.session_id, completed.round)
+                                .await
+                            {
+                                tracing::warn!(
+                                    "failed to persist completed flow turn for {} / {}: {:?}",
+                                    completed.session_id,
+                                    completed.round,
+                                    error
+                                );
+                            }
+                            tracing::debug!(
+                                session_id = %completed.session_id,
+                                round = completed.round,
+                                "flow turn completed"
+                            );
+                        }
+                        EngineEvent::FlowTurnEnd(end) => {
+                            if let Err(error) = session_archive_repo
+                                .record_flow_turn_end(&end.session_id, end.round)
+                                .await
+                            {
+                                tracing::warn!(
+                                    "failed to persist ended flow turn for {} / {}: {:?}",
+                                    end.session_id,
+                                    end.round,
+                                    error
+                                );
+                            }
+                            tracing::debug!(
+                                session_id = %end.session_id,
+                                round = end.round,
+                                "flow turn ended"
+                            );
+                        }
+                        EngineEvent::FlowTurnError(error) => {
+                            if let Err(persist_error) =
+                                session_archive_repo.record_flow_turn_error(&error).await
+                            {
+                                tracing::warn!(
+                                    "failed to persist flow turn error for {} / {}: {:?}",
+                                    error.session_id,
+                                    error.round,
+                                    persist_error
+                                );
+                            }
+                            tracing::warn!(
+                                session_id = %error.session_id,
+                                round = error.round,
+                                stage = ?error.stage,
+                                entity_name = %error.entity_name,
+                                msg = %error.msg,
+                                "flow turn error"
+                            );
+                        }
                     }
-                }
-                Ok(EngineEvent::AgentContextUpdate(update)) => {
-                    if let Err(error) = session_archive_repo.save_agent_context(&update).await {
-                        tracing::warn!(
-                            "failed to persist agent context for {} / {}: {:?}",
-                            update.session_id,
-                            update.agent_name,
-                            error
-                        );
-                    }
-                }
-                Ok(EngineEvent::FlowTurnUpdate(update)) => {
-                    let Some(round) = round_history_from_flow_turn_update(&update) else {
-                        continue;
-                    };
-                    if let Err(error) = session_archive_repo
-                        .update_session_turn_state(
-                            &update.session_id,
-                            update.stage,
-                            if update.stage == TurnPhase::TurnCompleted {
-                                update.round
-                            } else {
-                                update.round.saturating_sub(1)
-                            },
-                            update.round,
-                        )
-                        .await
-                    {
-                        tracing::warn!(
-                            "failed to update session turn state for {}: {:?}",
-                            update.session_id,
-                            error
-                        );
-                    }
-                    if let Err(error) = session_archive_repo
-                        .save_rounds(&update.session_id, std::slice::from_ref(&round))
-                        .await
-                    {
-                        tracing::warn!(
-                            "failed to persist session rounds for {}: {:?}",
-                            session_id_for_event_task,
-                            error
-                        );
-                    }
-                }
-                Ok(EngineEvent::FlowTurnCompleted(completed)) => {
-                    if let Err(error) = session_archive_repo
-                        .record_flow_turn_completed(&completed.session_id, completed.round)
-                        .await
-                    {
-                        tracing::warn!(
-                            "failed to persist completed flow turn for {} / {}: {:?}",
-                            completed.session_id,
-                            completed.round,
-                            error
-                        );
-                    }
-                    tracing::debug!(
-                        session_id = %completed.session_id,
-                        round = completed.round,
-                        "flow turn completed"
-                    );
-                }
-                Ok(EngineEvent::FlowTurnEnd(end)) => {
-                    if let Err(error) = session_archive_repo
-                        .record_flow_turn_end(&end.session_id, end.round)
-                        .await
-                    {
-                        tracing::warn!(
-                            "failed to persist ended flow turn for {} / {}: {:?}",
-                            end.session_id,
-                            end.round,
-                            error
-                        );
-                    }
-                    tracing::debug!(
-                        session_id = %end.session_id,
-                        round = end.round,
-                        "flow turn ended"
-                    );
-                }
-                Ok(EngineEvent::FlowTurnError(error)) => {
-                    if let Err(persist_error) =
-                        session_archive_repo.record_flow_turn_error(&error).await
-                    {
-                        tracing::warn!(
-                            "failed to persist flow turn error for {} / {}: {:?}",
-                            error.session_id,
-                            error.round,
-                            persist_error
-                        );
-                    }
-                    tracing::warn!(
-                        session_id = %error.session_id,
-                        round = error.round,
-                        stage = ?error.stage,
-                        entity_name = %error.entity_name,
-                        msg = %error.msg,
-                        "flow turn error"
-                    );
-                    let event = {
-                        let mut live_events = live_events_for_task.lock().await;
-                        live_events.push_task_update(
-                            error.round,
-                            error.entity_name,
-                            TaskStatus::Error,
-                            None,
-                            Some(error.msg),
-                        )
-                    };
-                    let _ = events_tx_for_task.send(event);
                 }
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
                     tracing::warn!(
@@ -1302,8 +1261,6 @@ fn world_state_from_database(
         ),
         active_turn_id: metadata.active_turn_id,
         world_state: WorldStateData::from(world_snapshot),
-        current_task: None,
-        tasks: vec![],
         latest_narration,
         current_outcome,
         choices,
@@ -1451,14 +1408,6 @@ fn pending_choices_from_options(options: ProtagonistOptions) -> Vec<PendingProta
             option,
         })
         .collect()
-}
-
-fn task_kind_for_entity(entity: &str) -> TaskKind {
-    match entity {
-        "UpperNarrator" => TaskKind::Narration,
-        "Protagonist" | "Player" => TaskKind::ProtagonistAction,
-        _ => TaskKind::Simulation,
-    }
 }
 
 fn stabilize_archive_payload_from_history(
@@ -1996,10 +1945,10 @@ mod tests {
                 time_absolute: "第一日 深夜十一点四十二分".to_string(),
                 location_name: "齿轮教堂地下二层".to_string(),
                 new_info: vec!["图纸碎片已安全到手".to_string()],
+                is_ending: true,
+                ending_type: Some("牺牲".to_string()),
                 ..WorldSnapshot::default()
             }),
-            current_task: None,
-            tasks: vec![],
             latest_narration: "narration".to_string(),
             current_outcome: "action".to_string(),
             choices: vec![],
@@ -2018,6 +1967,14 @@ mod tests {
         assert_eq!(
             world_state.get("timeAbsolute").and_then(Value::as_str),
             Some("第一日 深夜十一点四十二分")
+        );
+        assert_eq!(
+            world_state.get("isEnding").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            world_state.get("endingType").and_then(Value::as_str),
+            Some("牺牲")
         );
         assert_eq!(
             world_state.get("locationName").and_then(Value::as_str),

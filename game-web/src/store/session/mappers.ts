@@ -61,7 +61,7 @@ export function stateViewFromSession(session: GameSessionWorldStateData): Runtim
       || session.worldState.description
       || '记录已续上',
     latestBroadcastItems,
-    latestProtagonistAction: session.currentProtagonistAction || '你还没有写下选择',
+    latestProtagonistAction: session.currentOutcome || '你还没有写下选择',
     isEnding: session.worldState.isEnding,
     endingType: session.worldState.endingType ?? null,
   };
@@ -118,7 +118,7 @@ function currentRoundStateFromSession(
     ...createRoundState(round, {
       title: titleFromWorldState(session.worldState),
       narrationText: latestHistoryFromSession(session),
-      narrationStatus: session.currentTask?.kind === 'narration' ? session.currentTask.status : null,
+      narrationStatus: session.latestNarration.trim() ? 'done' : null,
       choices: session.choices.map(toChoiceFromSession),
       choicesStatus: session.choices.length > 0 || session.phase === 'awaiting_player' ? 'ready' : 'idle',
       selectedChoiceText: null,

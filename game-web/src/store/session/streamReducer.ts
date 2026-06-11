@@ -1,4 +1,4 @@
-import type { RuntimeStateView, TaskView } from '../../lib/api';
+import type { EngineEvent, RuntimeStateView } from '../../lib/api';
 import {
   createRoundState,
   type GameInternalState,
@@ -10,28 +10,24 @@ import {
   protagonistActionChoices,
   protagonistActionText,
 } from './protagonistChoices';
-import {
-  taskLabel,
-  taskRawContent,
-  taskText,
-} from './taskContent';
+import { streamEntityLabel } from './taskContent';
 
-interface StreamTaskUIState {
+interface StreamEventUIState {
   stateView: RuntimeStateView | null;
   isLoading: boolean;
   skipRestoredNarrationAnimation: boolean;
 }
 
-export interface StreamTaskReductionInput {
+export interface StreamEventReductionInput {
   internalState: GameInternalState;
-  uiState: StreamTaskUIState;
-  task: TaskView;
-  boundRound?: number | null;
+  uiState: StreamEventUIState;
+  event: EngineEvent;
 }
 
-export interface StreamTaskReduction {
+export interface StreamEventReduction {
   internalStatePatch: Partial<GameInternalState> | null;
-  uiStatePatch: Partial<StreamTaskUIState> | null;
+  uiStatePatch: Partial<StreamEventUIState> | null;
+  shouldSyncSnapshot: boolean;
 }
 
 function areChoicesEqual(left: RoundState['choices'], right: RoundState['choices']): boolean {
@@ -49,195 +45,95 @@ function areChoicesEqual(left: RoundState['choices'], right: RoundState['choices
   });
 }
 
-export function reduceStreamTask({
+function roundFromEvent(event: EngineEvent, fallback: number): number {
+  return 'round' in event ? Math.max(event.round, 1) : Math.max(fallback, 1);
+}
+
+export function reduceStreamEvent({
   internalState,
   uiState,
-  task,
-  boundRound,
-}: StreamTaskReductionInput): StreamTaskReduction {
-  const stateView = uiState.stateView;
-  const activeRound = Math.max(
-    boundRound ?? internalState.displayRound ?? stateView?.turnIndex ?? 1,
-    1,
+  event,
+}: StreamEventReductionInput): StreamEventReduction {
+  const activeRound = roundFromEvent(
+    event,
+    internalState.displayRound || uiState.stateView?.activeTurnId || 1,
   );
-  const isLoading = task.status === 'pending' || task.status === 'running';
+  const isLoading = event.type === 'task_update'
+    || (event.type === 'flow_turn_update'
+      && (event.stage === 'simulation' || event.stage === 'application'));
   let internalStatePatch: Partial<GameInternalState> | null = null;
-  let uiStatePatch: Partial<StreamTaskUIState> | null = null;
+  let uiStatePatch: Partial<StreamEventUIState> | null = null;
+  let shouldSyncSnapshot = false;
 
-  switch (task.kind) {
-    case 'narration': {
-      const nextText = taskText(task);
-      if (!nextText) {
-        break;
-      }
+  if (event.type === 'task_update' && event.entity_name === 'UpperNarrator') {
+    const reduction = reduceNarrationText(
+      internalState,
+      uiState.stateView,
+      activeRound,
+      event.chunk,
+      'running',
+      'append',
+    );
+    internalStatePatch = reduction.internalStatePatch;
+    uiStatePatch = reduction.uiStatePatch;
+  }
 
-      const previousRoundState = internalState.roundStates[activeRound];
-      const nextRoundState = createRoundState(activeRound, {
-        ...(previousRoundState ?? {}),
-        round: activeRound,
-        title: previousRoundState?.title || stateView?.currentScene || '记录回响',
-        narrationText: nextText,
-        narrationStatus: task.status,
-        isAwaitingNarration: false,
-      });
-      const nextTurnIndex = Math.max(internalState.turnIndex, activeRound);
-
-      if (
-        internalState.turnIndex !== nextTurnIndex
-        || internalState.displayRound !== activeRound
-        || previousRoundState?.narrationText !== nextRoundState.narrationText
-        || previousRoundState?.narrationStatus !== nextRoundState.narrationStatus
-        || previousRoundState?.isAwaitingNarration !== nextRoundState.isAwaitingNarration
-      ) {
-        internalStatePatch = {
-          turnIndex: nextTurnIndex,
-          displayRound: activeRound,
-          roundStates: {
-            ...internalState.roundStates,
-            [activeRound]: nextRoundState,
-          },
-        };
-      }
-
-      if (stateView && stateView.latestHistory !== nextText) {
-        uiStatePatch = {
-          stateView: {
-            ...stateView,
-            latestHistory: nextText,
-          },
-        };
-      }
-
-      if (uiState.skipRestoredNarrationAnimation) {
-        uiStatePatch = {
-          ...(uiStatePatch ?? {}),
-          skipRestoredNarrationAnimation: false,
-        };
-      }
-      break;
+  if (event.type === 'flow_turn_update') {
+    if (event.stage === 'simulation' && event.output_type === 'json') {
+      const reduction = reduceWorldSnapshotEvent(
+        internalState,
+        uiState.stateView,
+        activeRound,
+        event.entity_name,
+        event.content,
+      );
+      internalStatePatch = reduction.internalStatePatch;
+      uiStatePatch = reduction.uiStatePatch;
     }
-    case 'simulation':
-    case 'fate_planning': {
-      const raw = taskRawContent(task);
-      const parsed = parseJsonValue(raw);
-      const summary = summarizeFatePlanning(parsed);
-      const nextRound = Math.max(summary?.round ?? activeRound, 1);
-      const hadRoundState = Boolean(internalState.roundStates[nextRound]);
-      const previousRoundState = internalState.roundStates[nextRound];
-      const nextTurnIndex = Math.max(internalState.turnIndex, nextRound);
-      const nextDisplayRound = internalState.displayRound || nextRound;
-      const nextTitle = summary?.sceneTitle ?? previousRoundState?.title ?? '记录回响';
 
-      if (
-        internalState.turnIndex !== nextTurnIndex
-        || internalState.displayRound !== nextDisplayRound
-        || !hadRoundState
-        || previousRoundState?.title !== nextTitle
-      ) {
-        const nextRoundState = createRoundState(nextRound, {
-          ...(previousRoundState ?? {}),
-          title: nextTitle,
-          isAwaitingNarration: previousRoundState?.isAwaitingNarration ?? true,
-        });
-        internalStatePatch = {
-          turnIndex: nextTurnIndex,
-          displayRound: nextDisplayRound,
-          roundStates: {
-            ...internalState.roundStates,
-            [nextRound]: nextRoundState,
-          },
-        };
-      }
-
-      if (stateView) {
-        const nextBroadcastItems = summary?.newInfo.length
-          ? summary.newInfo
-          : stateView.latestBroadcastItems;
-        const nextStateView = {
-          ...stateView,
-          turnIndex: nextRound,
-          activeTurnId: nextRound,
-          currentScene: summary?.sceneTitle ?? taskLabel(task.kind),
-          currentLocation: summary?.locationName ?? stateView.currentLocation,
-          protagonistState: summary?.protagonistCondition ?? stateView.protagonistState,
-          latestBroadcastSummary:
-            summary?.currentEvent
-            ?? summary?.newInfo[0]
-            ?? summary?.locationStatus
-            ?? summary?.description
-            ?? stateView.latestBroadcastSummary,
-          latestBroadcastItems: nextBroadcastItems,
-          isEnding: summary?.isEnding ?? stateView.isEnding,
-          endingType: summary?.endingType ?? stateView.endingType,
-        };
-
-        if (
-          stateView.turnIndex !== nextStateView.turnIndex
-          || stateView.activeTurnId !== nextStateView.activeTurnId
-          || stateView.currentScene !== nextStateView.currentScene
-          || stateView.currentLocation !== nextStateView.currentLocation
-          || stateView.protagonistState !== nextStateView.protagonistState
-          || stateView.latestBroadcastSummary !== nextStateView.latestBroadcastSummary
-          || stateView.latestBroadcastItems !== nextStateView.latestBroadcastItems
-          || stateView.isEnding !== nextStateView.isEnding
-          || stateView.endingType !== nextStateView.endingType
-        ) {
-          uiStatePatch = {
-            stateView: nextStateView,
-          };
-        }
-      }
-      break;
+    if (event.stage === 'application' && event.output_type === 'text') {
+      const reduction = reduceNarrationText(
+        internalState,
+        uiState.stateView,
+        activeRound,
+        event.content,
+        'done',
+        'complete',
+      );
+      internalStatePatch = reduction.internalStatePatch;
+      uiStatePatch = reduction.uiStatePatch;
+      shouldSyncSnapshot = true;
     }
-    case 'protagonist_action': {
-      const nextChoices = protagonistActionChoices(task);
-      const choicesStatus = nextChoices ? 'ready' : 'loading';
-      const previousRoundState = internalState.roundStates[activeRound];
-      const normalizedChoices = nextChoices ?? [];
-      const nextRoundState = createRoundState(activeRound, {
-        ...(previousRoundState ?? {}),
-        round: activeRound,
-        choices: normalizedChoices,
-        choicesStatus,
-        isAwaitingNarration: false,
-      });
 
-      if (
-        !previousRoundState
-        || previousRoundState.choicesStatus !== nextRoundState.choicesStatus
-        || previousRoundState.isAwaitingNarration !== nextRoundState.isAwaitingNarration
-        || !areChoicesEqual(previousRoundState.choices, normalizedChoices)
-      ) {
-        internalStatePatch = {
-          roundStates: {
-            ...internalState.roundStates,
-            [activeRound]: nextRoundState,
-          },
-        };
-      }
-
-      const nextProtagonistAction = protagonistActionText(task);
-      if (stateView) {
-        const nextPhase = task.status === 'done' && nextChoices
-          ? 'awaiting_player'
-          : stateView.phase;
-        if (
-          (nextProtagonistAction && stateView.latestProtagonistAction !== nextProtagonistAction)
-          || stateView.phase !== nextPhase
-        ) {
-          uiStatePatch = {
-            stateView: {
-              ...stateView,
-              phase: nextPhase,
-              latestProtagonistAction: nextProtagonistAction ?? stateView.latestProtagonistAction,
-            },
-          };
-        }
-      }
-      break;
+    if (event.stage === 'application' && event.output_type === 'json') {
+      const reduction = reduceProtagonistOptions(
+        internalState,
+        uiState.stateView,
+        activeRound,
+        event.content,
+      );
+      internalStatePatch = reduction.internalStatePatch;
+      uiStatePatch = reduction.uiStatePatch;
+      shouldSyncSnapshot = true;
     }
-    default:
-      break;
+  }
+
+  if (event.type === 'flow_turn_error') {
+    const reduction = reduceNarrationText(
+      internalState,
+      uiState.stateView,
+      activeRound,
+      event.msg,
+      'error',
+      'complete',
+    );
+    internalStatePatch = reduction.internalStatePatch;
+    uiStatePatch = reduction.uiStatePatch;
+    shouldSyncSnapshot = true;
+  }
+
+  if (event.type === 'flow_turn_completed' || event.type === 'flow_turn_end') {
+    shouldSyncSnapshot = true;
   }
 
   if (uiState.isLoading !== isLoading) {
@@ -247,8 +143,209 @@ export function reduceStreamTask({
     };
   }
 
+  if (uiState.skipRestoredNarrationAnimation && internalStatePatch) {
+    uiStatePatch = {
+      ...(uiStatePatch ?? {}),
+      skipRestoredNarrationAnimation: false,
+    };
+  }
+
   return {
     internalStatePatch,
     uiStatePatch,
+    shouldSyncSnapshot,
   };
+}
+
+function reduceNarrationText(
+  internalState: GameInternalState,
+  stateView: RuntimeStateView | null,
+  round: number,
+  text: string,
+  narrationStatus: RoundState['narrationStatus'],
+  mode: 'append' | 'complete',
+): Pick<StreamEventReduction, 'internalStatePatch' | 'uiStatePatch'> {
+  const previousRoundState = internalState.roundStates[round];
+  const narrationText = mergeNarrationText(
+    previousRoundState?.narrationText ?? '',
+    text,
+    mode,
+  );
+  const nextRoundState = createRoundState(round, {
+    ...(previousRoundState ?? {}),
+    round,
+    title: previousRoundState?.title || '记录回响',
+    narrationText,
+    narrationStatus,
+    isAwaitingNarration: false,
+  });
+  const nextTurnIndex = Math.max(internalState.turnIndex, round);
+  const internalStatePatch = (
+    internalState.turnIndex === nextTurnIndex
+    && internalState.displayRound === round
+    && previousRoundState?.narrationText === nextRoundState.narrationText
+    && previousRoundState?.narrationStatus === nextRoundState.narrationStatus
+    && previousRoundState?.isAwaitingNarration === nextRoundState.isAwaitingNarration
+  )
+    ? null
+    : {
+        turnIndex: nextTurnIndex,
+        displayRound: round,
+        roundStates: {
+          ...internalState.roundStates,
+          [round]: nextRoundState,
+        },
+      };
+
+  const uiStatePatch = stateView && stateView.latestHistory !== narrationText
+    ? {
+        stateView: {
+          ...stateView,
+          phase: narrationStatus === 'running' ? stateView.phase : 'application',
+          latestHistory: narrationText,
+        },
+      }
+    : null;
+
+  return { internalStatePatch, uiStatePatch };
+}
+
+function mergeNarrationText(
+  currentText: string,
+  incomingText: string,
+  mode: 'append' | 'complete',
+): string {
+  if (!currentText || mode === 'complete') {
+    if (mode === 'complete' && currentText && incomingText.startsWith(currentText)) {
+      return incomingText;
+    }
+    if (mode === 'complete' && currentText && currentText.startsWith(incomingText)) {
+      return currentText;
+    }
+    return mode === 'complete' ? incomingText : incomingText;
+  }
+
+  if (!incomingText) {
+    return currentText;
+  }
+  if (incomingText.startsWith(currentText)) {
+    return incomingText;
+  }
+  if (currentText.endsWith(incomingText)) {
+    return currentText;
+  }
+  return `${currentText}${incomingText}`;
+}
+
+function reduceWorldSnapshotEvent(
+  internalState: GameInternalState,
+  stateView: RuntimeStateView | null,
+  round: number,
+  entityName: string,
+  content: string,
+): Pick<StreamEventReduction, 'internalStatePatch' | 'uiStatePatch'> {
+  const parsed = parseJsonValue(content);
+  const summary = summarizeFatePlanning(parsed);
+  const nextRound = Math.max(summary?.round ?? round, 1);
+  const previousRoundState = internalState.roundStates[nextRound];
+  const nextTurnIndex = Math.max(internalState.turnIndex, nextRound);
+  const nextDisplayRound = internalState.displayRound || nextRound;
+  const nextTitle = summary?.sceneTitle ?? previousRoundState?.title ?? '记录回响';
+  let internalStatePatch: Partial<GameInternalState> | null = null;
+  let uiStatePatch: Partial<StreamEventUIState> | null = null;
+
+  if (
+    internalState.turnIndex !== nextTurnIndex
+    || internalState.displayRound !== nextDisplayRound
+    || !previousRoundState
+    || previousRoundState.title !== nextTitle
+  ) {
+    internalStatePatch = {
+      turnIndex: nextTurnIndex,
+      displayRound: nextDisplayRound,
+      roundStates: {
+        ...internalState.roundStates,
+        [nextRound]: createRoundState(nextRound, {
+          ...(previousRoundState ?? {}),
+          title: nextTitle,
+          isAwaitingNarration: previousRoundState?.isAwaitingNarration ?? true,
+        }),
+      },
+    };
+  }
+
+  if (stateView) {
+    const nextBroadcastItems = summary?.newInfo.length
+      ? summary.newInfo
+      : stateView.latestBroadcastItems;
+    uiStatePatch = {
+      stateView: {
+        ...stateView,
+        phase: 'simulation',
+        turnIndex: nextRound,
+        activeTurnId: nextRound,
+        currentScene: summary?.sceneTitle ?? streamEntityLabel(entityName),
+        currentLocation: summary?.locationName ?? stateView.currentLocation,
+        protagonistState: summary?.protagonistCondition ?? stateView.protagonistState,
+        latestBroadcastSummary:
+          summary?.currentEvent
+          ?? summary?.newInfo[0]
+          ?? summary?.locationStatus
+          ?? summary?.description
+          ?? stateView.latestBroadcastSummary,
+        latestBroadcastItems: nextBroadcastItems,
+        isEnding: summary?.isEnding ?? stateView.isEnding,
+        endingType: summary?.endingType ?? stateView.endingType,
+      },
+    };
+  }
+
+  return { internalStatePatch, uiStatePatch };
+}
+
+function reduceProtagonistOptions(
+  internalState: GameInternalState,
+  stateView: RuntimeStateView | null,
+  round: number,
+  content: string,
+): Pick<StreamEventReduction, 'internalStatePatch' | 'uiStatePatch'> {
+  const nextChoices = protagonistActionChoices(content);
+  const previousRoundState = internalState.roundStates[round];
+  const normalizedChoices = nextChoices ?? [];
+  let internalStatePatch: Partial<GameInternalState> | null = null;
+  let uiStatePatch: Partial<StreamEventUIState> | null = null;
+
+  if (
+    !previousRoundState
+    || previousRoundState.choicesStatus !== 'ready'
+    || previousRoundState.isAwaitingNarration
+    || !areChoicesEqual(previousRoundState.choices, normalizedChoices)
+  ) {
+    internalStatePatch = {
+      roundStates: {
+        ...internalState.roundStates,
+        [round]: createRoundState(round, {
+          ...(previousRoundState ?? {}),
+          round,
+          choices: normalizedChoices,
+          choicesStatus: nextChoices ? 'ready' : 'loading',
+          isAwaitingNarration: false,
+        }),
+      },
+    };
+  }
+
+  const nextProtagonistAction = protagonistActionText(content);
+  if (stateView) {
+    uiStatePatch = {
+      stateView: {
+        ...stateView,
+        phase: nextChoices ? 'awaiting_player' : stateView.phase,
+        latestProtagonistAction:
+          nextProtagonistAction ?? stateView.latestProtagonistAction,
+      },
+    };
+  }
+
+  return { internalStatePatch, uiStatePatch };
 }

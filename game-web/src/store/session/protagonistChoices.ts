@@ -1,8 +1,4 @@
-import type {
-  Choice,
-  TaskView,
-} from '../../lib/api';
-import { taskContent } from './taskContent';
+import type { Choice } from '../../lib/api';
 
 interface StreamedProtagonistOption {
   title?: string;
@@ -108,22 +104,16 @@ function parseStreamingProtagonistChoices(raw: string): Choice[] | null {
   return options.map(toChoiceFromStreamOption);
 }
 
-export function protagonistActionChoices(task: TaskView): Choice[] | null {
-  if (task.kind !== 'protagonist_action') {
-    return null;
-  }
-
-  const raw = taskContent(task);
-  if (!raw?.trim()) {
+export function protagonistActionChoices(raw: string): Choice[] | null {
+  if (!raw.trim()) {
     return null;
   }
 
   return parseStreamingProtagonistChoices(raw);
 }
 
-export function protagonistActionText(task: TaskView): string | null {
-  const raw = taskContent(task);
-  if (task.kind !== 'protagonist_action' || !raw?.trim()) {
+export function protagonistActionText(raw: string): string | null {
+  if (!raw.trim()) {
     return null;
   }
 

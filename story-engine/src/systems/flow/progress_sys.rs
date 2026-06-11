@@ -22,8 +22,7 @@ pub fn flow_progress_system(
         Option<&FlowEnd>,
         Option<&PlayerInputCompleted>,
     )>,
-    simulators: Query<&ChildOf, With<Simulator>>,
-    completed_simulators: Query<(&ChildOf, &SimulationCompleted), With<Simulator>>,
+    simulators: Query<(&ChildOf, Option<&SimulationCompleted>), With<Simulator>>,
     applicators: Query<(&ChildOf, Option<&ApplicationCompleted>), With<Applicator>>,
 ) {
     for (session_entity, event_sink, mut flow, flow_end, player_input) in sessions.iter_mut() {
@@ -33,19 +32,20 @@ pub fn flow_progress_system(
                     commands.entity(session_entity).remove::<FlowEnd>();
                     let round = flow.active_turn_id.max(1);
                     flow.end();
-                    event_sink.publish_flow_turn_completed(round);
                     event_sink.publish_flow_turn_end(round);
                     continue;
                 }
 
                 let total = simulators
                     .iter()
-                    .filter(|owner| owner.parent() == session_entity)
+                    .filter(|(owner, _)| owner.parent() == session_entity)
                     .count();
-                let completed = completed_simulators
+                let completed = simulators
                     .iter()
                     .filter(|(owner, completed)| {
-                        owner.parent() == session_entity && completed.turn_id == flow.active_turn_id
+                        owner.parent() == session_entity
+                            && completed
+                                .is_some_and(|completed| completed.turn_id == flow.active_turn_id)
                     })
                     .count();
 
@@ -87,12 +87,9 @@ pub fn flow_progress_system(
                     commands.entity(session_entity).remove::<FlowEnd>();
                     let round = flow.active_turn_id.max(1);
                     flow.end();
-                    event_sink.publish_flow_turn_completed(round);
                     event_sink.publish_flow_turn_end(round);
                 } else if resolved == total {
-                    let round = flow.active_turn_id.max(1);
                     flow.stage = TurnStage::AwaitingPlayer;
-                    event_sink.publish_flow_turn_completed(round);
                 }
             }
             TurnStage::AwaitingPlayer => {
@@ -100,7 +97,9 @@ pub fn flow_progress_system(
                     commands
                         .entity(session_entity)
                         .remove::<PlayerInputCompleted>();
+                    let round = flow.active_turn_id.max(1);
                     flow.finish_turn();
+                    event_sink.publish_flow_turn_completed(round);
                 }
             }
             TurnStage::Idle | TurnStage::TurnCompleted | TurnStage::Ended | TurnStage::Failed => {}

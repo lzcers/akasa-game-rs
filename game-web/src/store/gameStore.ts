@@ -1,13 +1,14 @@
 import { create } from 'zustand';
-import type { Choice, TaskView } from '../lib/api';
+import type { Choice } from '../lib/api';
 
 export type RoundChoicesStatus = 'idle' | 'loading' | 'ready';
+export type RoundNarrationStatus = 'running' | 'done' | 'error';
 
 export interface RoundState {
   round: number;
   title: string;
   narrationText: string;
-  narrationStatus: TaskView['status'] | null;
+  narrationStatus: RoundNarrationStatus | null;
   choices: Choice[];
   choicesStatus: RoundChoicesStatus;
   selectedChoiceText: string | null;

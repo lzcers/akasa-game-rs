@@ -1,10 +1,7 @@
 use serde::{Deserialize, Serialize};
-use story_engine::{
-    components::{
-        outcome::{PendingProtagonistChoice, PlayerActionInput},
-        world_snapshot::{ItemState, NpcState, OngoingEvent, WorldSnapshot},
-    },
-    resources::agent_task_manager::TaskStatus,
+use story_engine::components::{
+    outcome::{PendingProtagonistChoice, PlayerActionInput},
+    world_snapshot::{ItemState, NpcState, OngoingEvent, WorldSnapshot},
 };
 
 use crate::session_history::{RoundHistoryEntry, TurnPhase};
@@ -68,14 +65,6 @@ pub struct LoadArchiveRequest {
 
 pub type SessionActionInput = PlayerActionInput;
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskKind {
-    Simulation,
-    ProtagonistAction,
-    Narration,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum GameSessionControlCommand {
@@ -99,25 +88,9 @@ pub struct GameSessionWorldStateData {
     pub turn_index: u64,
     pub active_turn_id: u64,
     pub world_state: WorldStateData,
-    pub current_task: Option<TaskView>,
-    pub tasks: Vec<TaskView>,
     pub latest_narration: String,
     pub current_outcome: String,
     pub choices: Vec<PendingProtagonistChoice>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TaskView {
-    pub entity: String,
-    pub kind: TaskKind,
-    pub status: TaskStatus,
-    pub attempts: usize,
-    pub max_attempts: usize,
-    pub last_error: Option<String>,
-    pub chunks: Vec<String>,
-    pub output: Option<String>,
-    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -166,6 +139,8 @@ pub struct WorldStateData {
     pub pace: String,
     pub atmosphere: String,
     pub focal_point: String,
+    pub is_ending: bool,
+    pub ending_type: Option<String>,
     pub protagonist_condition: String,
     pub protagonist_known_secrets: Vec<String>,
     pub npcs: Vec<NpcStateData>,
@@ -222,6 +197,8 @@ impl From<WorldSnapshot> for WorldStateData {
             pace: value.pace,
             atmosphere: value.atmosphere,
             focal_point: value.focal_point,
+            is_ending: value.is_ending,
+            ending_type: value.ending_type,
             protagonist_condition: value.protagonist_condition,
             protagonist_known_secrets: value.protagonist_known_secrets,
             npcs: value.npcs.into_iter().map(Into::into).collect(),

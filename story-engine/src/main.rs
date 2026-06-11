@@ -113,7 +113,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     created.session_id, created.world_profile, created.protagonist_profile
                 );
             }
-            EngineEvent::AgentContextUpdate(_) => {}
+            EngineEvent::AgentContextUpdate(update) => {
+                stream_output.finish_line()?;
+                println!(
+                    "[context] round={} agent={} messages={}",
+                    update.round,
+                    update.agent_name,
+                    update.context.to_messages().len()
+                );
+            }
         }
     }
 }
