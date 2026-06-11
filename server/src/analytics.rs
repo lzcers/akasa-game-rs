@@ -1,16 +1,9 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
-
 use anyhow::{Context, Result};
 use chrono::{Duration, Utc};
 use rusqlite::{Connection, params};
 use serde::Serialize;
-use tokio::sync::Mutex;
 
-use crate::api::site::AnalyticsEventInput;
+use crate::{api::site::AnalyticsEventInput, database::AppDatabase};
 
 const CREATE_ANALYTICS_EVENTS_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS analytics_events (
@@ -57,16 +50,12 @@ ON analytics_events(source_session_id);
 
 #[derive(Debug, Clone)]
 pub struct AnalyticsRepository {
-    db_path: PathBuf,
-    write_lock: Arc<Mutex<()>>,
+    db: AppDatabase,
 }
 
 impl AnalyticsRepository {
-    pub fn new(db_path: impl Into<PathBuf>) -> Self {
-        Self {
-            db_path: db_path.into(),
-            write_lock: Arc::new(Mutex::new(())),
-        }
+    pub fn new(db: AppDatabase) -> Self {
+        Self { db }
     }
 
     pub async fn append_events(&self, events: &[AnalyticsEventInput]) -> Result<usize> {
@@ -74,15 +63,8 @@ impl AnalyticsRepository {
             return Ok(0);
         }
 
-        let _guard = self.write_lock.lock().await;
-        ensure_parent_dir(&self.db_path)?;
-
-        let mut conn = Connection::open(&self.db_path).with_context(|| {
-            format!(
-                "failed to open analytics sqlite database `{}`",
-                self.db_path.display()
-            )
-        })?;
+        let _guard = self.db.lock().await;
+        let mut conn = self.db.open_connection("analytics")?;
         init_schema(&conn)?;
 
         let tx = conn
@@ -148,15 +130,8 @@ impl AnalyticsRepository {
     }
 
     pub async fn summary(&self, range_hours: u32) -> Result<AnalyticsSummary> {
-        let _guard = self.write_lock.lock().await;
-        ensure_parent_dir(&self.db_path)?;
-
-        let conn = Connection::open(&self.db_path).with_context(|| {
-            format!(
-                "failed to open analytics sqlite database `{}`",
-                self.db_path.display()
-            )
-        })?;
+        let _guard = self.db.lock().await;
+        let conn = self.db.open_connection("analytics")?;
         init_schema(&conn)?;
 
         let range_hours = range_hours.clamp(1, 24 * 30);
@@ -239,20 +214,6 @@ fn init_schema(conn: &Connection) -> Result<()> {
         .context("failed to create analytics game session index")?;
     conn.execute_batch(CREATE_ANALYTICS_SOURCE_SESSION_INDEX_SQL)
         .context("failed to create analytics source session index")?;
-    Ok(())
-}
-
-fn ensure_parent_dir(path: &Path) -> Result<()> {
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        fs::create_dir_all(parent).with_context(|| {
-            format!(
-                "failed to create analytics parent directory `{}`",
-                parent.display()
-            )
-        })?;
-    }
     Ok(())
 }
 
@@ -436,7 +397,7 @@ mod tests {
             "akasa-analytics-repo-{}.sqlite3",
             Uuid::new_v4().simple()
         ));
-        let repo = AnalyticsRepository::new(&db_path);
+        let repo = AnalyticsRepository::new(AppDatabase::new(&db_path));
         let event = AnalyticsEventInput {
             id: "evt-test".to_string(),
             event_name: "choice_submitted".to_string(),
@@ -491,7 +452,7 @@ mod tests {
             "akasa-analytics-summary-{}.sqlite3",
             Uuid::new_v4().simple()
         ));
-        let repo = AnalyticsRepository::new(&db_path);
+        let repo = AnalyticsRepository::new(AppDatabase::new(&db_path));
         let now = Utc::now().to_rfc3339();
         let old = (Utc::now() - Duration::hours(48)).to_rfc3339();
         let events = vec![

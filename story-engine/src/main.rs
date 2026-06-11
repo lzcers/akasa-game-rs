@@ -1,12 +1,19 @@
-use std::{env, error::Error, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    env,
+    error::Error,
+    io::{self, Write},
+    thread,
+    time::Duration,
+};
 
 use story_engine::{
-    AkashicEngine, RuntimeDebugObserver,
-    debug::LocalDebugObserver,
-    resources::{
-        protagonist_action::{PlayerActionInput, PlayerActionType},
-        turn_state::TurnPhase,
+    AkashicEngine,
+    components::{
+        agent::AgentOutputType,
+        outcome::{PlayerActionInput, PlayerActionType, ProtagonistOptions},
     },
+    resources::session_events::EngineEvent,
 };
 
 #[tokio::main]
@@ -19,71 +26,66 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let max_turns = env_usize("AKASHIC_STORY_ENGINE_MAX_TURNS", 200);
-    let poll_interval = Duration::from_millis(env_u64("AKASHIC_STORY_ENGINE_POLL_MS", 100));
-    let local_debug = local_debug_enabled();
-
-    let engine = AkashicEngine::new_with_debug_observer(local_debug.then(|| {
-        Arc::new(LocalDebugObserver::for_workspace_root()) as Arc<dyn RuntimeDebugObserver>
-    }));
+    let engine = AkashicEngine::new();
     let session = engine.create_default_session("story-engine-main").await?;
+    let mut events = session.subscribe_session_events();
     session.start_next_turn()?;
 
     println!("== Akashic Story Engine ==");
-    println!(
-        "[api] story_engine main loop started, max_turns={}, poll_ms={}, local_debug={}",
-        max_turns,
-        poll_interval.as_millis(),
-        local_debug
-    );
+    println!("[api] story_engine event loop started, max_turns={max_turns}");
 
-    let mut frame = 0;
     let mut completed_turns = 0;
-    let mut last_reported_phase = None;
     let mut last_completed_turn = None;
+    let mut stream_output = StreamTypewriterOutput::new(Duration::from_millis(env_u64(
+        "AKASHIC_STORY_ENGINE_TYPEWRITER_MS",
+        1,
+    )));
 
     loop {
-        let snapshot = session.get_game_session();
-        if last_reported_phase != Some(snapshot.phase) {
-            print_frame_status(frame, &snapshot);
-            last_reported_phase = Some(snapshot.phase);
-        }
-
-        match snapshot.phase {
-            TurnPhase::Failed => {
-                print_failure(&snapshot);
-                return Err(format!("故事引擎在第 {} 章失败", snapshot.active_turn_id).into());
+        match events.recv().await? {
+            EngineEvent::TaskUpdate(update) => {
+                stream_output.write_chunk(update.round, &update.entity_name, &update.chunk)?;
             }
-            TurnPhase::Ended => {
+            EngineEvent::TaskCompleted(completed) => {
+                stream_output.complete_task(
+                    completed.round,
+                    &completed.entity_name,
+                    &completed.content,
+                )?;
                 println!(
-                    "[api] story ended: turn_index={} active_turn_id={}",
-                    snapshot.turn_index, snapshot.active_turn_id
+                    "[task] round={} entity={} completed",
+                    completed.round, completed.entity_name
                 );
-                return Ok(());
             }
-            TurnPhase::AwaitingPlayer => {
-                if let Some(choice) = snapshot.choices.first() {
-                    println!(
-                        "[api] auto selected choice: {} -> {}",
-                        choice.id, choice.option.action
-                    );
-                    session.submit_player_action(PlayerActionInput {
-                        r#type: PlayerActionType::SelectedOption,
-                        action: choice.option.action.clone(),
-                    })?;
-                } else {
-                    println!("[api] no player choices available; continuing");
-                    session.submit_player_action(PlayerActionInput {
-                        r#type: PlayerActionType::FreeText,
-                        action: "continue".to_string(),
-                    })?;
+            EngineEvent::FlowTurnUpdate(update) => {
+                stream_output.finish_line()?;
+                println!(
+                    "[turn] round={} stage={:?} entity={} output={:?}",
+                    update.round, update.stage, update.entity_name, update.output_type
+                );
+                if update.entity_name == "Protagonist"
+                    && update.output_type == AgentOutputType::Json
+                {
+                    submit_first_choice_or_continue(&session, &update.content)?;
                 }
             }
-            TurnPhase::TurnCompleted if last_completed_turn != Some(snapshot.turn_index) => {
-                completed_turns += 1;
-                last_completed_turn = Some(snapshot.turn_index);
+            EngineEvent::PlayerInput(input) => {
+                stream_output.finish_line()?;
                 println!(
-                    "[api] turn complete: turn_index={} completed_turns={}/{}",
-                    snapshot.turn_index, completed_turns, max_turns
+                    "[player] round={} type={:?} action={}",
+                    input.round, input.action_type, input.action
+                );
+            }
+            EngineEvent::FlowTurnCompleted(completed) => {
+                stream_output.finish_line()?;
+                if last_completed_turn == Some(completed.round) {
+                    continue;
+                }
+                last_completed_turn = Some(completed.round);
+                completed_turns += 1;
+                println!(
+                    "[api] turn complete: round={} completed_turns={}/{}",
+                    completed.round, completed_turns, max_turns
                 );
                 if completed_turns >= max_turns {
                     println!("[api] reached max turns, exiting");
@@ -91,37 +93,170 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
                 session.start_next_turn()?;
             }
-            TurnPhase::Idle => {
-                session.start_next_turn()?;
+            EngineEvent::FlowTurnEnd(end) => {
+                stream_output.finish_line()?;
+                println!("[api] story ended at round={}", end.round);
+                return Ok(());
             }
-            _ => {}
+            EngineEvent::FlowTurnError(error) => {
+                stream_output.finish_line()?;
+                return Err(format!(
+                    "故事引擎在第 {} 轮 {:?}/{} 失败：{}",
+                    error.round, error.stage, error.entity_name, error.msg
+                )
+                .into());
+            }
+            EngineEvent::SessionCreated(created) => {
+                stream_output.finish_line()?;
+                println!(
+                    "[api] session created: {} world={} protagonist={}",
+                    created.session_id, created.world_profile, created.protagonist_profile
+                );
+            }
+            EngineEvent::AgentContextUpdate(_) => {}
+        }
+    }
+}
+
+struct StreamTypewriterOutput {
+    current: Option<StreamOutputKey>,
+    buffers: HashMap<StreamOutputKey, String>,
+    char_delay: Duration,
+}
+
+#[derive(Clone, Hash, PartialEq, Eq)]
+struct StreamOutputKey {
+    round: u64,
+    entity_name: String,
+}
+
+impl StreamTypewriterOutput {
+    fn new(char_delay: Duration) -> Self {
+        Self {
+            current: None,
+            buffers: HashMap::new(),
+            char_delay,
+        }
+    }
+
+    fn write_chunk(&mut self, round: u64, entity_name: &str, chunk: &str) -> io::Result<()> {
+        if chunk.trim().is_empty() {
+            return Ok(());
         }
 
-        frame += 1;
-        tokio::time::sleep(poll_interval).await;
+        if should_typewrite(entity_name) {
+            self.buffers
+                .entry(StreamOutputKey {
+                    round,
+                    entity_name: entity_name.to_string(),
+                })
+                .or_default()
+                .push_str(chunk);
+            return Ok(());
+        }
+
+        self.write_live_chunk(round, entity_name, chunk)
+    }
+
+    fn complete_task(&mut self, round: u64, entity_name: &str, content: &str) -> io::Result<()> {
+        if !should_typewrite(entity_name) {
+            return self.finish_line();
+        }
+
+        let key = StreamOutputKey {
+            round,
+            entity_name: entity_name.to_string(),
+        };
+        let text = self
+            .buffers
+            .remove(&key)
+            .filter(|buffered| !buffered.trim().is_empty())
+            .unwrap_or_else(|| content.to_string());
+
+        if text.trim().is_empty() {
+            return Ok(());
+        }
+
+        self.finish_line()?;
+
+        let mut stdout = io::stdout().lock();
+        write!(
+            stdout,
+            "[stream] round={round} entity={entity_name} chunk=\n"
+        )?;
+        for ch in text.chars() {
+            write!(stdout, "{ch}")?;
+            stdout.flush()?;
+            if !ch.is_whitespace() {
+                thread::sleep(self.char_delay);
+            }
+        }
+        writeln!(stdout)?;
+        stdout.flush()
+    }
+
+    fn write_live_chunk(&mut self, round: u64, entity_name: &str, chunk: &str) -> io::Result<()> {
+        let is_new_stream = self
+            .current
+            .as_ref()
+            .map(|current| current.round != round || current.entity_name != entity_name)
+            .unwrap_or(true);
+
+        let mut stdout = io::stdout().lock();
+        if is_new_stream {
+            if self.current.is_some() {
+                writeln!(stdout)?;
+            }
+            write!(
+                stdout,
+                "[stream] round={round} entity={entity_name} chunk=\n"
+            )?;
+            self.current = Some(StreamOutputKey {
+                round,
+                entity_name: entity_name.to_string(),
+            });
+        }
+
+        write!(stdout, "{chunk}")?;
+        stdout.flush()
+    }
+
+    fn finish_line(&mut self) -> io::Result<()> {
+        if self.current.take().is_some() {
+            let mut stdout = io::stdout().lock();
+            writeln!(stdout)?;
+            stdout.flush()?;
+        }
+        Ok(())
     }
 }
 
-fn print_frame_status(frame: usize, snapshot: &story_engine::Session) {
-    println!(
-        "[frame {frame:03}] phase={:?} turn_index={} active_turn_id={}",
-        snapshot.phase, snapshot.turn_index, snapshot.active_turn_id
-    );
+fn should_typewrite(entity_name: &str) -> bool {
+    matches!(
+        entity_name,
+        "FateWeaver" | "UpperNarrator" | "Protagonist" | "Fate" | "Narration"
+    )
 }
 
-fn print_failure(snapshot: &story_engine::Session) {
-    for task in snapshot
-        .tasks
-        .iter()
-        .filter(|task| task.status == story_engine::resources::agent_task::TaskStatus::Error)
-    {
-        eprintln!(
-            "[error] agent task {:?} ({}) failed: {}",
-            task.kind,
-            task.entity,
-            task.error.as_deref().unwrap_or("unknown error")
-        );
+fn submit_first_choice_or_continue(
+    session: &story_engine::AkashicSessionEngine,
+    content: &str,
+) -> Result<(), Box<dyn Error>> {
+    let options = serde_json::from_str::<ProtagonistOptions>(content)?;
+    if let Some(choice) = options.options.first() {
+        println!("[api] auto selected choice: {}", choice.action);
+        session.submit_player_action(PlayerActionInput {
+            r#type: PlayerActionType::SelectedOption,
+            action: choice.action.clone(),
+        })?;
+    } else {
+        println!("[api] no player choices available; continuing");
+        session.submit_player_action(PlayerActionInput {
+            r#type: PlayerActionType::FreeText,
+            action: "continue".to_string(),
+        })?;
     }
+    Ok(())
 }
 
 fn env_usize(key: &str, default: usize) -> usize {
@@ -136,22 +271,4 @@ fn env_u64(key: &str, default: u64) -> u64 {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(default)
-}
-
-fn local_debug_enabled() -> bool {
-    env_flag("AKASA_LOCAL_DEBUG")
-        || env_flag("AKASA_STORY_ENGINE_LOCAL_DEBUG")
-        || env::args().skip(1).any(|arg| arg == "--local-debug")
-}
-
-fn env_flag(key: &str) -> bool {
-    env::var(key)
-        .ok()
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
 }

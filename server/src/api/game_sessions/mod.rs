@@ -17,9 +17,7 @@ use axum::{
 };
 use futures::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
-use story_engine::resources::agent_task::TaskUpdate;
-use story_engine::resources::agent_task::{TaskChunkKind, TaskKind, TaskStatus};
+use story_engine::resources::agent_task_manager::{TaskChunkKind, TaskStatus};
 use story_engine::utils::{build_chat_model, parse_json_response};
 use tokio::sync::broadcast;
 
@@ -115,6 +113,21 @@ pub async fn get_game_session_world(
 ) -> ApiResult<GameSessionWorldStateData> {
     let state_view = state.get_game_session_world(&path.session_id).await?;
     Ok(Json(ApiResponse::ok(state_view)))
+}
+
+pub async fn get_game_session_rounds(
+    State(state): State<AppState>,
+    Path(path): Path<SessionPath>,
+    Query(query): Query<SessionRoundsQuery>,
+) -> ApiResult<SessionRoundsPageData> {
+    let page = state
+        .get_game_session_rounds(
+            &path.session_id,
+            query.before_round,
+            query.limit.unwrap_or(DEFAULT_SESSION_ROUNDS_LIMIT),
+        )
+        .await?;
+    Ok(Json(ApiResponse::ok(page)))
 }
 
 pub async fn clone_game_session(
@@ -295,16 +308,15 @@ fn task_updated_sse(update: LiveTaskUpdate) -> Event {
 }
 
 fn task_update_from_delta(update: LiveTaskUpdate) -> TaskUpdateData {
-    let task_update = update.update;
     TaskUpdateData {
         event_id: Some(update.event_id),
         round: update.round,
-        entity: task_update.entity,
-        kind: task_update.kind,
-        status: task_update.status,
-        chunk_kind: task_update.chunk_kind,
-        chunk: task_update.chunk,
-        error: task_update.error,
+        entity: update.entity,
+        kind: update.kind,
+        status: update.status,
+        chunk_kind: None,
+        chunk: update.chunk,
+        error: update.error,
     }
 }
 
@@ -330,6 +342,8 @@ fn validate_story_summary(payload: StorySummaryPayload) -> Result<String, String
 
     Ok(summary.to_string())
 }
+
+const DEFAULT_SESSION_ROUNDS_LIMIT: usize = 30;
 
 #[cfg(test)]
 mod tests {
@@ -368,15 +382,11 @@ mod tests {
         let update = LiveTaskUpdate {
             event_id: 42,
             round: 7,
-            update: TaskUpdate {
-                entity: "2v0".to_string(),
-                kind: TaskKind::Narration,
-                status: TaskStatus::Done,
-                chunk_kind: None,
-                chunk: None,
-                output: Some("完成文本已经通过 chunk 流式传输。".to_string()),
-                error: None,
-            },
+            entity: "UpperNarrator".to_string(),
+            kind: TaskKind::Narration,
+            status: TaskStatus::Done,
+            chunk: None,
+            error: None,
         };
 
         let dto = task_update_from_delta(update);

@@ -37,6 +37,10 @@ pub fn build_router(state: AppState) -> Router {
             get(game_sessions::get_game_session_world),
         )
         .route(
+            "/api/game-sessions/{session_id}/rounds",
+            get(game_sessions::get_game_session_rounds),
+        )
+        .route(
             "/api/game-sessions/{session_id}/clone",
             post(game_sessions::clone_game_session),
         )

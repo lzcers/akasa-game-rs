@@ -10,6 +10,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useGameInternalStore } from "../store/gameStore";
 import { useGameUIStore } from "../store/gameUIStore";
 import { useGameValueStore } from "../store/gameValueStore";
+import { loadCompleteSessionRounds } from "../store/session/roundHistoryRuntime";
 import { ScreenShell, StoryFrame } from "../components/AkashicUI";
 import ChoicePanel from "../components/ChoicePanel";
 import GameplayToolbar from "../components/GameplayToolbar";
@@ -253,6 +254,16 @@ const GameplayPage: React.FC = () => {
   const readErrorMessage = useCallback((cause: unknown, fallback: string) => {
     return cause instanceof Error ? cause.message : fallback;
   }, []);
+
+  useEffect(() => {
+    if (!sessionId || !isEndingReviewMode) {
+      return;
+    }
+
+    void loadCompleteSessionRounds(sessionId).catch((roundsError) => {
+      setFeedback(readErrorMessage(roundsError, "读取完整回响失败。"));
+    });
+  }, [isEndingReviewMode, readErrorMessage, sessionId]);
 
   useEffect(() => {
     if (!sessionId || phase !== "booting") {

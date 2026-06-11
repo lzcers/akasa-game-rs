@@ -2,62 +2,52 @@ use bevy_ecs::{
     entity::Entity,
     hierarchy::ChildOf,
     query::With,
-    system::{Commands, Query, Res, ResMut},
+    system::{Commands, Query, ResMut},
 };
 
 use crate::{
     components::{
-        agent::{Agent, AgentRole, Applicator, PendingReasoning, Simulator},
-        session::StorySession,
+        agent::{Agent, PendingReasoning},
+        session_event_sink::SessionEventSink,
         turn_flow::TurnFlow,
     },
-    engine::RuntimeDebugObserverResource,
-    resources::{
-        agent_task::{AgentTaskManager, TaskKind},
-        export::ExportState,
-    },
+    resources::agent_task_manager::AgentTaskManager,
 };
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn agent_task_system(
     mut commands: Commands,
     mut agent_tasks: ResMut<AgentTaskManager>,
-    pending_simulators: Query<(Entity, &Agent), (With<PendingReasoning>, With<Simulator>)>,
-    pending_applicators: Query<(Entity, &Agent), (With<PendingReasoning>, With<Applicator>)>,
-    agent_owners: Query<&ChildOf>,
-    sessions: Query<(&ExportState, &TurnFlow, &StorySession)>,
-    debug_observer: Res<RuntimeDebugObserverResource>,
+    pending_agents: Query<(Entity, &Agent), With<PendingReasoning>>,
+    agents: Query<(&Agent, &ChildOf)>,
+    sessions: Query<(&SessionEventSink, &TurnFlow)>,
 ) {
-    for (entity, agent) in pending_simulators.iter() {
-        agent_tasks.spawn_task(entity, TaskKind::Simulation, &agent.context);
-        commands.entity(entity).remove::<PendingReasoning>();
-    }
-
-    for (entity, agent) in pending_applicators.iter() {
-        let task_kind = match agent.role {
-            AgentRole::Narrator => TaskKind::Narration,
-            AgentRole::Protagonist => TaskKind::ProtagonistAction,
-            AgentRole::Simulator => {
-                commands.entity(entity).remove::<PendingReasoning>();
-                continue;
-            }
-        };
-        agent_tasks.spawn_task(entity, task_kind, &agent.context);
+    for (entity, agent) in pending_agents.iter() {
+        agent_tasks.spawn_task(entity, agent.output_type, &agent.context);
         commands.entity(entity).remove::<PendingReasoning>();
     }
 
     agent_tasks.poll_all_tasks();
     for (agent_entity, update) in agent_tasks.take_updates() {
-        let Ok(owner) = agent_owners.get(agent_entity) else {
+        let Ok((agent, owner)) = agents.get(agent_entity) else {
             continue;
         };
-        let Ok((export_state, flow, session)) = sessions.get(owner.parent()) else {
+        let Ok((event_sink, flow)) = sessions.get(owner.parent()) else {
             continue;
         };
         let round = flow.active_turn_id.max(1);
-        if let Some(observer) = &debug_observer.observer {
-            observer.on_task_update(&session.id, round, &update);
+        if let Some(chunk) = update.chunk {
+            event_sink.publish_task_update(round, agent.name.clone(), chunk);
         }
-        export_state.publish_task_update(round, update);
+        if update.status == crate::resources::agent_task_manager::TaskStatus::Done
+            && let Some(output) = update.output
+        {
+            event_sink.publish_task_completed(round, agent.name.clone(), output);
+        }
+        if update.status == crate::resources::agent_task_manager::TaskStatus::Error
+            && let Some(error) = update.error
+        {
+            event_sink.publish_flow_turn_error(round, flow.stage, agent.name.clone(), error);
+        }
     }
 }

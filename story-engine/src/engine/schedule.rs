@@ -10,9 +10,7 @@ use crate::systems::{
         player_sys::player_input_consume_system,
         protagonist_sys::{protagonist_apply_system, protagonist_dispatch_system},
     },
-    export_sys::export_system,
     flow::{agent_task_system, cleanup_previous_turn_outcomes_system, flow_progress_system},
-    history_sys::history_sys,
 };
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -56,12 +54,7 @@ pub(crate) fn build_schedule() -> Schedule {
     );
     schedule.add_systems(flow_progress_system.in_set(StoryScheduleSet::Progress));
     schedule.add_systems(
-        (
-            history_sys,
-            export_system,
-            cleanup_previous_turn_outcomes_system,
-            message_update_system,
-        )
+        (cleanup_previous_turn_outcomes_system, message_update_system)
             .chain()
             .in_set(StoryScheduleSet::Finalize),
     );

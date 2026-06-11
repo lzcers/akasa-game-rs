@@ -17,6 +17,7 @@ import {
 import {
   isSessionStreamActive,
 } from './streamRuntime';
+import { loadCompleteSessionRounds } from './roundHistoryRuntime';
 import {
   activateSessionSnapshot,
   beginSessionSwitch,
@@ -58,6 +59,7 @@ export async function loadStoredGameSave(
       compressedArchive: archive,
     });
     activateSessionSnapshot(runtime.set, loaded, runtime.connectSessionStream);
+    await loadCompleteSessionRounds(loaded.sessionId);
     return {
       sessionId: loaded.sessionId,
     };
@@ -98,6 +100,7 @@ export async function restoreExistingGameSession(
       return;
     }
     activateSessionSnapshot(runtime.set, loaded, runtime.connectSessionStream);
+    await loadCompleteSessionRounds(loaded.sessionId);
     restoringSessionId = null;
   } catch (error) {
     if (restoringSessionId !== targetSessionId) {
@@ -139,6 +142,7 @@ export async function cloneSharedGameSession(
       });
 
       activateSessionSnapshot(runtime.set, cloned, runtime.connectSessionStream);
+      await loadCompleteSessionRounds(cloned.sessionId);
       return {
         sessionId: cloned.sessionId,
         isEnding: cloned.worldState.isEnding,

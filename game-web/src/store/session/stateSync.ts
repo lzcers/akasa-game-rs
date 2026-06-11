@@ -16,7 +16,18 @@ export function applySessionSnapshotToStores(
   options: ApplySessionSnapshotOptions = {},
 ): RuntimeStateView {
   const stateView = stateViewFromSession(session);
-  useGameInternalStore.setState(internalStateFromSession(session));
+  const nextInternalState = internalStateFromSession(session);
+  const currentInternalState = useGameInternalStore.getState();
+  const shouldMergeRounds = currentInternalState.sessionId === session.sessionId;
+  useGameInternalStore.setState({
+    ...nextInternalState,
+    roundStates: shouldMergeRounds
+      ? {
+          ...currentInternalState.roundStates,
+          ...nextInternalState.roundStates,
+        }
+      : nextInternalState.roundStates,
+  });
 
   if (options.resetValues) {
     useGameValueStore.getState().resetValues(effectiveDisplayRound(session));

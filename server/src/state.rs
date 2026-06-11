@@ -5,14 +5,19 @@ use std::{
     time::Duration,
 };
 
+use agent::agent::Context;
 use chrono::{DateTime, Utc};
 use story_engine::{
-    debug::LocalDebugObserver,
-    engine::{AkashicEngine, AkashicSessionEngine, RuntimeDebugObserver, Session},
+    components::{
+        agent::AgentOutputType,
+        outcome::{PendingProtagonistChoice, PlayerActionType, ProtagonistOptions},
+        world_snapshot::WorldSnapshot,
+    },
+    engine::{AkashicEngine, AkashicSessionEngine},
     profile::DEFAULT_KEY_STORY_BEATS,
     resources::{
-        agent_task::TaskUpdate, export::TaskEvent, protagonist_action::PlayerActionType,
-        turn_state::TurnPhase,
+        agent_task_manager::TaskStatus,
+        session_events::{AgentContextUpdate, EngineEvent, FlowTurnUpdate, SessionCreated},
     },
 };
 use tokio::sync::{Mutex, broadcast};
@@ -25,12 +30,16 @@ use crate::{
         ControlGameSessionData, ControlGameSessionRequest, CreateGameSessionData,
         CreateGameSessionRequest, GameSessionControlCommand, GameSessionWorldStateData,
         GeneratedProfilesData, RoundHistoryData, SaveExportData, SessionActionInput,
-        WorldStateData,
+        SessionRoundsPageData, TaskKind, WorldStateData,
     },
     api::site::{AnalyticsBatchRequest, SubmitFeedbackData, ValidatedFeedbackRequest},
+    database::AppDatabase,
     email::{FeedbackEmail, FeedbackMailer},
     error::AppError,
-    session_archive::{SessionArchiveRepository, StoredSessionArchive},
+    session_archive::{
+        SessionArchiveRepository, StoredPlayerInput, StoredSessionArchive, StoredSessionMetadata,
+    },
+    session_history::{RoundHistoryEntry, SessionHistoryLog, TurnPhase},
 };
 
 #[derive(Clone)]
@@ -94,7 +103,11 @@ pub struct LiveSessionLease {
 pub struct LiveTaskUpdate {
     pub event_id: u64,
     pub round: u64,
-    pub update: TaskUpdate,
+    pub entity: String,
+    pub kind: TaskKind,
+    pub status: TaskStatus,
+    pub chunk: Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Default)]
@@ -110,6 +123,7 @@ const DEFAULT_SESSION_IDLE_TTL_SECS: u64 = 30 * 60;
 const DEFAULT_SESSION_ENDED_TTL_SECS: u64 = 5 * 60;
 const DEFAULT_MAX_HOT_SESSIONS: usize = 200;
 const DEFAULT_SESSION_REAPER_INTERVAL_SECS: u64 = 60;
+const MAX_SESSION_ROUNDS_PAGE_LIMIT: usize = 100;
 
 #[derive(Clone, Debug)]
 struct SessionLifecycleConfig {
@@ -156,37 +170,23 @@ impl SessionLifecycleConfig {
 }
 
 impl AppState {
-    pub fn new(
-        analytics_events_path: impl Into<PathBuf>,
-        session_archives_path: impl Into<PathBuf>,
-        local_debug: bool,
-    ) -> Self {
-        let state = Self::with_lifecycle_config(
-            analytics_events_path,
-            session_archives_path,
-            local_debug,
-            SessionLifecycleConfig::default(),
-            true,
-        );
-        state
+    pub fn new(database_path: impl Into<PathBuf>) -> Self {
+        Self::with_lifecycle_config(database_path, SessionLifecycleConfig::default(), true)
     }
 
     fn with_lifecycle_config(
-        analytics_events_path: impl Into<PathBuf>,
-        session_archives_path: impl Into<PathBuf>,
-        local_debug: bool,
+        database_path: impl Into<PathBuf>,
         lifecycle_config: SessionLifecycleConfig,
         spawn_reaper: bool,
     ) -> Self {
+        let db = AppDatabase::new(database_path);
         let state = Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             restore_lock: Arc::new(Mutex::new(())),
-            analytics_repo: AnalyticsRepository::new(analytics_events_path),
-            session_archive_repo: SessionArchiveRepository::new(session_archives_path),
+            analytics_repo: AnalyticsRepository::new(db.clone()),
+            session_archive_repo: SessionArchiveRepository::new(db),
             feedback_mailer: FeedbackMailer::from_env(),
-            engine: AkashicEngine::new_with_debug_observer(local_debug.then(|| {
-                Arc::new(LocalDebugObserver::for_workspace_root()) as Arc<dyn RuntimeDebugObserver>
-            })),
+            engine: AkashicEngine::new(),
             lifecycle_config,
         };
         if spawn_reaper {
@@ -273,10 +273,26 @@ impl AppState {
             )
             .await
             .map_err(AppError::internal)?;
+        let key_story_beats = if key_story_beats.is_empty() {
+            DEFAULT_KEY_STORY_BEATS
+        } else {
+            key_story_beats
+        };
+        self.session_archive_repo
+            .save_session_created(&SessionCreated {
+                session_id: session_id.clone(),
+                world_profile: world_profile.to_string(),
+                protagonist_profile: protagonist_profile.to_string(),
+                key_story_beats: key_story_beats.to_string(),
+            })
+            .await
+            .map_err(|err| AppError::internal(format!("写入会话元数据失败：{err:#}")))?;
         let session = build_session_record(
             session_id.clone(),
             engine,
             self.lifecycle_config.live_event_history_capacity,
+            self.session_archive_repo.clone(),
+            TurnPhase::Idle,
         );
 
         self.sessions
@@ -318,40 +334,59 @@ impl AppState {
         archive::validate_archive_payload(&payload).map_err(AppError::bad_request)?;
         let session_id = payload.session_id.clone();
         let payload_for_storage = payload.clone();
+        self.persist_payload_database_state(&payload_for_storage)
+            .await?;
         let engine = archive::load_archive_payload(&self.engine, payload)
             .await
             .map_err(AppError::bad_request)?;
-        engine
-            .wait_until_ready()
-            .await
-            .map_err(AppError::internal)?;
         let session = build_session_record(
             session_id.clone(),
             engine,
             self.lifecycle_config.live_event_history_capacity,
+            self.session_archive_repo.clone(),
+            payload_for_storage.turn_state.phase,
         );
-        let snapshot = hot_session(&session)
-            .expect("newly built session must be hot")
-            .engine
-            .get_game_session();
-        let state_view = world_state_from_session(&session.session_id, &snapshot);
 
         self.sessions.lock().await.insert(session_id, session);
         self.persist_archive_payload(&payload_for_storage).await?;
         self.reap_idle_sessions_once().await?;
 
-        Ok(state_view)
+        self.get_game_session_world(&payload_for_storage.session_id)
+            .await
     }
 
     pub async fn get_game_session_world(
         &self,
         session_id: &str,
     ) -> Result<GameSessionWorldStateData, AppError> {
-        let hot = self.ensure_hot_session(session_id, false).await?;
-        let snapshot = hot.engine.get_game_session();
-        self.update_session_phase(session_id, snapshot.phase).await;
+        self.touch_session(session_id).await?;
+        self.game_session_world_from_database(session_id).await
+    }
 
-        Ok(world_state_from_session(&hot.session_id, &snapshot))
+    pub async fn get_game_session_rounds(
+        &self,
+        session_id: &str,
+        before_round: Option<u64>,
+        limit: usize,
+    ) -> Result<SessionRoundsPageData, AppError> {
+        let limit = limit.clamp(1, MAX_SESSION_ROUNDS_PAGE_LIMIT);
+        self.touch_session(session_id).await?;
+        let page = self
+            .session_archive_repo
+            .load_round_page(session_id, before_round, limit)
+            .await
+            .map_err(|err| AppError::internal(format!("读取会话历史分页失败：{err:#}")))?;
+
+        Ok(SessionRoundsPageData {
+            session_id: session_id.to_string(),
+            rounds: page
+                .rounds
+                .into_iter()
+                .map(RoundHistoryData::from)
+                .collect(),
+            next_before_round: page.next_before_round,
+            has_more: page.has_more,
+        })
     }
 
     pub async fn clone_game_session(
@@ -370,30 +405,26 @@ impl AppState {
         payload.session_id = clone_session_id.clone();
         payload.title = format!("{}（分支）", payload.title.trim());
         let payload_for_storage = payload.clone();
+        self.persist_payload_database_state(&payload_for_storage)
+            .await?;
 
         let engine = archive::load_archive_payload(&self.engine, payload)
             .await
             .map_err(AppError::bad_request)?;
-        engine
-            .wait_until_ready()
-            .await
-            .map_err(AppError::internal)?;
         let session = build_session_record(
             clone_session_id.clone(),
             engine,
             self.lifecycle_config.live_event_history_capacity,
+            self.session_archive_repo.clone(),
+            payload_for_storage.turn_state.phase,
         );
-        let snapshot = hot_session(&session)
-            .expect("newly built session must be hot")
-            .engine
-            .get_game_session();
-        let state_view = world_state_from_session(&session.session_id, &snapshot);
 
         self.sessions.lock().await.insert(clone_session_id, session);
         self.persist_archive_payload(&payload_for_storage).await?;
         self.reap_idle_sessions_once().await?;
 
-        Ok(state_view)
+        self.get_game_session_world(&payload_for_storage.session_id)
+            .await
     }
 
     pub async fn get_game_session_narrations(
@@ -412,7 +443,10 @@ impl AppState {
         let hot = self.ensure_hot_session(session_id, false).await?;
         let result = match (request.control, request.action) {
             (Some(control), None) => apply_control(&hot.engine, control),
-            (None, Some(action)) => apply_action(&hot.engine, action),
+            (None, Some(action)) => {
+                self.apply_action_from_database(&hot.engine, session_id, action)
+                    .await
+            }
             (None, None) => Err(AppError::bad_request(
                 "请求体至少需要提供 `control` 或 `action` 之一。",
             )),
@@ -420,8 +454,6 @@ impl AppState {
                 "同一次请求只能执行一种操作：控制命令或玩家行动。",
             )),
         }?;
-        let snapshot = hot.engine.get_game_session();
-        self.update_session_phase(session_id, snapshot.phase).await;
         Ok(result)
     }
 
@@ -449,6 +481,57 @@ impl AppState {
                 sessions: Arc::clone(&self.sessions),
             },
         })
+    }
+
+    async fn apply_action_from_database(
+        &self,
+        engine: &AkashicSessionEngine,
+        session_id: &str,
+        action: SessionActionInput,
+    ) -> Result<ControlGameSessionData, AppError> {
+        let selected_action = action.action.trim();
+        if selected_action.is_empty() {
+            return Err(AppError::bad_request("提交行动不能为空。"));
+        }
+
+        if action.r#type == PlayerActionType::SelectedOption {
+            let choices = self.latest_choices_for_session(session_id).await?;
+            let is_valid_option = choices
+                .iter()
+                .any(|choice| choice.option.action == selected_action);
+            if !is_valid_option {
+                return Err(AppError::bad_request("当前所选行动不在候选列表中。"));
+            }
+        }
+
+        engine
+            .submit_player_action(SessionActionInput {
+                r#type: action.r#type,
+                action: selected_action.to_string(),
+            })
+            .map_err(AppError::bad_request)?;
+        engine.start_next_turn().map_err(AppError::bad_request)?;
+
+        Ok(ControlGameSessionData {
+            action: "submit_action".to_string(),
+        })
+    }
+
+    async fn latest_choices_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<PendingProtagonistChoice>, AppError> {
+        let rounds = self
+            .session_archive_repo
+            .load_rounds(session_id)
+            .await
+            .map_err(|err| AppError::internal(format!("读取会话选项失败：{err:#}")))?;
+        Ok(rounds
+            .iter()
+            .rev()
+            .find(|round| !round.choices.is_empty())
+            .map(|round| round.choices.clone())
+            .unwrap_or_default())
     }
 
     async fn ensure_hot_session(
@@ -509,22 +592,24 @@ impl AppState {
             let payload = archive::decompress_archive_payload(&stored.compressed_archive)
                 .map_err(AppError::internal)?;
             archive::validate_archive_payload(&payload).map_err(AppError::internal)?;
+            let restored_phase = payload.turn_state.phase;
             let engine = archive::load_archive_payload(&self.engine, payload)
                 .await
                 .map_err(AppError::internal)?;
-            engine
-                .wait_until_ready()
-                .await
-                .map_err(AppError::internal)?;
-            let snapshot = engine.get_game_session();
-            let hot = build_hot_session(engine, self.lifecycle_config.live_event_history_capacity);
+            let hot = build_hot_session(
+                session_id,
+                engine,
+                self.lifecycle_config.live_event_history_capacity,
+                self.session_archive_repo.clone(),
+                restored_phase,
+            );
 
             let mut sessions = self.sessions.lock().await;
             let record = sessions
                 .get_mut(session_id)
                 .ok_or_else(|| AppError::not_found(format!("未找到会话 `{session_id}`")))?;
             record.touch(Utc::now());
-            record.last_phase = snapshot.phase;
+            record.last_phase = restored_phase;
             record.slot = SessionSlot::Hot(hot);
             if register_stream {
                 record.active_streams += 1;
@@ -573,60 +658,24 @@ impl AppState {
         session_id: &str,
         title: Option<&str>,
     ) -> Result<archive::SessionArchivePayload, AppError> {
-        loop {
-            let hot_engine_or_archive_ref = {
-                let mut sessions = self.sessions.lock().await;
-                let record = sessions
-                    .get_mut(session_id)
-                    .ok_or_else(|| AppError::not_found(format!("未找到会话 `{session_id}`")))?;
-                record.touch(Utc::now());
-                match &record.slot {
-                    SessionSlot::Hot(hot) => Ok(hot.engine.clone()),
-                    SessionSlot::Cooling { .. } => Err(None),
-                    SessionSlot::Cold(cold) => Err(Some(cold.archive_ref.clone())),
-                }
-            };
-
-            match hot_engine_or_archive_ref {
-                Ok(engine) => {
-                    return archive::gen_archive_payload(session_id, title, &engine)
-                        .await
-                        .map_err(AppError::bad_request);
-                }
-                Err(None) => {
-                    tokio::time::sleep(Duration::from_millis(25)).await;
-                }
-                Err(Some(archive_ref)) => {
-                    let stored = self
-                        .session_archive_repo
-                        .load_archive(&archive_ref)
-                        .await
-                        .map_err(|err| {
-                            AppError::internal(format!(
-                                "读取冷会话 `{session_id}` 存档失败：{err:#}"
-                            ))
-                        })?
-                        .ok_or_else(|| {
-                            AppError::not_found(format!("未找到会话 `{session_id}` 的冷存档"))
-                        })?;
-                    let mut payload =
-                        archive::decompress_archive_payload(&stored.compressed_archive)
-                            .map_err(AppError::internal)?;
-                    if let Some(title) = title.map(str::trim).filter(|title| !title.is_empty()) {
-                        payload.title = title.to_string();
-                    }
-                    return Ok(payload);
-                }
-            }
-        }
+        self.touch_session(session_id).await?;
+        let mut payload = self
+            .archive_payload_from_database(session_id, title)
+            .await?;
+        stabilize_archive_payload_from_history(&mut payload, title)
+            .map_err(AppError::bad_request)?;
+        Ok(payload)
     }
 
     async fn persist_archive_payload(
         &self,
         payload: &archive::SessionArchivePayload,
     ) -> Result<(), AppError> {
+        let mut payload = payload.clone();
+        self.persist_payload_database_state(&payload).await?;
+        self.hydrate_payload_history(&mut payload).await?;
         let compressed_archive =
-            archive::compress_archive_payload(payload).map_err(AppError::internal)?;
+            archive::compress_archive_payload(&payload).map_err(AppError::internal)?;
         let now = now_string();
         self.session_archive_repo
             .save_archive(StoredSessionArchive {
@@ -642,11 +691,161 @@ impl AppState {
             .map_err(|err| AppError::internal(format!("写入会话存档失败：{err:#}")))
     }
 
-    async fn update_session_phase(&self, session_id: &str, phase: TurnPhase) {
-        let mut sessions = self.sessions.lock().await;
-        if let Some(record) = sessions.get_mut(session_id) {
-            record.last_phase = phase;
+    async fn persist_payload_database_state(
+        &self,
+        payload: &archive::SessionArchivePayload,
+    ) -> Result<(), AppError> {
+        self.session_archive_repo
+            .save_session_metadata(&StoredSessionMetadata {
+                session_id: payload.session_id.clone(),
+                world_profile: payload.world_profile.clone(),
+                protagonist_profile: payload.protagonist_profile.clone(),
+                key_story_beats: payload.key_story_beats.clone(),
+                phase: payload.turn_state.phase,
+                turn_index: payload.turn_state.turn_index,
+                active_turn_id: payload.turn_state.active_turn_id,
+            })
+            .await
+            .map_err(|err| AppError::internal(format!("写入会话元数据失败：{err:#}")))?;
+        self.persist_rounds(&payload.session_id, &payload.history_log.rounds)
+            .await?;
+        let round = payload
+            .turn_state
+            .active_turn_id
+            .max(payload.turn_state.turn_index);
+        self.session_archive_repo
+            .save_agent_context(&AgentContextUpdate {
+                session_id: payload.session_id.clone(),
+                round,
+                agent_name: "FateWeaver".to_string(),
+                context: payload.fate_weaver.clone(),
+            })
+            .await
+            .map_err(|err| AppError::internal(format!("写入 FateWeaver context 失败：{err:#}")))?;
+        self.session_archive_repo
+            .save_agent_context(&AgentContextUpdate {
+                session_id: payload.session_id.clone(),
+                round,
+                agent_name: "UpperNarrator".to_string(),
+                context: payload.upper_narrator.clone(),
+            })
+            .await
+            .map_err(|err| {
+                AppError::internal(format!("写入 UpperNarrator context 失败：{err:#}"))
+            })?;
+        self.session_archive_repo
+            .save_agent_context(&AgentContextUpdate {
+                session_id: payload.session_id.clone(),
+                round,
+                agent_name: "Protagonist".to_string(),
+                context: payload.protagonist.clone(),
+            })
+            .await
+            .map_err(|err| AppError::internal(format!("写入 Protagonist context 失败：{err:#}")))?;
+        Ok(())
+    }
+
+    async fn game_session_world_from_database(
+        &self,
+        session_id: &str,
+    ) -> Result<GameSessionWorldStateData, AppError> {
+        let metadata = self.load_session_metadata(session_id).await?;
+        let rounds = self.load_session_rounds(session_id).await?;
+        Ok(world_state_from_database(metadata, &rounds))
+    }
+
+    async fn archive_payload_from_database(
+        &self,
+        session_id: &str,
+        title: Option<&str>,
+    ) -> Result<archive::SessionArchivePayload, AppError> {
+        let metadata = self.load_session_metadata(session_id).await?;
+        let rounds = self.load_session_rounds(session_id).await?;
+        let contexts = self.load_agent_context_map(session_id).await?;
+        Ok(archive_payload_from_database(
+            metadata, rounds, contexts, title,
+        ))
+    }
+
+    async fn load_session_metadata(
+        &self,
+        session_id: &str,
+    ) -> Result<StoredSessionMetadata, AppError> {
+        self.session_archive_repo
+            .load_session_metadata(session_id)
+            .await
+            .map_err(|err| AppError::internal(format!("读取会话元数据失败：{err:#}")))?
+            .ok_or_else(|| AppError::not_found(format!("未找到会话 `{session_id}`")))
+    }
+
+    async fn load_session_rounds(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<RoundHistoryEntry>, AppError> {
+        let rounds = self
+            .session_archive_repo
+            .load_rounds(session_id)
+            .await
+            .map_err(|err| AppError::internal(format!("读取完整会话历史失败：{err:#}")))?;
+        let player_inputs = self
+            .session_archive_repo
+            .load_player_inputs(session_id)
+            .await
+            .map_err(|err| AppError::internal(format!("读取玩家输入历史失败：{err:#}")))?;
+        Ok(rounds_with_player_inputs(rounds, player_inputs))
+    }
+
+    async fn load_agent_context_map(
+        &self,
+        session_id: &str,
+    ) -> Result<HashMap<String, Context>, AppError> {
+        let contexts = self
+            .session_archive_repo
+            .load_agent_contexts(session_id)
+            .await
+            .map_err(|err| AppError::internal(format!("读取 Agent Context 失败：{err:#}")))?;
+        Ok(contexts
+            .into_iter()
+            .map(|context| (context.agent_name, context.context))
+            .collect())
+    }
+
+    async fn touch_session(&self, session_id: &str) -> Result<(), AppError> {
+        {
+            let mut sessions = self.sessions.lock().await;
+            if let Some(record) = sessions.get_mut(session_id) {
+                record.touch(Utc::now());
+                return Ok(());
+            }
         }
+        self.load_session_metadata(session_id).await?;
+        Ok(())
+    }
+
+    async fn persist_rounds(
+        &self,
+        session_id: &str,
+        rounds: &[RoundHistoryEntry],
+    ) -> Result<(), AppError> {
+        self.session_archive_repo
+            .save_rounds(session_id, rounds)
+            .await
+            .map_err(|err| AppError::internal(format!("写入会话轮次历史失败：{err:#}")))
+    }
+
+    async fn hydrate_payload_history(
+        &self,
+        payload: &mut archive::SessionArchivePayload,
+    ) -> Result<(), AppError> {
+        let rounds = self
+            .session_archive_repo
+            .load_rounds(&payload.session_id)
+            .await
+            .map_err(|err| AppError::internal(format!("读取完整会话历史失败：{err:#}")))?;
+        if !rounds.is_empty() {
+            payload.history_log = SessionHistoryLog { rounds };
+        }
+        Ok(())
     }
 
     pub async fn reap_idle_sessions_once(&self) -> Result<usize, AppError> {
@@ -725,11 +924,11 @@ impl AppState {
             }
         };
 
-        let payload = match archive::gen_archive_payload(session_id, None, &hot.engine).await {
+        let payload = match self.archive_payload_for_session(session_id, None).await {
             Ok(payload) => payload,
             Err(error) => {
                 self.restore_failed_cooling_session(session_id, hot).await;
-                return Err(AppError::bad_request(error));
+                return Err(error);
             }
         };
         if archive::validate_archive_payload(&payload).is_err() {
@@ -792,12 +991,24 @@ impl LiveEventLog {
         }
     }
 
-    fn push(&mut self, round: u64, update: TaskUpdate) -> LiveTaskUpdate {
+    fn push_task_update(
+        &mut self,
+        round: u64,
+        entity: impl Into<String>,
+        status: TaskStatus,
+        chunk: Option<String>,
+        error: Option<String>,
+    ) -> LiveTaskUpdate {
+        let entity = entity.into();
         self.next_event_id += 1;
         let event = LiveTaskUpdate {
             event_id: self.next_event_id,
             round,
-            update,
+            kind: task_kind_for_entity(&entity),
+            entity,
+            status,
+            chunk,
+            error,
         };
         self.history.push_back(event.clone());
         while self.history.len() > self.capacity {
@@ -831,40 +1042,211 @@ fn build_session_record(
     session_id: String,
     engine: AkashicSessionEngine,
     live_event_history_capacity: usize,
+    session_archive_repo: SessionArchiveRepository,
+    initial_phase: TurnPhase,
 ) -> SessionRecord {
-    let snapshot = engine.get_game_session();
     let now = Utc::now();
-    let hot = build_hot_session(engine, live_event_history_capacity);
+    let hot = build_hot_session(
+        &session_id,
+        engine,
+        live_event_history_capacity,
+        session_archive_repo,
+        initial_phase,
+    );
 
     SessionRecord {
         session_id,
         _created_at: now,
         last_accessed_at: now,
         active_streams: 0,
-        last_phase: snapshot.phase,
+        last_phase: initial_phase,
         slot: SessionSlot::Hot(hot),
     }
 }
 
 fn build_hot_session(
+    session_id: &str,
     engine: AkashicSessionEngine,
     live_event_history_capacity: usize,
+    session_archive_repo: SessionArchiveRepository,
+    _initial_phase: TurnPhase,
 ) -> HotSession {
-    let mut event_rx = engine.subscribe_events();
+    let mut event_rx = engine.subscribe_session_events();
     let (events_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let live_events = Arc::new(Mutex::new(LiveEventLog::with_capacity(
         live_event_history_capacity,
     )));
     let events_tx_for_task = events_tx.clone();
     let live_events_for_task = Arc::clone(&live_events);
+    let session_id_for_event_task = session_id.to_string();
     tokio::spawn(async move {
-        while let Ok(event) = event_rx.recv().await {
-            let TaskEvent::TaskUpdated { round, update } = event;
-            let event = {
-                let mut live_events = live_events_for_task.lock().await;
-                live_events.push(round, update)
-            };
-            let _ = events_tx_for_task.send(event);
+        loop {
+            match event_rx.recv().await {
+                Ok(EngineEvent::SessionCreated(created)) => {
+                    if let Err(error) = session_archive_repo.save_session_created(&created).await {
+                        tracing::warn!(
+                            "failed to persist created session {}: {:?}",
+                            created.session_id,
+                            error
+                        );
+                    }
+                }
+                Ok(EngineEvent::TaskUpdate(update)) => {
+                    let event = {
+                        let mut live_events = live_events_for_task.lock().await;
+                        live_events.push_task_update(
+                            update.round,
+                            update.entity_name,
+                            TaskStatus::Running,
+                            Some(update.chunk),
+                            None,
+                        )
+                    };
+                    let _ = events_tx_for_task.send(event);
+                }
+                Ok(EngineEvent::TaskCompleted(completed)) => {
+                    let event = {
+                        let mut live_events = live_events_for_task.lock().await;
+                        live_events.push_task_update(
+                            completed.round,
+                            completed.entity_name,
+                            TaskStatus::Done,
+                            None,
+                            None,
+                        )
+                    };
+                    let _ = events_tx_for_task.send(event);
+                }
+                Ok(EngineEvent::PlayerInput(input)) => {
+                    if let Err(error) = session_archive_repo.save_player_input(&input).await {
+                        tracing::warn!(
+                            "failed to persist player input for {} / {}: {:?}",
+                            input.session_id,
+                            input.round,
+                            error
+                        );
+                    }
+                }
+                Ok(EngineEvent::AgentContextUpdate(update)) => {
+                    if let Err(error) = session_archive_repo.save_agent_context(&update).await {
+                        tracing::warn!(
+                            "failed to persist agent context for {} / {}: {:?}",
+                            update.session_id,
+                            update.agent_name,
+                            error
+                        );
+                    }
+                }
+                Ok(EngineEvent::FlowTurnUpdate(update)) => {
+                    let Some(round) = round_history_from_flow_turn_update(&update) else {
+                        continue;
+                    };
+                    if let Err(error) = session_archive_repo
+                        .update_session_turn_state(
+                            &update.session_id,
+                            update.stage,
+                            if update.stage == TurnPhase::TurnCompleted {
+                                update.round
+                            } else {
+                                update.round.saturating_sub(1)
+                            },
+                            update.round,
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            "failed to update session turn state for {}: {:?}",
+                            update.session_id,
+                            error
+                        );
+                    }
+                    if let Err(error) = session_archive_repo
+                        .save_rounds(&update.session_id, std::slice::from_ref(&round))
+                        .await
+                    {
+                        tracing::warn!(
+                            "failed to persist session rounds for {}: {:?}",
+                            session_id_for_event_task,
+                            error
+                        );
+                    }
+                }
+                Ok(EngineEvent::FlowTurnCompleted(completed)) => {
+                    if let Err(error) = session_archive_repo
+                        .record_flow_turn_completed(&completed.session_id, completed.round)
+                        .await
+                    {
+                        tracing::warn!(
+                            "failed to persist completed flow turn for {} / {}: {:?}",
+                            completed.session_id,
+                            completed.round,
+                            error
+                        );
+                    }
+                    tracing::debug!(
+                        session_id = %completed.session_id,
+                        round = completed.round,
+                        "flow turn completed"
+                    );
+                }
+                Ok(EngineEvent::FlowTurnEnd(end)) => {
+                    if let Err(error) = session_archive_repo
+                        .record_flow_turn_end(&end.session_id, end.round)
+                        .await
+                    {
+                        tracing::warn!(
+                            "failed to persist ended flow turn for {} / {}: {:?}",
+                            end.session_id,
+                            end.round,
+                            error
+                        );
+                    }
+                    tracing::debug!(
+                        session_id = %end.session_id,
+                        round = end.round,
+                        "flow turn ended"
+                    );
+                }
+                Ok(EngineEvent::FlowTurnError(error)) => {
+                    if let Err(persist_error) =
+                        session_archive_repo.record_flow_turn_error(&error).await
+                    {
+                        tracing::warn!(
+                            "failed to persist flow turn error for {} / {}: {:?}",
+                            error.session_id,
+                            error.round,
+                            persist_error
+                        );
+                    }
+                    tracing::warn!(
+                        session_id = %error.session_id,
+                        round = error.round,
+                        stage = ?error.stage,
+                        entity_name = %error.entity_name,
+                        msg = %error.msg,
+                        "flow turn error"
+                    );
+                    let event = {
+                        let mut live_events = live_events_for_task.lock().await;
+                        live_events.push_task_update(
+                            error.round,
+                            error.entity_name,
+                            TaskStatus::Error,
+                            None,
+                            Some(error.msg),
+                        )
+                    };
+                    let _ = events_tx_for_task.send(event);
+                }
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!(
+                        "session event pipeline for {} lagged by {} events",
+                        session_id_for_event_task,
+                        skipped
+                    );
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
         }
     });
 
@@ -872,13 +1254,6 @@ fn build_hot_session(
         engine,
         events_tx,
         live_events,
-    }
-}
-
-fn hot_session(record: &SessionRecord) -> Option<&HotSession> {
-    match &record.slot {
-        SessionSlot::Hot(hot) => Some(hot),
-        SessionSlot::Cooling { .. } | SessionSlot::Cold(_) => None,
     }
 }
 
@@ -896,119 +1271,307 @@ fn apply_control(
     }
 }
 
-fn apply_action(
-    engine: &AkashicSessionEngine,
-    action: SessionActionInput,
-) -> Result<ControlGameSessionData, AppError> {
-    let selected_action = action.action.trim();
-    if selected_action.is_empty() {
-        return Err(AppError::bad_request("提交行动不能为空。"));
-    }
+fn world_state_from_database(
+    metadata: StoredSessionMetadata,
+    rounds: &[RoundHistoryEntry],
+) -> GameSessionWorldStateData {
+    let world_snapshot = latest_world_snapshot(rounds).unwrap_or_default();
+    let latest_narration = latest_narration_from_rounds(rounds, &world_snapshot);
+    let current_outcome = latest_committed_action(rounds).unwrap_or_else(|| {
+        if metadata.phase == TurnPhase::Idle {
+            "start".to_string()
+        } else {
+            "尚未做出选择".to_string()
+        }
+    });
+    let choices = latest_choices_from_rounds(rounds);
 
-    if action.r#type == PlayerActionType::SelectedOption {
-        let snapshot = engine.get_game_session();
-        let is_valid_option = snapshot
-            .choices
-            .iter()
-            .any(|choice| choice.option.action == selected_action);
-        if !is_valid_option {
-            return Err(AppError::bad_request("当前所选行动不在候选列表中。"));
+    GameSessionWorldStateData {
+        session_id: metadata.session_id,
+        generated_profiles: GeneratedProfilesData {
+            world: metadata.world_profile,
+            protagonist: metadata.protagonist_profile,
+            key_story_beats: metadata.key_story_beats,
+        },
+        status: status_from_phase(metadata.phase).to_string(),
+        phase: metadata.phase,
+        turn_index: visible_turn_index_from_parts(
+            metadata.phase,
+            metadata.turn_index,
+            metadata.active_turn_id,
+        ),
+        active_turn_id: metadata.active_turn_id,
+        world_state: WorldStateData::from(world_snapshot),
+        current_task: None,
+        tasks: vec![],
+        latest_narration,
+        current_outcome,
+        choices,
+    }
+}
+
+fn archive_payload_from_database(
+    metadata: StoredSessionMetadata,
+    rounds: Vec<RoundHistoryEntry>,
+    contexts: HashMap<String, Context>,
+    requested_title: Option<&str>,
+) -> archive::SessionArchivePayload {
+    let world_snapshot = latest_world_snapshot(&rounds).unwrap_or_default();
+    let committed_action = latest_committed_action(&rounds).unwrap_or_else(|| "start".to_string());
+    let choices = latest_choices_from_rounds(&rounds);
+    let round_for_title = metadata.active_turn_id.max(metadata.turn_index).max(1);
+    let title = archive_title_for_round(
+        requested_title,
+        "",
+        &world_snapshot.scene_title,
+        round_for_title,
+    );
+
+    archive::SessionArchivePayload {
+        session_id: metadata.session_id,
+        title,
+        world_profile: metadata.world_profile,
+        protagonist_profile: metadata.protagonist_profile,
+        key_story_beats: metadata.key_story_beats,
+        turn_state: archive::TurnStateArchive {
+            phase: metadata.phase,
+            turn_index: metadata.turn_index,
+            active_turn_id: metadata.active_turn_id,
+        },
+        fate_weaver: contexts.get("FateWeaver").cloned().unwrap_or_default(),
+        upper_narrator: contexts.get("UpperNarrator").cloned().unwrap_or_default(),
+        protagonist: contexts.get("Protagonist").cloned().unwrap_or_default(),
+        world_snapshot,
+        protagonist_decision: archive::ProtagonistDecisionArchive {
+            committed_action,
+            choices,
+        },
+        history_log: SessionHistoryLog { rounds },
+    }
+}
+
+fn latest_world_snapshot(rounds: &[RoundHistoryEntry]) -> Option<WorldSnapshot> {
+    rounds
+        .iter()
+        .rev()
+        .find_map(|round| round.world_snapshot.clone())
+}
+
+fn latest_narration_from_rounds(
+    rounds: &[RoundHistoryEntry],
+    world_snapshot: &WorldSnapshot,
+) -> String {
+    rounds
+        .iter()
+        .rev()
+        .filter_map(|round| round.narration_text.as_deref())
+        .map(str::trim)
+        .find(|text| !text.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| world_snapshot.description.clone())
+}
+
+fn latest_choices_from_rounds(rounds: &[RoundHistoryEntry]) -> Vec<PendingProtagonistChoice> {
+    rounds
+        .iter()
+        .rev()
+        .find(|round| !round.choices.is_empty())
+        .map(|round| round.choices.clone())
+        .unwrap_or_default()
+}
+
+fn latest_committed_action(rounds: &[RoundHistoryEntry]) -> Option<String> {
+    rounds
+        .iter()
+        .rev()
+        .filter_map(|round| round.committed_action.as_deref())
+        .map(str::trim)
+        .find(|action| !action.is_empty())
+        .map(str::to_string)
+}
+
+fn rounds_with_player_inputs(
+    mut rounds: Vec<RoundHistoryEntry>,
+    player_inputs: Vec<StoredPlayerInput>,
+) -> Vec<RoundHistoryEntry> {
+    for input in player_inputs {
+        let action = input.action.trim();
+        if action.is_empty() {
+            continue;
+        }
+
+        let action = match input.action_type {
+            PlayerActionType::SelectedOption | PlayerActionType::FreeText => action.to_string(),
+        };
+        if let Some(round) = rounds.iter_mut().find(|round| round.round == input.round) {
+            round.committed_action = Some(action);
+        } else {
+            rounds.push(RoundHistoryEntry {
+                round: input.round,
+                committed_action: Some(action),
+                ..RoundHistoryEntry::default()
+            });
         }
     }
+    rounds.sort_by_key(|round| round.round);
+    rounds
+}
 
-    engine
-        .submit_player_action(SessionActionInput {
-            r#type: action.r#type,
-            action: selected_action.to_string(),
+fn round_history_from_flow_turn_update(update: &FlowTurnUpdate) -> Option<RoundHistoryEntry> {
+    let mut entry = RoundHistoryEntry {
+        round: update.round,
+        ..RoundHistoryEntry::default()
+    };
+
+    match (update.stage, update.output_type) {
+        (TurnPhase::Simulation, AgentOutputType::Json) => {
+            let snapshot = serde_json::from_str::<WorldSnapshot>(&update.content).ok()?;
+            entry.world_snapshot = Some(snapshot);
+        }
+        (TurnPhase::Application, AgentOutputType::Text) => {
+            entry.narration_text = Some(update.content.clone());
+        }
+        (TurnPhase::Application, AgentOutputType::Json) => {
+            let options = serde_json::from_str::<ProtagonistOptions>(&update.content).ok()?;
+            entry.choices = pending_choices_from_options(options);
+        }
+        _ => return None,
+    }
+
+    Some(entry)
+}
+
+fn pending_choices_from_options(options: ProtagonistOptions) -> Vec<PendingProtagonistChoice> {
+    options
+        .options
+        .into_iter()
+        .enumerate()
+        .map(|(index, option)| PendingProtagonistChoice {
+            id: format!("choice-{}", index + 1),
+            option,
         })
-        .map_err(AppError::bad_request)?;
-    engine.start_next_turn().map_err(AppError::bad_request)?;
-
-    Ok(ControlGameSessionData {
-        action: "submit_action".to_string(),
-    })
+        .collect()
 }
 
-fn world_state_from_session(session_id: &str, snapshot: &Session) -> GameSessionWorldStateData {
-    GameSessionWorldStateData {
-        session_id: session_id.to_string(),
-        generated_profiles: GeneratedProfilesData {
-            world: snapshot.world_profile.clone(),
-            protagonist: snapshot.protagonist_profile.clone(),
-            key_story_beats: snapshot.key_story_beats.clone(),
-        },
-        status: status_from_phase(snapshot.phase).to_string(),
-        phase: snapshot.phase,
-        turn_index: visible_turn_index(snapshot),
-        active_turn_id: snapshot.active_turn_id,
-        world_state: WorldStateData::from(snapshot.world_snapshot.clone()),
-        history: snapshot
-            .history
-            .clone()
-            .into_iter()
-            .map(RoundHistoryData::from)
-            .collect(),
-        current_task: snapshot.current_task.clone(),
-        tasks: snapshot.tasks.clone(),
-        latest_narration: latest_narration(snapshot),
-        current_protagonist_action: current_protagonist_action(snapshot),
-        choices: snapshot.choices.clone(),
+fn task_kind_for_entity(entity: &str) -> TaskKind {
+    match entity {
+        "UpperNarrator" => TaskKind::Narration,
+        "Protagonist" | "Player" => TaskKind::ProtagonistAction,
+        _ => TaskKind::Simulation,
     }
 }
 
-fn latest_narration(snapshot: &Session) -> String {
-    if snapshot.latest_narration.trim().is_empty() {
-        snapshot.world_snapshot.description.clone()
-    } else {
-        snapshot.latest_narration.clone()
+fn stabilize_archive_payload_from_history(
+    payload: &mut archive::SessionArchivePayload,
+    requested_title: Option<&str>,
+) -> Result<(), String> {
+    if is_archive_stable_phase(payload.turn_state.phase) {
+        return Ok(());
     }
-}
 
-fn current_protagonist_action(snapshot: &Session) -> String {
-    if snapshot.current_protagonist_action.trim().is_empty() {
-        "尚未做出选择".to_string()
-    } else {
-        snapshot.current_protagonist_action.clone()
-    }
-}
-
-fn visible_turn_index(snapshot: &Session) -> u64 {
-    if snapshot.phase == TurnPhase::TurnCompleted {
-        snapshot.turn_index.max(1)
-    } else {
-        snapshot.active_turn_id.max(snapshot.turn_index + 1)
-    }
-}
-
-#[cfg(test)]
-fn collect_story_narrations(snapshot: &Session) -> Vec<String> {
-    let mut narrations: Vec<String> = snapshot
-        .history
+    let completed_round = payload
+        .history_log
+        .rounds
         .iter()
-        .filter_map(|entry| {
-            entry
-                .narration_text
-                .as_deref()
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-                .map(str::to_string)
-        })
-        .collect();
-
-    let latest = snapshot.latest_narration.trim();
-    if is_stable_phase(snapshot.phase)
-        && !latest.is_empty()
-        && narrations.last().is_none_or(|item| item != latest)
+        .rev()
+        .find(|entry| is_completed_dialogue_round(entry))
+        .cloned()
+        .ok_or_else(|| "当前会话还没有已完成的对话可用于创建存档".to_string())?;
+    let completed_round_id = completed_round.round;
+    let world_snapshot = completed_round
+        .world_snapshot
+        .clone()
+        .expect("completed dialogue rounds require a world snapshot");
+    let committed_action = payload
+        .history_log
+        .rounds
+        .iter()
+        .rev()
+        .filter(|entry| entry.round < completed_round_id)
+        .filter_map(|entry| entry.committed_action.as_deref())
+        .find(|action| !action.trim().is_empty())
+        .unwrap_or("start")
+        .to_string();
+    let mut archive_rounds = payload
+        .history_log
+        .rounds
+        .iter()
+        .filter(|entry| entry.round <= completed_round_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    if let Some(entry) = archive_rounds
+        .iter_mut()
+        .find(|entry| entry.round == completed_round_id)
     {
-        narrations.push(latest.to_string());
+        entry.committed_action = None;
     }
 
-    narrations
+    payload.title = archive_title_for_round(
+        requested_title,
+        payload.title.as_str(),
+        &world_snapshot.scene_title,
+        completed_round_id,
+    );
+    payload.turn_state.phase = TurnPhase::AwaitingPlayer;
+    payload.turn_state.turn_index = completed_round_id;
+    payload.turn_state.active_turn_id = completed_round_id;
+    payload.world_snapshot = world_snapshot;
+    payload.protagonist_decision.committed_action = committed_action;
+    payload.protagonist_decision.choices = completed_round.choices;
+    payload.history_log = SessionHistoryLog {
+        rounds: archive_rounds,
+    };
+    Ok(())
 }
 
-fn collect_history_narrations(
-    history: &[story_engine::resources::history::RoundHistoryEntry],
-) -> Vec<String> {
+fn is_archive_stable_phase(phase: TurnPhase) -> bool {
+    matches!(
+        phase,
+        TurnPhase::Idle | TurnPhase::AwaitingPlayer | TurnPhase::TurnCompleted | TurnPhase::Ended
+    )
+}
+
+fn is_completed_dialogue_round(entry: &RoundHistoryEntry) -> bool {
+    entry.world_snapshot.is_some()
+        && entry
+            .narration_text
+            .as_deref()
+            .is_some_and(|text| !text.trim().is_empty())
+}
+
+fn archive_title_for_round(
+    requested_title: Option<&str>,
+    existing_title: &str,
+    scene_title: &str,
+    round: u64,
+) -> String {
+    let requested = requested_title.unwrap_or_default().trim();
+    if !requested.is_empty() {
+        return requested.to_string();
+    }
+
+    let scene = scene_title.trim();
+    if !scene.is_empty() {
+        return format!("第{round}轮：{scene}");
+    }
+
+    let existing = existing_title.trim();
+    if !existing.is_empty() {
+        return existing.to_string();
+    }
+
+    format!("第{round}轮存档")
+}
+
+fn visible_turn_index_from_parts(phase: TurnPhase, turn_index: u64, active_turn_id: u64) -> u64 {
+    if phase == TurnPhase::TurnCompleted {
+        turn_index.max(1)
+    } else {
+        active_turn_id.max(turn_index + 1)
+    }
+}
+
+fn collect_history_narrations(history: &[RoundHistoryEntry]) -> Vec<String> {
     history
         .iter()
         .filter_map(|entry| {
@@ -1020,17 +1583,6 @@ fn collect_history_narrations(
                 .map(str::to_string)
         })
         .collect()
-}
-
-fn is_stable_phase(phase: TurnPhase) -> bool {
-    matches!(
-        phase,
-        TurnPhase::Idle
-            | TurnPhase::AwaitingPlayer
-            | TurnPhase::TurnCompleted
-            | TurnPhase::Ended
-            | TurnPhase::Failed
-    )
 }
 
 fn is_evictable_phase(phase: TurnPhase) -> bool {
@@ -1085,12 +1637,12 @@ mod tests {
     };
     use agent::agent::context::Context;
     use serde_json::Value;
-    use story_engine::resources::{
-        history::{RoundHistoryEntry, SessionHistoryLog},
-        protagonist_action::{PendingProtagonistChoice, ProtagonistOption},
-        turn_state::TurnPhase,
+    use story_engine::components::{
+        outcome::{PendingProtagonistChoice, ProtagonistOption},
         world_snapshot::WorldSnapshot,
     };
+
+    use crate::session_history::{RoundHistoryEntry, SessionHistoryLog, TurnPhase};
 
     fn test_state() -> AppState {
         test_state_with_config(SessionLifecycleConfig {
@@ -1104,15 +1656,7 @@ mod tests {
 
     fn test_state_with_config(lifecycle_config: SessionLifecycleConfig) -> AppState {
         AppState::with_lifecycle_config(
-            std::env::temp_dir().join(format!(
-                "akasa-analytics-{}.sqlite3",
-                Uuid::new_v4().simple()
-            )),
-            std::env::temp_dir().join(format!(
-                "akasa-session-archives-{}.sqlite3",
-                Uuid::new_v4().simple()
-            )),
-            false,
+            std::env::temp_dir().join(format!("akasa-state-{}.sqlite3", Uuid::new_v4().simple())),
             lifecycle_config,
             false,
         )
@@ -1132,20 +1676,175 @@ mod tests {
         assert_eq!(restored.phase, TurnPhase::AwaitingPlayer);
         assert_eq!(restored.turn_index, 8);
         assert_eq!(restored.active_turn_id, 7);
-        assert_eq!(restored.current_protagonist_action, "绕到钟楼背面");
+        assert_eq!(restored.current_outcome, "绕到钟楼背面");
         assert_eq!(restored.choices.len(), 1);
-        assert_eq!(restored.history.len(), 1);
-        assert_eq!(restored.history[0].narration_text, "钟声掠过雾墙。");
-        assert_eq!(
-            restored.history[0].selected_choice_text.as_deref(),
-            Some("绕行")
-        );
 
         let loaded_again = state
             .get_game_session_world("session-from-slot")
             .await
             .expect("restored session should be queryable");
         assert_eq!(loaded_again.world_state.scene_title, "钟楼阴影");
+    }
+
+    #[tokio::test]
+    async fn load_archive_persists_full_history_but_world_response_omits_history() {
+        let state = test_state();
+        let total_rounds = 20;
+        let compressed =
+            archive::compress_archive_payload(&sample_payload_with_rounds(total_rounds))
+                .expect("archive compresses");
+
+        state
+            .load_game_session_from_archive(compressed)
+            .await
+            .expect("archive should restore");
+
+        let full_history = state
+            .get_game_session_rounds("session-from-slot", None, 100)
+            .await
+            .expect("full history page should load");
+
+        assert_eq!(full_history.rounds.len(), total_rounds as usize);
+        assert_eq!(
+            full_history.rounds.first().map(|entry| entry.round),
+            Some(1)
+        );
+        assert_eq!(
+            full_history.rounds.last().map(|entry| entry.round),
+            Some(total_rounds)
+        );
+        assert!(!full_history.has_more);
+    }
+
+    #[test]
+    fn nonstable_archive_payload_falls_back_to_latest_completed_db_round() {
+        let mut payload = sample_payload_with_rounds(3);
+        payload.title = "第4轮：生成中的风暴".to_string();
+        payload.turn_state.phase = TurnPhase::Simulation;
+        payload.turn_state.turn_index = 3;
+        payload.turn_state.active_turn_id = 4;
+        payload.world_snapshot = WorldSnapshot {
+            round: 4,
+            scene_title: "生成中的风暴".to_string(),
+            ..WorldSnapshot::default()
+        };
+
+        stabilize_archive_payload_from_history(&mut payload, None)
+            .expect("nonstable payload should use latest completed round");
+
+        assert_eq!(payload.turn_state.phase, TurnPhase::AwaitingPlayer);
+        assert_eq!(payload.turn_state.turn_index, 3);
+        assert_eq!(payload.turn_state.active_turn_id, 3);
+        assert_eq!(payload.world_snapshot.scene_title, "第3轮");
+        assert_eq!(payload.protagonist_decision.committed_action, "行动-2");
+        assert_eq!(
+            payload.protagonist_decision.choices[0].option.action,
+            "行动-3"
+        );
+        assert_eq!(payload.history_log.rounds.len(), 3);
+        assert_eq!(payload.history_log.rounds[2].committed_action, None);
+        assert_eq!(payload.title, "第3轮：第3轮");
+    }
+
+    #[test]
+    fn flow_turn_updates_build_round_history_parts() {
+        let world_snapshot = WorldSnapshot {
+            round: 5,
+            scene_title: "钟楼阴影".to_string(),
+            ..WorldSnapshot::default()
+        };
+        let world_entry = round_history_from_flow_turn_update(&FlowTurnUpdate {
+            session_id: "session-flow".to_string(),
+            round: 5,
+            stage: TurnPhase::Simulation,
+            entity_name: "FateWeaver".to_string(),
+            output_type: AgentOutputType::Json,
+            content: serde_json::to_string(&world_snapshot).expect("world should serialize"),
+        })
+        .expect("world flow update should map to history");
+        assert_eq!(
+            world_entry
+                .world_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.scene_title.as_str()),
+            Some("钟楼阴影")
+        );
+
+        let narration_entry = round_history_from_flow_turn_update(&FlowTurnUpdate {
+            session_id: "session-flow".to_string(),
+            round: 5,
+            stage: TurnPhase::Application,
+            entity_name: "UpperNarrator".to_string(),
+            output_type: AgentOutputType::Text,
+            content: "钟声掠过雾墙。".to_string(),
+        })
+        .expect("narration flow update should map to history");
+        assert_eq!(
+            narration_entry.narration_text.as_deref(),
+            Some("钟声掠过雾墙。")
+        );
+
+        let choices_entry = round_history_from_flow_turn_update(&FlowTurnUpdate {
+            session_id: "session-flow".to_string(),
+            round: 5,
+            stage: TurnPhase::Application,
+            entity_name: "Protagonist".to_string(),
+            output_type: AgentOutputType::Json,
+            content: serde_json::to_string(&ProtagonistOptions {
+                options: vec![ProtagonistOption {
+                    title: "绕行".to_string(),
+                    action: "绕到钟楼背面".to_string(),
+                    motivation_and_risk: "视野更好，但会暴露脚步声".to_string(),
+                }],
+            })
+            .expect("choices should serialize"),
+        })
+        .expect("choice flow update should map to history");
+        assert_eq!(choices_entry.choices[0].id, "choice-1");
+        assert_eq!(choices_entry.choices[0].option.action, "绕到钟楼背面");
+
+        let player_entry = round_history_from_flow_turn_update(&FlowTurnUpdate {
+            session_id: "session-flow".to_string(),
+            round: 5,
+            stage: TurnPhase::AwaitingPlayer,
+            entity_name: "Player".to_string(),
+            output_type: AgentOutputType::Text,
+            content: "绕到钟楼背面".to_string(),
+        });
+        assert!(player_entry.is_none());
+    }
+
+    #[test]
+    fn player_inputs_overlay_committed_actions_from_dedicated_table() {
+        let rounds = vec![RoundHistoryEntry {
+            round: 2,
+            committed_action: Some("旧行动".to_string()),
+            ..RoundHistoryEntry::default()
+        }];
+        let merged = rounds_with_player_inputs(
+            rounds,
+            vec![
+                StoredPlayerInput {
+                    round: 1,
+                    action_type: PlayerActionType::FreeText,
+                    action: "  自定义检查密室暗门  ".to_string(),
+                },
+                StoredPlayerInput {
+                    round: 2,
+                    action_type: PlayerActionType::SelectedOption,
+                    action: "绕到钟楼背面".to_string(),
+                },
+            ],
+        );
+
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].round, 1);
+        assert_eq!(
+            merged[0].committed_action.as_deref(),
+            Some("自定义检查密室暗门")
+        );
+        assert_eq!(merged[1].round, 2);
+        assert_eq!(merged[1].committed_action.as_deref(), Some("绕到钟楼背面"));
     }
 
     #[tokio::test]
@@ -1175,14 +1874,14 @@ mod tests {
         let restored = state
             .get_game_session_world("session-from-slot")
             .await
-            .expect("cold session should restore on demand");
+            .expect("cold session should be readable from database");
         assert_eq!(restored.world_state.scene_title, "钟楼阴影");
 
         let sessions = state.sessions.lock().await;
         let record = sessions
             .get("session-from-slot")
             .expect("session should remain registered");
-        assert!(matches!(record.slot, SessionSlot::Hot(_)));
+        assert!(matches!(record.slot, SessionSlot::Cold(_)));
     }
 
     #[tokio::test]
@@ -1240,7 +1939,7 @@ mod tests {
             .get_game_session_world("session-b")
             .await
             .expect("restored session should be queryable");
-        assert_eq!(loaded_again.current_protagonist_action, "绕到钟楼背面");
+        assert_eq!(loaded_again.current_outcome, "绕到钟楼背面");
     }
 
     #[tokio::test]
@@ -1261,7 +1960,7 @@ mod tests {
         assert_ne!(cloned.session_id, "session-from-slot");
         assert!(cloned.session_id.starts_with("session-"));
         assert_eq!(cloned.world_state.scene_title, "钟楼阴影");
-        assert_eq!(cloned.current_protagonist_action, "绕到钟楼背面");
+        assert_eq!(cloned.current_outcome, "绕到钟楼背面");
 
         let source = state
             .get_game_session_world("session-from-slot")
@@ -1276,7 +1975,6 @@ mod tests {
             source.world_state.scene_title,
             cloned_again.world_state.scene_title
         );
-        assert_eq!(source.history.len(), cloned_again.history.len());
     }
 
     #[test]
@@ -1300,11 +1998,10 @@ mod tests {
                 new_info: vec!["图纸碎片已安全到手".to_string()],
                 ..WorldSnapshot::default()
             }),
-            history: vec![],
             current_task: None,
             tasks: vec![],
             latest_narration: "narration".to_string(),
-            current_protagonist_action: "action".to_string(),
+            current_outcome: "action".to_string(),
             choices: vec![],
         };
 
@@ -1336,56 +2033,7 @@ mod tests {
         );
         assert!(world_state.get("scene_title").is_none());
         assert!(world_state.get("new_info").is_none());
-    }
-
-    #[test]
-    fn collect_story_narrations_uses_all_history_and_current_latest_output() {
-        let snapshot = sample_session_from_archive();
-
-        let narrations = collect_story_narrations(&snapshot);
-
-        assert_eq!(
-            narrations,
-            vec!["钟声掠过雾墙。", "回廊尽头亮起一盏迟到的灯。"]
-        );
-    }
-
-    #[test]
-    fn collect_story_narrations_skips_empty_and_duplicate_latest_output() {
-        let mut snapshot = sample_session_from_archive();
-        snapshot.history.push(RoundHistoryEntry {
-            round: 8,
-            world_snapshot: None,
-            narration_text: Some("回廊尽头亮起一盏迟到的灯。".to_string()),
-            choices: Vec::new(),
-            committed_action: None,
-        });
-        snapshot.latest_narration = "回廊尽头亮起一盏迟到的灯。".to_string();
-        snapshot.history.push(RoundHistoryEntry {
-            round: 9,
-            world_snapshot: None,
-            narration_text: Some("   ".to_string()),
-            choices: Vec::new(),
-            committed_action: None,
-        });
-
-        let narrations = collect_story_narrations(&snapshot);
-
-        assert_eq!(
-            narrations,
-            vec!["钟声掠过雾墙。", "回廊尽头亮起一盏迟到的灯。"]
-        );
-    }
-
-    #[test]
-    fn collect_story_narrations_ignores_live_latest_output_in_non_stable_phase() {
-        let mut snapshot = sample_session_from_archive();
-        snapshot.phase = TurnPhase::Simulation;
-        snapshot.latest_narration = "这一段还在生成，不能进入分享摘要。".to_string();
-
-        let narrations = collect_story_narrations(&snapshot);
-
-        assert_eq!(narrations, vec!["钟声掠过雾墙。"]);
+        assert!(value.get("history").is_none());
     }
 
     fn sample_payload() -> SessionArchivePayload {
@@ -1403,7 +2051,6 @@ mod tests {
             fate_weaver: Context::default(),
             upper_narrator: Context::default(),
             protagonist: Context::default(),
-            simulators: vec![],
             world_snapshot: WorldSnapshot {
                 round: 7,
                 scene_title: "钟楼阴影".to_string(),
@@ -1445,23 +2092,40 @@ mod tests {
         }
     }
 
-    fn sample_session_from_archive() -> Session {
-        let payload = sample_payload();
-
-        Session {
-            world_profile: payload.world_profile,
-            protagonist_profile: payload.protagonist_profile,
-            key_story_beats: payload.key_story_beats,
-            phase: payload.turn_state.phase,
-            turn_index: payload.turn_state.turn_index,
-            active_turn_id: payload.turn_state.active_turn_id + 1,
-            history: payload.history_log.rounds,
-            current_task: None,
-            tasks: Vec::new(),
-            world_snapshot: payload.world_snapshot,
-            latest_narration: "回廊尽头亮起一盏迟到的灯。".to_string(),
-            current_protagonist_action: payload.protagonist_decision.committed_action,
-            choices: payload.protagonist_decision.choices,
-        }
+    fn sample_payload_with_rounds(total_rounds: u64) -> SessionArchivePayload {
+        let mut payload = sample_payload();
+        payload.turn_state.turn_index = total_rounds;
+        payload.turn_state.active_turn_id = total_rounds;
+        payload.world_snapshot = WorldSnapshot {
+            round: total_rounds,
+            scene_title: format!("第{total_rounds}轮"),
+            description: format!("第{total_rounds}轮描述"),
+            ..WorldSnapshot::default()
+        };
+        payload.protagonist_decision.committed_action = format!("行动-{total_rounds}");
+        payload.history_log = SessionHistoryLog {
+            rounds: (1..=total_rounds)
+                .map(|round| RoundHistoryEntry {
+                    round,
+                    world_snapshot: Some(WorldSnapshot {
+                        round,
+                        scene_title: format!("第{round}轮"),
+                        description: format!("第{round}轮描述"),
+                        ..WorldSnapshot::default()
+                    }),
+                    narration_text: Some(format!("叙事-{round}")),
+                    choices: vec![PendingProtagonistChoice {
+                        id: format!("choice-{round}"),
+                        option: ProtagonistOption {
+                            title: format!("选择-{round}"),
+                            action: format!("行动-{round}"),
+                            motivation_and_risk: "保持测试稳定".to_string(),
+                        },
+                    }],
+                    committed_action: Some(format!("行动-{round}")),
+                })
+                .collect(),
+        };
+        payload
     }
 }

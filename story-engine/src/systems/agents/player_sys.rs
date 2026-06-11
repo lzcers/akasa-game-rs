@@ -7,13 +7,11 @@ use bevy_ecs::{
 use crate::{
     components::{
         flow::PlayerInputCompleted,
+        outcome::{PlayerActionType, ProtagonistDecisionState},
+        session_event_sink::SessionEventSink,
         turn_flow::{TurnFlow, TurnStage},
     },
-    resources::{
-        player_input::PlayerInputConfig,
-        protagonist_action::{PlayerActionType, ProtagonistDecisionState},
-    },
-    turn_messages::PlayerCommand,
+    engine::turn_messages::PlayerCommand,
 };
 
 #[allow(clippy::type_complexity)]
@@ -22,29 +20,18 @@ pub fn player_input_consume_system(
     mut player_commands: MessageReader<PlayerCommand>,
     mut sessions: Query<(
         Entity,
+        &SessionEventSink,
         &TurnFlow,
-        &PlayerInputConfig,
         &mut ProtagonistDecisionState,
         Option<&PlayerInputCompleted>,
     )>,
 ) {
     let player_commands = player_commands.read().cloned().collect::<Vec<_>>();
 
-    for (entity, flow, input_config, mut decision_state, outcome) in sessions.iter_mut() {
+    for (entity, event_sink, flow, mut decision_state, outcome) in sessions.iter_mut() {
         if flow.stage != TurnStage::AwaitingPlayer
             || outcome.is_some_and(|outcome| outcome.turn_id == flow.active_turn_id)
         {
-            continue;
-        }
-
-        if input_config.auto_select_first {
-            let Some(action) = decision_state.first_choice_action().map(str::to_string) else {
-                continue;
-            };
-            decision_state.commit_action(&action);
-            commands.entity(entity).insert(PlayerInputCompleted {
-                turn_id: flow.active_turn_id,
-            });
             continue;
         }
 
@@ -66,7 +53,13 @@ pub fn player_input_consume_system(
                         continue;
                     }
 
-                    decision_state.commit_action(action);
+                    let action_type = input.r#type;
+                    let committed_action = decision_state.commit_action(action);
+                    event_sink.publish_player_input(
+                        flow.active_turn_id.max(1),
+                        action_type,
+                        committed_action,
+                    );
                     commands.entity(entity).insert(PlayerInputCompleted {
                         turn_id: flow.active_turn_id,
                     });

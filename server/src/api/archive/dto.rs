@@ -1,11 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use agent::agent::context::Context;
-use story_engine::engine::SimulatorArchiveState;
-use story_engine::resources::{
-    history::SessionHistoryLog, protagonist_action::PendingProtagonistChoice,
-    turn_state::TurnPhase, world_snapshot::WorldSnapshot,
-};
+use story_engine::components::{outcome::PendingProtagonistChoice, world_snapshot::WorldSnapshot};
+
+use crate::session_history::{SessionHistoryLog, TurnPhase};
 
 /// 内部恢复用：TurnState 的可序列化快照
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -44,14 +42,10 @@ pub struct SessionArchivePayload {
     /// 当前回合状态
     pub turn_state: TurnStateArchive,
 
-    /// 旧格式的 FateWeaver Context，保留用于恢复不含 simulators 的存档
     pub fate_weaver: Context,
     /// 唯一 Narrator 与 Protagonist 的完整 Context
     pub upper_narrator: Context,
     pub protagonist: Context,
-    /// 可变数量的 Simulator Context
-    #[serde(default)]
-    pub simulators: Vec<SimulatorArchiveState>,
     /// 当前世界状态
     pub world_snapshot: WorldSnapshot,
 

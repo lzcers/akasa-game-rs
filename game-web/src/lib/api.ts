@@ -199,7 +199,6 @@ export interface GameSessionWorldStateData {
   turnIndex: number;
   activeTurnId: number;
   worldState: SessionWorldState;
-  history: SessionRoundHistoryData[];
   currentTask: TaskView | null;
   tasks: TaskView[];
   latestNarration: string;
@@ -214,6 +213,18 @@ export interface SessionRoundHistoryData {
   choices: PendingProtagonistChoice[];
   committedAction?: string | null;
   selectedChoiceText?: string | null;
+}
+
+export interface SessionRoundsPageData {
+  sessionId: string;
+  rounds: SessionRoundHistoryData[];
+  nextBeforeRound?: number | null;
+  hasMore: boolean;
+}
+
+export interface GetSessionRoundsOptions {
+  beforeRound?: number | null;
+  limit?: number;
 }
 
 export type GameSessionControlInput =
@@ -333,6 +344,24 @@ export function createGameSession(input: CreateGameSessionInput) {
 export function getGameSession(sessionId: string) {
   return requestJson<GameSessionWorldStateData>(
     withApiOrigin(`/api/game-sessions/${encodeURIComponent(sessionId)}`),
+  );
+}
+
+export function getGameSessionRounds(
+  sessionId: string,
+  options: GetSessionRoundsOptions = {},
+) {
+  const params = new URLSearchParams();
+  if (options.beforeRound != null) {
+    params.set('beforeRound', String(options.beforeRound));
+  }
+  if (options.limit != null) {
+    params.set('limit', String(options.limit));
+  }
+  const search = params.size > 0 ? `?${params.toString()}` : '';
+
+  return requestJson<SessionRoundsPageData>(
+    withApiOrigin(`/api/game-sessions/${encodeURIComponent(sessionId)}/rounds${search}`),
   );
 }
 

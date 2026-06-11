@@ -10,31 +10,34 @@ use crate::{
         agent::{Agent, AgentRole, Applicator, PendingReasoning},
         flow::ApplicationCompleted,
         outcome::NarrationOutcome,
-        session::StorySession,
+        outcome::ProtagonistDecisionState,
+        session_event_sink::SessionEventSink,
         turn_flow::{TurnFlow, TurnStage},
-    },
-    engine::RuntimeDebugObserverResource,
-    prompts::world_prompt,
-    resources::{
-        agent_task::{AgentTaskManager, TaskStatus},
-        protagonist_action::ProtagonistDecisionState,
         world_snapshot::WorldSnapshot,
     },
+    prompts::world_prompt,
+    resources::agent_task_manager::{AgentTaskManager, TaskStatus},
 };
 
 #[allow(clippy::type_complexity)]
 pub fn narration_dispatch_system(
     mut commands: Commands,
-    sessions: Query<(Entity, &TurnFlow, &ProtagonistDecisionState, &WorldSnapshot)>,
+    sessions: Query<(
+        Entity,
+        &SessionEventSink,
+        &TurnFlow,
+        &ProtagonistDecisionState,
+        &WorldSnapshot,
+    )>,
     agent_tasks: Res<AgentTaskManager>,
     mut agents: Query<
         (Entity, &mut Agent, &ChildOf, Option<&ApplicationCompleted>),
         (With<Applicator>, Without<PendingReasoning>),
     >,
 ) {
-    for (session_entity, flow, decision_state, world_snapshot) in sessions
+    for (session_entity, event_sink, flow, decision_state, world_snapshot) in sessions
         .iter()
-        .filter(|(_, flow, ..)| flow.stage == TurnStage::Application)
+        .filter(|(_, _, flow, ..)| flow.stage == TurnStage::Application)
     {
         let prompt = format!(
             "{}\n",
@@ -50,6 +53,11 @@ pub fn narration_dispatch_system(
             })
         {
             agent.append_user_message(&prompt);
+            event_sink.publish_agent_context_update(
+                flow.active_turn_id.max(1),
+                agent.name.clone(),
+                agent.context.clone(),
+            );
             commands.entity(entity).insert(PendingReasoning);
         }
     }
@@ -58,12 +66,11 @@ pub fn narration_dispatch_system(
 #[allow(clippy::type_complexity)]
 pub fn narration_apply_system(
     mut commands: Commands,
-    mut sessions: Query<(Entity, Option<&StorySession>, &mut TurnFlow)>,
+    mut sessions: Query<(Entity, &SessionEventSink, &mut TurnFlow)>,
     mut agents: Query<(Entity, &mut Agent, &ChildOf), With<Applicator>>,
     mut agent_tasks: ResMut<AgentTaskManager>,
-    debug_observer: Option<Res<RuntimeDebugObserverResource>>,
 ) {
-    for (session_entity, session, mut flow) in sessions
+    for (session_entity, event_sink, mut flow) in sessions
         .iter_mut()
         .filter(|(_, _, flow)| flow.stage == TurnStage::Application)
     {
@@ -82,20 +89,18 @@ pub fn narration_apply_system(
                         continue;
                     };
                     agent.append_assistant_message(&output);
-                    if let (Some(session), Some(observer)) = (
-                        session,
-                        debug_observer
-                            .as_ref()
-                            .and_then(|debug| debug.observer.as_ref()),
-                    ) {
-                        observer.on_agent_context_updated(
-                            &session.id,
-                            flow.turn_index,
-                            flow.active_turn_id,
-                            &agent.name,
-                            &agent.context,
-                        );
-                    }
+                    event_sink.publish_agent_context_update(
+                        flow.active_turn_id.max(1),
+                        agent.name.clone(),
+                        agent.context.clone(),
+                    );
+                    event_sink.publish_flow_turn_update(
+                        flow.active_turn_id.max(1),
+                        flow.stage,
+                        agent.name.clone(),
+                        agent.output_type,
+                        output.clone(),
+                    );
                     commands
                         .entity(entity)
                         .insert(NarrationOutcome {

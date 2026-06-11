@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use serde_json::json;
 
-use crate::resources::world_snapshot::WorldSnapshot;
+use crate::components::world_snapshot::WorldSnapshot;
 
 pub fn world_snapshot_ledger(snapshot: &WorldSnapshot) -> String {
     let mut out = String::new();

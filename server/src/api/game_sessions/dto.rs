@@ -1,15 +1,24 @@
 use serde::{Deserialize, Serialize};
-use story_engine::resources::{
-    export::TaskView,
-    history::RoundHistoryEntry,
-    protagonist_action::{PendingProtagonistChoice, PlayerActionInput},
-    turn_state::TurnPhase,
-    world_snapshot::{ItemState, NpcState, OngoingEvent, WorldSnapshot},
+use story_engine::{
+    components::{
+        outcome::{PendingProtagonistChoice, PlayerActionInput},
+        world_snapshot::{ItemState, NpcState, OngoingEvent, WorldSnapshot},
+    },
+    resources::agent_task_manager::TaskStatus,
 };
+
+use crate::session_history::{RoundHistoryEntry, TurnPhase};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SessionPath {
     pub session_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRoundsQuery {
+    pub before_round: Option<u64>,
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -59,6 +68,14 @@ pub struct LoadArchiveRequest {
 
 pub type SessionActionInput = PlayerActionInput;
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskKind {
+    Simulation,
+    ProtagonistAction,
+    Narration,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum GameSessionControlCommand {
@@ -82,12 +99,25 @@ pub struct GameSessionWorldStateData {
     pub turn_index: u64,
     pub active_turn_id: u64,
     pub world_state: WorldStateData,
-    pub history: Vec<RoundHistoryData>,
     pub current_task: Option<TaskView>,
     pub tasks: Vec<TaskView>,
     pub latest_narration: String,
-    pub current_protagonist_action: String,
+    pub current_outcome: String,
     pub choices: Vec<PendingProtagonistChoice>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskView {
+    pub entity: String,
+    pub kind: TaskKind,
+    pub status: TaskStatus,
+    pub attempts: usize,
+    pub max_attempts: usize,
+    pub last_error: Option<String>,
+    pub chunks: Vec<String>,
+    pub output: Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -107,6 +137,15 @@ pub struct RoundHistoryData {
     pub choices: Vec<PendingProtagonistChoice>,
     pub committed_action: Option<String>,
     pub selected_choice_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRoundsPageData {
+    pub session_id: String,
+    pub rounds: Vec<RoundHistoryData>,
+    pub next_before_round: Option<u64>,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

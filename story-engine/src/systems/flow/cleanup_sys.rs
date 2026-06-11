@@ -5,12 +5,12 @@ use bevy_ecs::{
 };
 
 use crate::components::{
-    flow::{ApplicationCompleted, SimulationCompleted},
+    flow::{ApplicationCompleted, ApplicationSkipped, SimulationCompleted},
     outcome::{NarrationOutcome, SimulationOutcome},
     turn_flow::{TurnFlow, TurnStage},
 };
 
-// 在轮次收尾后清理 Agent 上的本轮结果组件；history/export 必须先读取它们。
+// 在轮次收尾后清理 Agent 上的本轮结果组件；event pipeline/export 必须先读取它们。
 #[allow(clippy::type_complexity)]
 pub fn cleanup_previous_turn_outcomes_system(
     mut commands: Commands,
@@ -22,16 +22,24 @@ pub fn cleanup_previous_turn_outcomes_system(
         Option<&NarrationOutcome>,
         Option<&SimulationCompleted>,
         Option<&ApplicationCompleted>,
+        Option<&ApplicationSkipped>,
     )>,
 ) {
     for (session_entity, turn_flow) in sessions
         .iter()
         .filter(|(_, flow)| matches!(flow.stage, TurnStage::TurnCompleted | TurnStage::Ended))
     {
-        for (agent_entity, _, simulation, narration, simulation_completed, application_completed) in
-            outcomes
-                .iter()
-                .filter(|(_, owner, ..)| owner.parent() == session_entity)
+        for (
+            agent_entity,
+            _,
+            simulation,
+            narration,
+            simulation_completed,
+            application_completed,
+            application_skipped,
+        ) in outcomes
+            .iter()
+            .filter(|(_, owner, ..)| owner.parent() == session_entity)
         {
             if simulation.is_some_and(|outcome| outcome.turn_id == turn_flow.active_turn_id) {
                 commands.entity(agent_entity).remove::<SimulationOutcome>();
@@ -52,6 +60,11 @@ pub fn cleanup_previous_turn_outcomes_system(
                 commands
                     .entity(agent_entity)
                     .remove::<ApplicationCompleted>();
+            }
+            if application_skipped
+                .is_some_and(|skipped| skipped.turn_id == turn_flow.active_turn_id)
+            {
+                commands.entity(agent_entity).remove::<ApplicationSkipped>();
             }
         }
     }
@@ -86,6 +99,7 @@ mod tests {
                 },
                 SimulationCompleted { turn_id: 1 },
                 ApplicationCompleted { turn_id: 1 },
+                ApplicationSkipped { turn_id: 1 },
             ))
             .id();
         let mut schedule = Schedule::default();
@@ -98,5 +112,6 @@ mod tests {
         assert!(world.get::<NarrationOutcome>(agent).is_none());
         assert!(world.get::<SimulationCompleted>(agent).is_none());
         assert!(world.get::<ApplicationCompleted>(agent).is_none());
+        assert!(world.get::<ApplicationSkipped>(agent).is_none());
     }
 }

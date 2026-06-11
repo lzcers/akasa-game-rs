@@ -69,24 +69,6 @@ export function stateViewFromSession(session: GameSessionWorldStateData): Runtim
 
 export function internalStateFromSession(session: GameSessionWorldStateData): GameInternalState {
   const round = effectiveDisplayRound(session);
-  if (session.history.length > 0) {
-    const roundStates = session.history.reduce<Record<number, RoundState>>((acc, entry) => {
-      acc[entry.round] = roundStateFromHistoryEntry(entry, session, round);
-      return acc;
-    }, {});
-
-    if (!roundStates[round]) {
-      roundStates[round] = currentRoundStateFromSession(session, round);
-    }
-
-    return {
-      sessionId: session.sessionId,
-      turnIndex: session.turnIndex,
-      displayRound: round,
-      roundStates,
-    };
-  }
-
   return {
     sessionId: session.sessionId,
     turnIndex: session.turnIndex,
@@ -97,31 +79,21 @@ export function internalStateFromSession(session: GameSessionWorldStateData): Ga
   };
 }
 
-function roundStateFromHistoryEntry(
+export function roundStateFromPersistedHistoryEntry(
   entry: SessionRoundHistoryData,
-  session: GameSessionWorldStateData,
-  currentRound: number,
 ): RoundState {
-  const isCurrentRound = entry.round === currentRound;
-  const choices = (isCurrentRound ? session.choices : entry.choices).map(toChoiceFromSession);
-  const isAwaitingCurrentRound = isCurrentRound && session.phase === 'awaiting_player';
+  const choices = entry.choices.map(toChoiceFromSession);
   const selectedChoiceText = entry.selectedChoiceText?.trim()
     || deriveSelectedChoiceText(entry)
     || null;
   const selectedChoiceAction = entry.committedAction?.trim() || null;
-  const narrationText = entry.narrationText.trim()
-    || (isCurrentRound ? latestHistoryFromSession(session) : '');
 
   return createRoundState(entry.round, {
-    title: titleFromWorldState(entry.worldState, titleFromWorldState(session.worldState)),
-    narrationText,
-    narrationStatus: isCurrentRound && session.currentTask?.kind === 'narration'
-      ? session.currentTask.status
-      : entry.narrationText.trim()
-        ? 'done'
-        : null,
+    title: titleFromWorldState(entry.worldState),
+    narrationText: entry.narrationText.trim(),
+    narrationStatus: entry.narrationText.trim() ? 'done' : null,
     choices,
-    choicesStatus: choices.length > 0 || isAwaitingCurrentRound ? 'ready' : 'idle',
+    choicesStatus: choices.length > 0 ? 'ready' : 'idle',
     selectedChoiceText,
     selectedChoiceAction,
     isAwaitingNarration: false,

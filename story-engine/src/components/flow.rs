@@ -11,6 +11,11 @@ pub struct ApplicationCompleted {
 }
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApplicationSkipped {
+    pub turn_id: u64,
+}
+
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlayerInputCompleted {
     pub turn_id: u64,
 }

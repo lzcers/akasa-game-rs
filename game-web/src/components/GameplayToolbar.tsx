@@ -140,7 +140,7 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
     <>
       <div className="game-opts inset-x-0 rounded-full border border-[rgba(116,103,80,0.34)] bg-[rgba(8,14,26,0.82)] px-1.5 py-1 backdrop-blur-md">
         <div className="relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5">
-          <div className="flex min-w-0 items-center ml-3 justify-start gap-1.5 text-[0.72rem] font-semibold leading-4 text-[#d9cbb1] sm:gap-2 sm:text-xs">
+          <div className="flex min-w-0 items-center ml-1 justify-start gap-1.5 text-[0.72rem] font-semibold leading-4 text-[#d9cbb1] sm:gap-2 sm:text-xs">
             <span className="inline-flex items-center gap-1">
               <Clock3 className="h-3.5 w-3.5" />
               <span>{currentRound}</span>

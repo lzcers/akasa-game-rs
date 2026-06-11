@@ -1,6 +1,6 @@
 use bevy_ecs::{entity::Entity, message::Message};
 
-use crate::resources::protagonist_action::PlayerActionInput;
+use crate::components::outcome::PlayerActionInput;
 
 #[derive(Message, Debug, Clone)]
 pub enum PlayerCommand {

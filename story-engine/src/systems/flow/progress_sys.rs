@@ -6,33 +6,35 @@ use bevy_ecs::{
 };
 
 use crate::components::{
-    agent::{Agent, AgentRole, Applicator, Simulator},
+    agent::{Applicator, Simulator},
     flow::{ApplicationCompleted, FlowEnd, PlayerInputCompleted, SimulationCompleted},
+    session_event_sink::SessionEventSink,
     turn_flow::{TurnFlow, TurnStage},
 };
-use crate::resources::world_snapshot::WorldSnapshot;
 
 #[allow(clippy::type_complexity)]
 pub fn flow_progress_system(
     mut commands: Commands,
     mut sessions: Query<(
         Entity,
+        &SessionEventSink,
         &mut TurnFlow,
-        &WorldSnapshot,
         Option<&FlowEnd>,
         Option<&PlayerInputCompleted>,
     )>,
     simulators: Query<&ChildOf, With<Simulator>>,
     completed_simulators: Query<(&ChildOf, &SimulationCompleted), With<Simulator>>,
-    applicators: Query<(&ChildOf, &Agent), With<Applicator>>,
-    completed_applicators: Query<(&ChildOf, &Agent, &ApplicationCompleted), With<Applicator>>,
+    applicators: Query<(&ChildOf, Option<&ApplicationCompleted>), With<Applicator>>,
 ) {
-    for (session_entity, mut flow, world_snapshot, flow_end, player_input) in sessions.iter_mut() {
+    for (session_entity, event_sink, mut flow, flow_end, player_input) in sessions.iter_mut() {
         match flow.stage {
             TurnStage::Simulation => {
                 if flow_end.is_some() {
                     commands.entity(session_entity).remove::<FlowEnd>();
+                    let round = flow.active_turn_id.max(1);
                     flow.end();
+                    event_sink.publish_flow_turn_completed(round);
+                    event_sink.publish_flow_turn_end(round);
                     continue;
                 }
 
@@ -48,6 +50,12 @@ pub fn flow_progress_system(
                     .count();
 
                 if total == 0 {
+                    event_sink.publish_flow_turn_error(
+                        flow.active_turn_id.max(1),
+                        flow.stage,
+                        "flow",
+                        "simulation stage has no simulator entities",
+                    );
                     flow.stage = TurnStage::Failed;
                 } else if completed == total {
                     flow.stage = TurnStage::Application;
@@ -56,26 +64,35 @@ pub fn flow_progress_system(
             TurnStage::Application => {
                 let total = applicators
                     .iter()
-                    .filter(|(owner, agent)| {
-                        owner.parent() == session_entity
-                            && (!world_snapshot.is_ending || agent.role == AgentRole::Narrator)
-                    })
+                    .filter(|(owner, _)| owner.parent() == session_entity)
                     .count();
-                let completed = completed_applicators
+                let resolved = applicators
                     .iter()
-                    .filter(|(owner, agent, completed)| {
+                    .filter(|(owner, completed)| {
                         owner.parent() == session_entity
-                            && completed.turn_id == flow.active_turn_id
-                            && (!world_snapshot.is_ending || agent.role == AgentRole::Narrator)
+                            && completed
+                                .is_some_and(|completed| completed.turn_id == flow.active_turn_id)
                     })
                     .count();
 
                 if total == 0 {
+                    event_sink.publish_flow_turn_error(
+                        flow.active_turn_id.max(1),
+                        flow.stage,
+                        "flow",
+                        "application stage has no applicator entities",
+                    );
                     flow.stage = TurnStage::Failed;
-                } else if completed == total && world_snapshot.is_ending {
+                } else if resolved == total && flow_end.is_some() {
+                    commands.entity(session_entity).remove::<FlowEnd>();
+                    let round = flow.active_turn_id.max(1);
                     flow.end();
-                } else if completed == total {
+                    event_sink.publish_flow_turn_completed(round);
+                    event_sink.publish_flow_turn_end(round);
+                } else if resolved == total {
+                    let round = flow.active_turn_id.max(1);
                     flow.stage = TurnStage::AwaitingPlayer;
+                    event_sink.publish_flow_turn_completed(round);
                 }
             }
             TurnStage::AwaitingPlayer => {
