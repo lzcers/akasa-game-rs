@@ -35,7 +35,7 @@ pub fn agent_task_system(
         let Ok((event_sink, flow)) = sessions.get(owner.parent()) else {
             continue;
         };
-        let round = flow.active_turn_id.max(1);
+        let round = flow.active_turn_id().max(1);
         if let Some(chunk) = update.chunk {
             event_sink.publish_task_update(round, agent.name.clone(), chunk);
         }

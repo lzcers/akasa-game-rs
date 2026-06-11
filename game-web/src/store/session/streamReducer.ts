@@ -118,6 +118,15 @@ export function reduceStreamEvent({
     }
   }
 
+  if (event.type === 'player_input') {
+    const reduction = reducePlayerInput(
+      internalState,
+      activeRound,
+      event.action,
+    );
+    internalStatePatch = reduction.internalStatePatch;
+  }
+
   if (event.type === 'flow_turn_error') {
     const reduction = reduceNarrationText(
       internalState,
@@ -166,6 +175,36 @@ export function reduceStreamEvent({
     internalStatePatch,
     uiStatePatch,
     shouldSyncSnapshot,
+  };
+}
+
+function reducePlayerInput(
+  internalState: GameInternalState,
+  round: number,
+  action: string,
+): Pick<StreamEventReduction, 'internalStatePatch'> {
+  const previousRoundState = internalState.roundStates[round];
+  const selectedChoiceText =
+    previousRoundState?.selectedChoiceText
+    ?? previousRoundState?.choices.find((choice) => choice.action === action)?.text
+    ?? action;
+  const nextRoundState = createRoundState(round, {
+    ...(previousRoundState ?? {}),
+    round,
+    selectedChoiceText,
+    selectedChoiceAction: action,
+    choices: [],
+    choicesStatus: 'idle',
+    isAwaitingNarration: false,
+  });
+
+  return {
+    internalStatePatch: {
+      roundStates: {
+        ...internalState.roundStates,
+        [round]: nextRoundState,
+      },
+    },
   };
 }
 

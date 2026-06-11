@@ -27,7 +27,7 @@ export interface StoryPreferences {
 }
 
 export type TurnPhase =
-  | 'idle'
+  | 'start'
   | 'simulation'
   | 'application'
   | 'awaiting_player'
@@ -249,11 +249,18 @@ export type EngineEvent =
       action: string;
     }
   | {
-      type: 'agent_context_update';
+      type: 'agent_context_item_appended';
       session_id: string;
       round: number;
       agent_name: string;
-      context: unknown;
+      message: unknown;
+    }
+  | {
+      type: 'agent_context_rollback';
+      session_id: string;
+      round: number;
+      agent_name: string;
+      policy: 'latest_input';
     }
   | {
       type: 'flow_turn_update';

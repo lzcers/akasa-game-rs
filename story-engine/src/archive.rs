@@ -11,7 +11,6 @@ pub struct SessionArchiveState {
     pub key_story_beats: String,
     pub phase: TurnStage,
     pub turn_index: u64,
-    pub active_turn_id: u64,
     pub world_snapshot: WorldSnapshot,
     pub committed_action: String,
     pub choices: Vec<PendingProtagonistChoice>,
@@ -23,9 +22,6 @@ pub struct SessionArchiveState {
 pub(crate) fn validate_archive_state(state: &SessionArchiveState) -> Result<(), String> {
     if !state.phase.is_stable() || state.phase == TurnStage::Failed {
         return Err("归档会话不在可恢复的稳定态".to_string());
-    }
-    if state.active_turn_id < state.turn_index {
-        return Err("归档会话的 active_turn_id 不能小于 turn_index".to_string());
     }
     Ok(())
 }

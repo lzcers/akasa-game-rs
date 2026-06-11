@@ -9,12 +9,13 @@ use agent::agent::Context;
 use chrono::{DateTime, Utc};
 use story_engine::{
     components::{
+        agent::{Agent as StoryAgent, AgentOutputType},
         outcome::{PendingProtagonistChoice, PlayerActionType},
         world_snapshot::WorldSnapshot,
     },
     engine::{AkashicEngine, AkashicSessionEngine},
     profile::DEFAULT_KEY_STORY_BEATS,
-    resources::session_events::{AgentContextUpdate, EngineEvent, SessionCreated},
+    resources::session_events::{EngineEvent, FlowTurnUpdate, SessionCreated},
 };
 use tokio::sync::{Mutex, broadcast};
 use uuid::Uuid;
@@ -32,7 +33,7 @@ use crate::{
     database::AppDatabase,
     email::{FeedbackEmail, FeedbackMailer},
     error::AppError,
-    session_archive::{SessionArchiveRepository, StoredPlayerInput, StoredSessionMetadata},
+    session_archive::{SessionArchiveRepository, StoredSessionMetadata, StoredStoryEdgeAction},
     session_history::{RoundHistoryEntry, SessionHistoryLog, TurnPhase},
 };
 
@@ -187,6 +188,7 @@ impl AppState {
     pub async fn record_analytics_events(
         &self,
         request: AnalyticsBatchRequest,
+        ip_address: Option<String>,
     ) -> Result<usize, AppError> {
         if request.events.len() > 100 {
             return Err(AppError::bad_request(
@@ -199,7 +201,7 @@ impl AppState {
         }
 
         self.analytics_repo
-            .append_events(&request.events)
+            .append_events(&request.events, ip_address.as_deref())
             .await
             .map_err(|err| AppError::internal(format!("写入埋点事件失败：{err:#}")))
     }
@@ -276,12 +278,28 @@ impl AppState {
             })
             .await
             .map_err(|err| AppError::internal(format!("写入会话元数据失败：{err:#}")))?;
+        let fate_weaver =
+            StoryAgent::new_fate_weaver(world_profile, protagonist_profile, key_story_beats);
+        let upper_narrator = StoryAgent::new_upper_narrator(world_profile, protagonist_profile);
+        let protagonist = StoryAgent::new_protagonist(world_profile, protagonist_profile);
+        self.session_archive_repo
+            .replace_agent_contexts_from_contexts(
+                &session_id,
+                0,
+                &[
+                    ("FateWeaver", &fate_weaver.context),
+                    ("UpperNarrator", &upper_narrator.context),
+                    ("Protagonist", &protagonist.context),
+                ],
+            )
+            .await
+            .map_err(|err| AppError::internal(format!("写入初始 Agent context 失败：{err:#}")))?;
         let session = build_session_record(
             session_id.clone(),
             engine,
             self.lifecycle_config.live_event_history_capacity,
             self.session_archive_repo.clone(),
-            TurnPhase::Idle,
+            TurnPhase::Start,
         );
 
         self.sessions
@@ -665,42 +683,24 @@ impl AppState {
         self.persist_rounds(&payload.session_id, &payload.history_log.rounds)
             .await?;
         self.session_archive_repo
-            .replace_player_inputs_from_rounds(&payload.session_id, &payload.history_log.rounds)
+            .replace_story_edges_from_rounds(&payload.session_id, &payload.history_log.rounds)
             .await
-            .map_err(|err| AppError::internal(format!("写入玩家输入历史失败：{err:#}")))?;
-        let round = payload
-            .turn_state
-            .active_turn_id
-            .max(payload.turn_state.turn_index);
+            .map_err(|err| AppError::internal(format!("写入故事边行动失败：{err:#}")))?;
         self.session_archive_repo
-            .save_agent_context(&AgentContextUpdate {
-                session_id: payload.session_id.clone(),
-                round,
-                agent_name: "FateWeaver".to_string(),
-                context: payload.fate_weaver.clone(),
-            })
+            .replace_agent_contexts_from_contexts(
+                &payload.session_id,
+                payload
+                    .turn_state
+                    .active_turn_id
+                    .max(payload.turn_state.turn_index),
+                &[
+                    ("FateWeaver", &payload.fate_weaver),
+                    ("UpperNarrator", &payload.upper_narrator),
+                    ("Protagonist", &payload.protagonist),
+                ],
+            )
             .await
-            .map_err(|err| AppError::internal(format!("写入 FateWeaver context 失败：{err:#}")))?;
-        self.session_archive_repo
-            .save_agent_context(&AgentContextUpdate {
-                session_id: payload.session_id.clone(),
-                round,
-                agent_name: "UpperNarrator".to_string(),
-                context: payload.upper_narrator.clone(),
-            })
-            .await
-            .map_err(|err| {
-                AppError::internal(format!("写入 UpperNarrator context 失败：{err:#}"))
-            })?;
-        self.session_archive_repo
-            .save_agent_context(&AgentContextUpdate {
-                session_id: payload.session_id.clone(),
-                round,
-                agent_name: "Protagonist".to_string(),
-                context: payload.protagonist.clone(),
-            })
-            .await
-            .map_err(|err| AppError::internal(format!("写入 Protagonist context 失败：{err:#}")))?;
+            .map_err(|err| AppError::internal(format!("写入 Agent context 失败：{err:#}")))?;
         Ok(())
     }
 
@@ -746,12 +746,12 @@ impl AppState {
             .load_rounds(session_id)
             .await
             .map_err(|err| AppError::internal(format!("读取完整会话历史失败：{err:#}")))?;
-        let player_inputs = self
+        let story_edge_actions = self
             .session_archive_repo
-            .load_player_inputs(session_id)
+            .load_story_edge_actions(session_id)
             .await
-            .map_err(|err| AppError::internal(format!("读取玩家输入历史失败：{err:#}")))?;
-        Ok(rounds_with_player_inputs(rounds, player_inputs))
+            .map_err(|err| AppError::internal(format!("读取故事边行动失败：{err:#}")))?;
+        Ok(rounds_with_story_edge_actions(rounds, story_edge_actions))
     }
 
     async fn load_agent_context_map(
@@ -1031,31 +1031,48 @@ fn build_hot_session(
                             if let Err(error) = session_archive_repo.save_player_input(&input).await
                             {
                                 tracing::warn!(
-                                    "failed to persist player input for {} / {}: {:?}",
+                                    "failed to persist story edge action for {} / {}: {:?}",
                                     input.session_id,
                                     input.round,
                                     error
                                 );
                             }
                         }
-                        EngineEvent::AgentContextUpdate(update) => {
+                        EngineEvent::AgentContextItemAppended(update) => {
                             if let Err(error) =
-                                session_archive_repo.save_agent_context(&update).await
+                                session_archive_repo.save_agent_context_item(&update).await
                             {
                                 tracing::warn!(
-                                    "failed to persist agent context for {} / {}: {:?}",
+                                    "failed to persist agent context item for {} / {}: {:?}",
                                     update.session_id,
                                     update.agent_name,
                                     error
                                 );
                             }
                         }
+                        EngineEvent::AgentContextRollback(rollback) => {
+                            if let Err(error) = session_archive_repo
+                                .save_agent_context_rollback(&rollback)
+                                .await
+                            {
+                                tracing::warn!(
+                                    "failed to persist agent context rollback for {} / {}: {:?}",
+                                    rollback.session_id,
+                                    rollback.agent_name,
+                                    error
+                                );
+                            }
+                        }
                         EngineEvent::FlowTurnUpdate(update) => {
+                            let persisted_phase = persisted_phase_for_flow_turn_update(&update);
                             if let Err(error) = session_archive_repo
                                 .update_session_turn_state(
                                     &update.session_id,
-                                    update.stage,
-                                    if update.stage == TurnPhase::TurnCompleted {
+                                    persisted_phase,
+                                    if matches!(
+                                        persisted_phase,
+                                        TurnPhase::AwaitingPlayer | TurnPhase::TurnCompleted
+                                    ) {
                                         update.round
                                     } else {
                                         update.round.saturating_sub(1)
@@ -1171,6 +1188,17 @@ fn apply_control(
     }
 }
 
+fn persisted_phase_for_flow_turn_update(update: &FlowTurnUpdate) -> TurnPhase {
+    if update.stage == TurnPhase::Application
+        && update.output_type == AgentOutputType::Json
+        && update.entity_name == "Protagonist"
+    {
+        TurnPhase::AwaitingPlayer
+    } else {
+        update.stage
+    }
+}
+
 fn world_state_from_database(
     metadata: StoredSessionMetadata,
     rounds: &[RoundHistoryEntry],
@@ -1178,7 +1206,7 @@ fn world_state_from_database(
     let world_snapshot = latest_world_snapshot(rounds).unwrap_or_default();
     let latest_narration = latest_narration_from_rounds(rounds, &world_snapshot);
     let current_outcome = latest_committed_action(rounds).unwrap_or_else(|| {
-        if metadata.phase == TurnPhase::Idle {
+        if metadata.phase == TurnPhase::Start {
             "start".to_string()
         } else {
             "尚未做出选择".to_string()
@@ -1293,11 +1321,11 @@ fn latest_committed_action(rounds: &[RoundHistoryEntry]) -> Option<String> {
         .map(str::to_string)
 }
 
-fn rounds_with_player_inputs(
+fn rounds_with_story_edge_actions(
     mut rounds: Vec<RoundHistoryEntry>,
-    player_inputs: Vec<StoredPlayerInput>,
+    story_edge_actions: Vec<StoredStoryEdgeAction>,
 ) -> Vec<RoundHistoryEntry> {
-    for input in player_inputs {
+    for input in story_edge_actions {
         let action = input.action.trim();
         if action.is_empty() {
             continue;
@@ -1386,7 +1414,7 @@ fn stabilize_archive_payload_from_history(
 fn is_archive_stable_phase(phase: TurnPhase) -> bool {
     matches!(
         phase,
-        TurnPhase::Idle | TurnPhase::AwaitingPlayer | TurnPhase::TurnCompleted | TurnPhase::Ended
+        TurnPhase::Start | TurnPhase::AwaitingPlayer | TurnPhase::TurnCompleted | TurnPhase::Ended
     )
 }
 
@@ -1453,7 +1481,7 @@ fn is_evictable_phase(phase: TurnPhase) -> bool {
 
 fn status_from_phase(phase: TurnPhase) -> &'static str {
     match phase {
-        TurnPhase::Idle => "pending",
+        TurnPhase::Start => "pending",
         TurnPhase::AwaitingPlayer => "awaiting_player",
         TurnPhase::TurnCompleted => "waiting_control",
         TurnPhase::Ended => "ended",
@@ -1606,21 +1634,21 @@ mod tests {
     }
 
     #[test]
-    fn player_inputs_overlay_committed_actions_from_dedicated_table() {
+    fn story_edges_overlay_committed_actions() {
         let rounds = vec![RoundHistoryEntry {
             round: 2,
             committed_action: Some("旧行动".to_string()),
             ..RoundHistoryEntry::default()
         }];
-        let merged = rounds_with_player_inputs(
+        let merged = rounds_with_story_edge_actions(
             rounds,
             vec![
-                StoredPlayerInput {
+                StoredStoryEdgeAction {
                     round: 1,
                     action_type: PlayerActionType::FreeText,
                     action: "  自定义检查密室暗门  ".to_string(),
                 },
-                StoredPlayerInput {
+                StoredStoryEdgeAction {
                     round: 2,
                     action_type: PlayerActionType::SelectedOption,
                     action: "绕到钟楼背面".to_string(),
@@ -1636,6 +1664,35 @@ mod tests {
         );
         assert_eq!(merged[1].round, 2);
         assert_eq!(merged[1].committed_action.as_deref(), Some("绕到钟楼背面"));
+    }
+
+    #[test]
+    fn protagonist_options_mark_persisted_node_as_awaiting_player() {
+        let protagonist_update = FlowTurnUpdate {
+            session_id: "session-phase".to_string(),
+            round: 3,
+            stage: TurnPhase::Application,
+            entity_name: "Protagonist".to_string(),
+            output_type: AgentOutputType::Json,
+            content: "{}".to_string(),
+        };
+        let narrator_update = FlowTurnUpdate {
+            session_id: "session-phase".to_string(),
+            round: 3,
+            stage: TurnPhase::Application,
+            entity_name: "UpperNarrator".to_string(),
+            output_type: AgentOutputType::Text,
+            content: "narration".to_string(),
+        };
+
+        assert_eq!(
+            persisted_phase_for_flow_turn_update(&protagonist_update),
+            TurnPhase::AwaitingPlayer
+        );
+        assert_eq!(
+            persisted_phase_for_flow_turn_update(&narrator_update),
+            TurnPhase::Application
+        );
     }
 
     #[tokio::test]

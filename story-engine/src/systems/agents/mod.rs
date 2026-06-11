@@ -12,7 +12,7 @@ fn publish_apply_error(
     error: String,
 ) {
     event_sink.publish_flow_turn_error(
-        flow.active_turn_id.max(1),
+        flow.active_turn_id().max(1),
         flow.stage,
         entity_name.to_string(),
         error,

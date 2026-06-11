@@ -24,8 +24,13 @@ CREATE TABLE IF NOT EXISTS analytics_events (
     utm_campaign TEXT,
     device_type TEXT,
     platform TEXT,
+    ip_address TEXT,
     properties_json TEXT NOT NULL
 );
+"#;
+
+const ADD_ANALYTICS_IP_ADDRESS_COLUMN_SQL: &str = r#"
+ALTER TABLE analytics_events ADD COLUMN ip_address TEXT;
 "#;
 
 const CREATE_ANALYTICS_EVENT_TIME_INDEX_SQL: &str = r#"
@@ -58,7 +63,11 @@ impl AnalyticsRepository {
         Self { db }
     }
 
-    pub async fn append_events(&self, events: &[AnalyticsEventInput]) -> Result<usize> {
+    pub async fn append_events(
+        &self,
+        events: &[AnalyticsEventInput],
+        ip_address: Option<&str>,
+    ) -> Result<usize> {
         if events.is_empty() {
             return Ok(0);
         }
@@ -94,10 +103,11 @@ impl AnalyticsRepository {
                     utm_campaign,
                     device_type,
                     platform,
+                    ip_address,
                     properties_json
                 ) VALUES (
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
-                    ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18
+                    ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19
                 )
                 "#,
                 params![
@@ -118,6 +128,7 @@ impl AnalyticsRepository {
                     event.utm_campaign,
                     event.device_type,
                     event.platform,
+                    ip_address,
                     properties_json,
                 ],
             )
@@ -206,6 +217,10 @@ pub struct AnalyticsRecentEvent {
 fn init_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(CREATE_ANALYTICS_EVENTS_TABLE_SQL)
         .context("failed to create analytics_events table")?;
+    if !analytics_events_has_column(conn, "ip_address")? {
+        conn.execute_batch(ADD_ANALYTICS_IP_ADDRESS_COLUMN_SQL)
+            .context("failed to add analytics_events ip_address column")?;
+    }
     conn.execute_batch(CREATE_ANALYTICS_EVENT_TIME_INDEX_SQL)
         .context("failed to create analytics event time index")?;
     conn.execute_batch(CREATE_ANALYTICS_USER_INDEX_SQL)
@@ -215,6 +230,17 @@ fn init_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(CREATE_ANALYTICS_SOURCE_SESSION_INDEX_SQL)
         .context("failed to create analytics source session index")?;
     Ok(())
+}
+
+fn analytics_events_has_column(conn: &Connection, column_name: &str) -> Result<bool> {
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(analytics_events)")
+        .context("failed to inspect analytics_events columns")?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .context("failed to query analytics_events columns")?;
+    let columns = collect_rows(rows)?;
+    Ok(columns.iter().any(|column| column == column_name))
 }
 
 fn read_totals(conn: &Connection, since: &str) -> Result<AnalyticsTotals> {
@@ -422,28 +448,29 @@ mod tests {
         };
 
         let accepted = repo
-            .append_events(&[event])
+            .append_events(&[event], Some("203.0.113.42"))
             .await
             .expect("event should write");
 
         assert_eq!(accepted, 1);
 
         let conn = Connection::open(&db_path).expect("sqlite db should open");
-        let row: (String, String, String) = conn
+        let row: (String, String, String, String) = conn
             .query_row(
                 r#"
-                SELECT event_name, utm_source, properties_json
+                SELECT event_name, utm_source, ip_address, properties_json
                 FROM analytics_events
                 WHERE id = 'evt-test'
                 "#,
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .expect("analytics event should be queryable");
 
         assert_eq!(row.0, "choice_submitted");
         assert_eq!(row.1, "bilibili");
-        assert!(row.2.contains("\"round\":2"));
+        assert_eq!(row.2, "203.0.113.42");
+        assert!(row.3.contains("\"round\":2"));
     }
 
     #[tokio::test]
@@ -515,7 +542,7 @@ mod tests {
             },
         ];
 
-        repo.append_events(&events)
+        repo.append_events(&events, None)
             .await
             .expect("events should write");
 

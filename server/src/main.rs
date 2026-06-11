@@ -33,9 +33,12 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("failed to bind to {}", addr))?;
 
-    axum::serve(listener, app)
-        .await
-        .context("failed to start akashic-server")?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .context("failed to start akashic-server")?;
 
     Ok(())
 }

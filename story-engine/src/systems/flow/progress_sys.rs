@@ -30,7 +30,7 @@ pub fn flow_progress_system(
             TurnStage::Simulation => {
                 if flow_end.is_some() {
                     commands.entity(session_entity).remove::<FlowEnd>();
-                    let round = flow.active_turn_id.max(1);
+                    let round = flow.active_turn_id().max(1);
                     flow.end();
                     event_sink.publish_flow_turn_end(round);
                     continue;
@@ -45,13 +45,13 @@ pub fn flow_progress_system(
                     .filter(|(owner, completed)| {
                         owner.parent() == session_entity
                             && completed
-                                .is_some_and(|completed| completed.turn_id == flow.active_turn_id)
+                                .is_some_and(|completed| completed.turn_id == flow.active_turn_id())
                     })
                     .count();
 
                 if total == 0 {
                     event_sink.publish_flow_turn_error(
-                        flow.active_turn_id.max(1),
+                        flow.active_turn_id().max(1),
                         flow.stage,
                         "flow",
                         "simulation stage has no simulator entities",
@@ -71,13 +71,13 @@ pub fn flow_progress_system(
                     .filter(|(owner, completed)| {
                         owner.parent() == session_entity
                             && completed
-                                .is_some_and(|completed| completed.turn_id == flow.active_turn_id)
+                                .is_some_and(|completed| completed.turn_id == flow.active_turn_id())
                     })
                     .count();
 
                 if total == 0 {
                     event_sink.publish_flow_turn_error(
-                        flow.active_turn_id.max(1),
+                        flow.active_turn_id().max(1),
                         flow.stage,
                         "flow",
                         "application stage has no applicator entities",
@@ -85,7 +85,7 @@ pub fn flow_progress_system(
                     flow.stage = TurnStage::Failed;
                 } else if resolved == total && flow_end.is_some() {
                     commands.entity(session_entity).remove::<FlowEnd>();
-                    let round = flow.active_turn_id.max(1);
+                    let round = flow.active_turn_id().max(1);
                     flow.end();
                     event_sink.publish_flow_turn_end(round);
                 } else if resolved == total {
@@ -93,16 +93,17 @@ pub fn flow_progress_system(
                 }
             }
             TurnStage::AwaitingPlayer => {
-                if player_input.is_some_and(|completed| completed.turn_id == flow.active_turn_id) {
+                if player_input.is_some_and(|completed| completed.turn_id == flow.active_turn_id())
+                {
                     commands
                         .entity(session_entity)
                         .remove::<PlayerInputCompleted>();
-                    let round = flow.active_turn_id.max(1);
+                    let round = flow.active_turn_id().max(1);
                     flow.finish_turn();
                     event_sink.publish_flow_turn_completed(round);
                 }
             }
-            TurnStage::Idle | TurnStage::TurnCompleted | TurnStage::Ended | TurnStage::Failed => {}
+            TurnStage::Start | TurnStage::TurnCompleted | TurnStage::Ended | TurnStage::Failed => {}
         }
     }
 }

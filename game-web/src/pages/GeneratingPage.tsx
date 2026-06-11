@@ -392,14 +392,10 @@ const GeneratingPage: React.FC = () => {
               </SecondaryButton>
               <PrimaryButton
                 onClick={handleEnterWorld}
-                disabled={!canEnterWorld && isLoading}
+                disabled={isLoading}
                 className="min-h-9 min-w-0 flex-1 px-3 py-2 text-xs sm:flex-none sm:px-4 sm:text-sm"
               >
-                {canEnterWorld
-                  ? "步入回响"
-                  : isLoading
-                    ? "共鸣中..."
-                    : "再次步入回响"}
+                {isLoading ? "共鸣中..." : "步入回响"}
               </PrimaryButton>
             </div>
           ) : null}

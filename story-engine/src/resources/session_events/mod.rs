@@ -1,8 +1,9 @@
 mod event_pipeline;
 
 pub use event_pipeline::{
-    AgentContextUpdate, EngineEvent, FlowTurnCompleted, FlowTurnEnd, FlowTurnError, FlowTurnUpdate,
-    PlayerInput, SessionCreated, TaskCompleted, TaskUpdate,
+    AgentContextItemAppended, AgentContextRollback, AgentContextRollbackPolicy, EngineEvent,
+    FlowTurnCompleted, FlowTurnEnd, FlowTurnError, FlowTurnUpdate, PlayerInput, SessionCreated,
+    TaskCompleted, TaskUpdate,
 };
 pub(crate) use event_pipeline::{EventPipeline, EventPipelineHandle};
 

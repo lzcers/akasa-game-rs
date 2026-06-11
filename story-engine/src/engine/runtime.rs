@@ -118,7 +118,7 @@ impl SessionRuntime {
                     let turn_id = self
                         .world
                         .get::<TurnFlow>(entity)
-                        .map(|flow| flow.active_turn_id)
+                        .map(|flow| flow.active_turn_id())
                         .unwrap_or_default();
                     self.world.resource_mut::<Messages<PlayerCommand>>().write(
                         PlayerCommand::SubmitPlayerAction {

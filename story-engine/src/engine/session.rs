@@ -184,7 +184,6 @@ impl SessionRuntime {
                 },
                 TurnFlow {
                     turn_index: state.turn_index,
-                    active_turn_id: state.active_turn_id,
                     stage: state.phase,
                 },
                 state.world_snapshot,

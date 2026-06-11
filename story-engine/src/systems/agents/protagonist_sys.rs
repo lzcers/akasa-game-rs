@@ -16,6 +16,7 @@ use crate::{
     },
     prompts::world_prompt,
     resources::agent_task_manager::{AgentTaskManager, TaskStatus},
+    resources::session_events::AgentContextRollbackPolicy,
     utils::parse_json_response,
 };
 
@@ -46,14 +47,15 @@ pub fn protagonist_dispatch_system(
             for (entity, ..) in agents.iter_mut().filter(|(_, agent, owner, completed)| {
                 owner.parent() == session_entity
                     && agent.role == AgentRole::Protagonist
-                    && !completed.is_some_and(|completed| completed.turn_id == flow.active_turn_id)
+                    && !completed
+                        .is_some_and(|completed| completed.turn_id == flow.active_turn_id())
             }) {
                 commands.entity(entity).insert((
                     ApplicationCompleted {
-                        turn_id: flow.active_turn_id,
+                        turn_id: flow.active_turn_id(),
                     },
                     ApplicationSkipped {
-                        turn_id: flow.active_turn_id,
+                        turn_id: flow.active_turn_id(),
                     },
                 ));
             }
@@ -73,14 +75,14 @@ pub fn protagonist_dispatch_system(
                         && agent.role == AgentRole::Protagonist
                         && agent_tasks.task_result(*entity).is_none()
                         && !completed
-                            .is_some_and(|completed| completed.turn_id == flow.active_turn_id)
+                            .is_some_and(|completed| completed.turn_id == flow.active_turn_id())
                 })
         {
-            agent.append_user_message(&prompt);
-            event_sink.publish_agent_context_update(
-                flow.active_turn_id.max(1),
+            let message = agent.append_user_message(&prompt);
+            event_sink.publish_agent_context_item_appended(
+                flow.active_turn_id().max(1),
                 agent.name.clone(),
-                agent.context.clone(),
+                message,
             );
             commands.entity(entity).insert(PendingReasoning);
         }
@@ -131,12 +133,13 @@ pub fn protagonist_apply_system(
                                 format!("{error}；已达到最大重试次数。"),
                             );
                             agent_tasks.clear_task(entity);
-                            agent.revert();
-                            event_sink.publish_agent_context_update(
-                                flow.active_turn_id.max(1),
-                                agent.name.clone(),
-                                agent.context.clone(),
-                            );
+                            if agent.revert() {
+                                event_sink.publish_agent_context_rollback(
+                                    flow.active_turn_id().max(1),
+                                    agent.name.clone(),
+                                    AgentContextRollbackPolicy::LatestInput,
+                                );
+                            }
                             flow.stage = TurnStage::Failed;
                             break;
                         }
@@ -147,14 +150,14 @@ pub fn protagonist_apply_system(
                     let normalized_output =
                         serde_json::to_string_pretty(&options).unwrap_or_else(|_| output.clone());
                     let _ = agent_tasks.take_result(entity);
-                    agent.append_assistant_message(&normalized_output);
-                    event_sink.publish_agent_context_update(
-                        flow.active_turn_id.max(1),
+                    let message = agent.append_assistant_message(&normalized_output);
+                    event_sink.publish_agent_context_item_appended(
+                        flow.active_turn_id().max(1),
                         agent.name.clone(),
-                        agent.context.clone(),
+                        message,
                     );
                     event_sink.publish_flow_turn_update(
-                        flow.active_turn_id.max(1),
+                        flow.active_turn_id().max(1),
                         flow.stage,
                         agent.name.clone(),
                         agent.output_type,
@@ -162,7 +165,7 @@ pub fn protagonist_apply_system(
                     );
                     decision_state.replace_with_options(options);
                     commands.entity(entity).insert(ApplicationCompleted {
-                        turn_id: flow.active_turn_id,
+                        turn_id: flow.active_turn_id(),
                     });
                 }
                 TaskStatus::Error => {

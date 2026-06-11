@@ -135,15 +135,19 @@ impl Agent {
         }
     }
 
-    pub fn append_user_message(&mut self, content: &str) {
-        self.context.add_message(Message::user(content));
+    pub fn append_user_message(&mut self, content: &str) -> Message {
+        let message = Message::user(content);
+        self.context.add_message(message.clone());
+        message
     }
 
-    pub fn append_assistant_message(&mut self, content: &str) {
-        self.context.add_message(Message::assistant(content));
+    pub fn append_assistant_message(&mut self, content: &str) -> Message {
+        let message = Message::assistant(content);
+        self.context.add_message(message.clone());
+        message
     }
 
-    pub fn revert(&mut self) {
-        self.context.rollback_latest_input();
+    pub fn revert(&mut self) -> bool {
+        self.context.rollback_latest_input()
     }
 }

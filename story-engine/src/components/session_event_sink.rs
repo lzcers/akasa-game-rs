@@ -1,12 +1,12 @@
-use agent::agent::Context;
+use agent::core::Message;
 use bevy_ecs::component::Component;
 
 use crate::{
     components::{agent::AgentOutputType, outcome::PlayerActionType, turn_flow::TurnStage},
     resources::session_events::{
-        AgentContextUpdate, EngineEvent, EventPipeline, FlowTurnCompleted, FlowTurnEnd,
-        FlowTurnError, FlowTurnUpdate, PlayerInput, SessionCreated, SessionEventHandle,
-        TaskCompleted, TaskUpdate,
+        AgentContextItemAppended, AgentContextRollback, AgentContextRollbackPolicy, EngineEvent,
+        EventPipeline, FlowTurnCompleted, FlowTurnEnd, FlowTurnError, FlowTurnUpdate, PlayerInput,
+        SessionCreated, SessionEventHandle, TaskCompleted, TaskUpdate,
     },
 };
 
@@ -90,20 +90,36 @@ impl SessionEventSink {
         self.event_pipeline.publish(EngineEvent::PlayerInput(input));
     }
 
-    pub fn publish_agent_context_update(
+    pub fn publish_agent_context_item_appended(
         &self,
         round: u64,
         agent_name: impl Into<String>,
-        context: Context,
+        message: Message,
     ) {
-        let update = AgentContextUpdate {
+        let update = AgentContextItemAppended {
             session_id: self.session_id.clone(),
             round,
             agent_name: agent_name.into(),
-            context,
+            message,
         };
         self.event_pipeline
-            .publish(EngineEvent::AgentContextUpdate(update));
+            .publish(EngineEvent::AgentContextItemAppended(update));
+    }
+
+    pub fn publish_agent_context_rollback(
+        &self,
+        round: u64,
+        agent_name: impl Into<String>,
+        policy: AgentContextRollbackPolicy,
+    ) {
+        let rollback = AgentContextRollback {
+            session_id: self.session_id.clone(),
+            round,
+            agent_name: agent_name.into(),
+            policy,
+        };
+        self.event_pipeline
+            .publish(EngineEvent::AgentContextRollback(rollback));
     }
 
     pub fn publish_flow_turn_update(
@@ -164,7 +180,7 @@ impl SessionEventSink {
 
 #[cfg(test)]
 mod tests {
-    use agent::agent::Context;
+    use agent::core::Message;
 
     use super::*;
 
@@ -206,14 +222,36 @@ mod tests {
             other => panic!("expected player input, got {other:?}"),
         }
 
-        sink.publish_agent_context_update(3, "UpperNarrator", Context::default());
+        sink.publish_agent_context_item_appended(
+            3,
+            "UpperNarrator",
+            Message::user("latest context"),
+        );
         match events.recv().await.unwrap() {
-            EngineEvent::AgentContextUpdate(update) => {
+            EngineEvent::AgentContextItemAppended(update) => {
                 assert_eq!(update.session_id, "session-1");
                 assert_eq!(update.round, 3);
                 assert_eq!(update.agent_name, "UpperNarrator");
+                assert!(
+                    matches!(update.message, Message::User { content } if content == "latest context")
+                );
             }
-            other => panic!("expected agent context update, got {other:?}"),
+            other => panic!("expected agent context item append, got {other:?}"),
+        }
+
+        sink.publish_agent_context_rollback(
+            3,
+            "UpperNarrator",
+            AgentContextRollbackPolicy::LatestInput,
+        );
+        match events.recv().await.unwrap() {
+            EngineEvent::AgentContextRollback(rollback) => {
+                assert_eq!(rollback.session_id, "session-1");
+                assert_eq!(rollback.round, 3);
+                assert_eq!(rollback.agent_name, "UpperNarrator");
+                assert_eq!(rollback.policy, AgentContextRollbackPolicy::LatestInput);
+            }
+            other => panic!("expected agent context rollback, got {other:?}"),
         }
 
         sink.publish_flow_turn_update(

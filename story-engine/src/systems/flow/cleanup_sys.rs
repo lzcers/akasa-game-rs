@@ -41,28 +41,28 @@ pub fn cleanup_previous_turn_outcomes_system(
             .iter()
             .filter(|(_, owner, ..)| owner.parent() == session_entity)
         {
-            if simulation.is_some_and(|outcome| outcome.turn_id == turn_flow.active_turn_id) {
+            if simulation.is_some_and(|outcome| outcome.turn_id == turn_flow.active_turn_id()) {
                 commands.entity(agent_entity).remove::<SimulationOutcome>();
             }
-            if narration.is_some_and(|outcome| outcome.turn_id == turn_flow.active_turn_id) {
+            if narration.is_some_and(|outcome| outcome.turn_id == turn_flow.active_turn_id()) {
                 commands.entity(agent_entity).remove::<NarrationOutcome>();
             }
             if simulation_completed
-                .is_some_and(|completed| completed.turn_id == turn_flow.active_turn_id)
+                .is_some_and(|completed| completed.turn_id == turn_flow.active_turn_id())
             {
                 commands
                     .entity(agent_entity)
                     .remove::<SimulationCompleted>();
             }
             if application_completed
-                .is_some_and(|completed| completed.turn_id == turn_flow.active_turn_id)
+                .is_some_and(|completed| completed.turn_id == turn_flow.active_turn_id())
             {
                 commands
                     .entity(agent_entity)
                     .remove::<ApplicationCompleted>();
             }
             if application_skipped
-                .is_some_and(|skipped| skipped.turn_id == turn_flow.active_turn_id)
+                .is_some_and(|skipped| skipped.turn_id == turn_flow.active_turn_id())
             {
                 commands.entity(agent_entity).remove::<ApplicationSkipped>();
             }
@@ -82,7 +82,6 @@ mod tests {
         let session = world
             .spawn(TurnFlow {
                 turn_index: 1,
-                active_turn_id: 1,
                 stage: TurnStage::TurnCompleted,
             })
             .id();

@@ -1,4 +1,4 @@
-use agent::agent::Context;
+use agent::core::Message;
 use tokio::sync::broadcast;
 
 use crate::components::{agent::AgentOutputType, outcome::PlayerActionType, turn_flow::TurnStage};
@@ -10,7 +10,8 @@ pub enum EngineEvent {
     TaskUpdate(TaskUpdate),
     TaskCompleted(TaskCompleted),
     PlayerInput(PlayerInput),
-    AgentContextUpdate(AgentContextUpdate),
+    AgentContextItemAppended(AgentContextItemAppended),
+    AgentContextRollback(AgentContextRollback),
     FlowTurnUpdate(FlowTurnUpdate),
     FlowTurnCompleted(FlowTurnCompleted),
     FlowTurnEnd(FlowTurnEnd),
@@ -55,11 +56,26 @@ pub struct PlayerInput {
 
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentContextUpdate {
+pub struct AgentContextItemAppended {
     pub session_id: String,
     pub round: u64,
     pub agent_name: String,
-    pub context: Context,
+    pub message: Message,
+}
+
+#[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentContextRollback {
+    pub session_id: String,
+    pub round: u64,
+    pub agent_name: String,
+    pub policy: AgentContextRollbackPolicy,
+}
+
+#[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentContextRollbackPolicy {
+    LatestInput,
 }
 
 #[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]

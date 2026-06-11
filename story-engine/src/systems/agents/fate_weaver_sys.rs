@@ -17,6 +17,7 @@ use crate::{
         world_snapshot::WorldSnapshot,
     },
     resources::agent_task_manager::{AgentTaskManager, TaskStatus},
+    resources::session_events::AgentContextRollbackPolicy,
     utils::parse_json_response,
 };
 
@@ -54,18 +55,17 @@ pub fn fate_weaver_dispatch_system(
         for (entity, mut agent, _) in agents.iter_mut().filter(|(entity, _, owner)| {
             owner.parent() == session_entity && agent_tasks.task_result(*entity).is_none()
         }) {
-            let action_round = flow.active_turn_id.saturating_sub(1);
-            agent.append_user_message(
-                &json!({
-                    "round": action_round,
-                    "outcome": decision_state.committed_action(),
-                })
-                .to_string(),
-            );
-            event_sink.publish_agent_context_update(
-                flow.active_turn_id.max(1),
+            let action_round = flow.active_turn_id().saturating_sub(1);
+            let prompt = json!({
+                "round": action_round,
+                "outcome": decision_state.committed_action(),
+            })
+            .to_string();
+            let message = agent.append_user_message(&prompt);
+            event_sink.publish_agent_context_item_appended(
+                flow.active_turn_id().max(1),
                 agent.name.clone(),
-                agent.context.clone(),
+                message,
             );
             commands.entity(entity).insert(PendingReasoning);
         }
@@ -114,31 +114,32 @@ pub fn fate_weaver_apply_system(
                                     format!("{error}；已达到最大重试次数。"),
                                 );
                                 agent_tasks.clear_task(entity);
-                                agent.revert();
-                                event_sink.publish_agent_context_update(
-                                    flow.active_turn_id.max(1),
-                                    agent.name.clone(),
-                                    agent.context.clone(),
-                                );
+                                if agent.revert() {
+                                    event_sink.publish_agent_context_rollback(
+                                        flow.active_turn_id().max(1),
+                                        agent.name.clone(),
+                                        AgentContextRollbackPolicy::LatestInput,
+                                    );
+                                }
                                 flow.stage = TurnStage::Failed;
                                 break;
                             }
                         };
-                        snapshot.round = flow.active_turn_id;
+                        snapshot.round = flow.active_turn_id();
                         if let Ok(normalized_output) = serde_json::to_string_pretty(&snapshot) {
                             output = normalized_output;
                         }
                         *world_snapshot = snapshot;
                     }
                     let _ = agent_tasks.take_result(entity);
-                    agent.append_assistant_message(&output);
-                    event_sink.publish_agent_context_update(
-                        flow.active_turn_id.max(1),
+                    let message = agent.append_assistant_message(&output);
+                    event_sink.publish_agent_context_item_appended(
+                        flow.active_turn_id().max(1),
                         agent.name.clone(),
-                        agent.context.clone(),
+                        message,
                     );
                     event_sink.publish_flow_turn_update(
-                        flow.active_turn_id.max(1),
+                        flow.active_turn_id().max(1),
                         flow.stage,
                         agent.name.clone(),
                         agent.output_type,
@@ -147,11 +148,11 @@ pub fn fate_weaver_apply_system(
                     commands
                         .entity(entity)
                         .insert(SimulationOutcome {
-                            turn_id: flow.active_turn_id,
+                            turn_id: flow.active_turn_id(),
                             content: output,
                         })
                         .insert(SimulationCompleted {
-                            turn_id: flow.active_turn_id,
+                            turn_id: flow.active_turn_id(),
                         });
                 }
                 TaskStatus::Error => {

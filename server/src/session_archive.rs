@@ -1,14 +1,15 @@
-use agent::agent::Context as AgentContext;
+use agent::{agent::Context as AgentContext, core::Message};
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use story_engine::{
     components::{
         agent::AgentOutputType,
-        outcome::{PlayerActionType, ProtagonistOptions},
+        outcome::{PlayerActionType, ProtagonistOption, ProtagonistOptions},
         world_snapshot::WorldSnapshot,
     },
     resources::session_events::{
-        AgentContextUpdate, FlowTurnError, FlowTurnUpdate, PlayerInput, SessionCreated,
+        AgentContextItemAppended, AgentContextRollback, AgentContextRollbackPolicy, FlowTurnError,
+        FlowTurnUpdate, PlayerInput, SessionCreated,
     },
 };
 
@@ -19,61 +20,102 @@ use crate::database::AppDatabase;
 const CREATE_SESSIONS_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS sessions (
     session_id TEXT PRIMARY KEY,
+    root_node_id TEXT NOT NULL,
+    active_node_id TEXT NOT NULL,
+    total_node_count INTEGER NOT NULL,
     world_profile TEXT NOT NULL,
     protagonist_profile TEXT NOT NULL,
     key_story_beats TEXT NOT NULL,
-    phase TEXT NOT NULL,
-    turn_index INTEGER NOT NULL,
-    active_turn_id INTEGER NOT NULL,
-    flow_end INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     last_accessed_at TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_sessions_active_node
+ON sessions(session_id, active_node_id);
 "#;
 
-const CREATE_FLOW_TURNS_TABLE_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS flow_turns (
+const CREATE_STORY_NODES_TABLE_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS story_nodes (
     session_id TEXT NOT NULL,
-    round INTEGER NOT NULL,
+    node_id TEXT NOT NULL,
+    parent_node_id TEXT,
+    node_depth INTEGER NOT NULL,
+    sequence_index INTEGER NOT NULL,
+    phase TEXT NOT NULL,
+    flow_end INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_accessed_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, node_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_story_nodes_parent
+ON story_nodes(session_id, parent_node_id);
+
+CREATE INDEX IF NOT EXISTS idx_story_nodes_depth
+ON story_nodes(session_id, node_depth);
+
+CREATE INDEX IF NOT EXISTS idx_story_nodes_sequence
+ON story_nodes(session_id, sequence_index);
+"#;
+
+const CREATE_STORY_EDGES_TABLE_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS story_edges (
+    session_id TEXT NOT NULL,
+    from_node_id TEXT NOT NULL,
+    to_node_id TEXT NOT NULL,
+    action_type TEXT NOT NULL,
+    action TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, from_node_id, to_node_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_story_edges_from
+ON story_edges(session_id, from_node_id);
+
+CREATE INDEX IF NOT EXISTS idx_story_edges_to
+ON story_edges(session_id, to_node_id);
+"#;
+
+const CREATE_FLOW_OUTPUTS_TABLE_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS flow_outputs (
+    session_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
     stage TEXT NOT NULL,
     entity_name TEXT NOT NULL,
     output_type TEXT NOT NULL,
     content TEXT NOT NULL,
-    PRIMARY KEY (session_id, round, stage, entity_name, output_type)
-);
-
-CREATE INDEX IF NOT EXISTS idx_flow_turns_session_round
-ON flow_turns(session_id, round);
-"#;
-
-const CREATE_AGENT_CONTEXTS_TABLE_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS agent_contexts (
-    session_id TEXT NOT NULL,
-    agent_name TEXT NOT NULL,
-    round INTEGER NOT NULL,
-    context_json TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    PRIMARY KEY (session_id, agent_name)
+    PRIMARY KEY (session_id, node_id, stage, entity_name, output_type)
 );
 
-CREATE INDEX IF NOT EXISTS idx_agent_contexts_session
-ON agent_contexts(session_id);
+CREATE INDEX IF NOT EXISTS idx_flow_outputs_node
+ON flow_outputs(session_id, node_id);
 "#;
 
-const CREATE_PLAYER_INPUTS_TABLE_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS player_inputs (
+const DROP_OBSOLETE_AGENT_CONTEXTS_TABLE_SQL: &str = r#"
+DROP TABLE IF EXISTS agent_contexts;
+"#;
+
+const CREATE_AGENT_CONTEXT_ITEMS_TABLE_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS agent_context_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL,
-    round INTEGER NOT NULL,
-    action_type TEXT NOT NULL,
-    action TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    agent_name TEXT NOT NULL,
+    item_index INTEGER NOT NULL,
+    item_kind TEXT NOT NULL,
+    message_role TEXT,
+    content TEXT,
+    message_json TEXT,
     created_at TEXT NOT NULL,
-    PRIMARY KEY (session_id, round)
+    UNIQUE(session_id, node_id, agent_name, item_index)
 );
 
-CREATE INDEX IF NOT EXISTS idx_player_inputs_session_round
-ON player_inputs(session_id, round);
+CREATE INDEX IF NOT EXISTS idx_agent_context_items_node
+ON agent_context_items(session_id, node_id, agent_name, item_index);
 "#;
 
 #[derive(Debug, Clone)]
@@ -100,7 +142,7 @@ pub struct StoredAgentContext {
 }
 
 #[derive(Debug, Clone)]
-pub struct StoredPlayerInput {
+pub struct StoredStoryEdgeAction {
     pub round: u64,
     pub action_type: PlayerActionType,
     pub action: String,
@@ -112,6 +154,14 @@ pub struct StoredSessionRoundPage {
     pub next_before_round: Option<u64>,
     pub has_more: bool,
 }
+
+#[derive(Debug, Clone)]
+struct StoryPathNode {
+    node_id: String,
+    node_depth: u64,
+}
+
+const ROOT_NODE_ID: &str = "start";
 
 impl SessionArchiveRepository {
     pub fn new(db: AppDatabase) -> Self {
@@ -128,42 +178,27 @@ impl SessionArchiveRepository {
         let conn = self.db.open_connection("sessions")?;
         init_schema(&conn)?;
         let now = chrono::Utc::now().to_rfc3339();
-        conn.execute(
-            r#"
-            INSERT INTO sessions (
+        upsert_session_base(
+            &conn,
+            SessionBaseRecord {
                 session_id,
-                world_profile,
-                protagonist_profile,
-                key_story_beats,
-                phase,
-                turn_index,
-                active_turn_id,
-                flow_end,
-                created_at,
-                updated_at,
-                last_accessed_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, 0, ?6, ?6, ?6)
-            ON CONFLICT(session_id) DO UPDATE SET
-                world_profile = excluded.world_profile,
-                protagonist_profile = excluded.protagonist_profile,
-                key_story_beats = excluded.key_story_beats,
-                phase = excluded.phase,
-                turn_index = excluded.turn_index,
-                active_turn_id = excluded.active_turn_id,
-                flow_end = excluded.flow_end,
-                updated_at = excluded.updated_at,
-                last_accessed_at = excluded.last_accessed_at
-            "#,
-            params![
-                session_id,
-                event.world_profile,
-                event.protagonist_profile,
-                event.key_story_beats,
-                serialize_phase(TurnPhase::Idle)?,
-                now,
-            ],
-        )
-        .context("failed to upsert session metadata")?;
+                world_profile: &event.world_profile,
+                protagonist_profile: &event.protagonist_profile,
+                key_story_beats: &event.key_story_beats,
+                active_node_id: ROOT_NODE_ID,
+                total_node_count: 0,
+            },
+            &now,
+        )?;
+        ensure_linear_story_path(&conn, session_id, 0, &now)?;
+        update_story_node_state(
+            &conn,
+            session_id,
+            ROOT_NODE_ID,
+            TurnPhase::Start,
+            Some(false),
+            &now,
+        )?;
         Ok(())
     }
 
@@ -173,53 +208,35 @@ impl SessionArchiveRepository {
             return Ok(());
         }
 
-        let turn_index = i64::try_from(metadata.turn_index)
-            .context("turn_index exceeds SQLite INTEGER range")?;
-        let active_turn_id = i64::try_from(metadata.active_turn_id)
-            .context("active_turn_id exceeds SQLite INTEGER range")?;
+        let active_node_depth = metadata.active_turn_id.max(metadata.turn_index);
+        let active_node_id = linear_node_id_for_depth(active_node_depth);
+        let total_node_count = i64::try_from(active_node_depth)
+            .context("total node count exceeds SQLite INTEGER range")?;
         let _guard = self.db.lock().await;
         let conn = self.db.open_connection("sessions")?;
         init_schema(&conn)?;
         let now = chrono::Utc::now().to_rfc3339();
-        conn.execute(
-            r#"
-            INSERT INTO sessions (
+        upsert_session_base(
+            &conn,
+            SessionBaseRecord {
                 session_id,
-                world_profile,
-                protagonist_profile,
-                key_story_beats,
-                phase,
-                turn_index,
-                active_turn_id,
-                flow_end,
-                created_at,
-                updated_at,
-                last_accessed_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?9)
-            ON CONFLICT(session_id) DO UPDATE SET
-                world_profile = excluded.world_profile,
-                protagonist_profile = excluded.protagonist_profile,
-                key_story_beats = excluded.key_story_beats,
-                phase = excluded.phase,
-                turn_index = excluded.turn_index,
-                active_turn_id = excluded.active_turn_id,
-                flow_end = excluded.flow_end,
-                updated_at = excluded.updated_at,
-                last_accessed_at = excluded.last_accessed_at
-            "#,
-            params![
-                session_id,
-                metadata.world_profile,
-                metadata.protagonist_profile,
-                metadata.key_story_beats,
-                serialize_phase(metadata.phase)?,
-                turn_index,
-                active_turn_id,
-                metadata.flow_end,
-                now,
-            ],
-        )
-        .context("failed to upsert session metadata")?;
+                world_profile: &metadata.world_profile,
+                protagonist_profile: &metadata.protagonist_profile,
+                key_story_beats: &metadata.key_story_beats,
+                active_node_id: &active_node_id,
+                total_node_count,
+            },
+            &now,
+        )?;
+        ensure_linear_story_path(&conn, session_id, active_node_depth, &now)?;
+        update_story_node_state(
+            &conn,
+            session_id,
+            &active_node_id,
+            metadata.phase,
+            Some(metadata.flow_end),
+            &now,
+        )?;
         Ok(())
     }
 
@@ -235,29 +252,26 @@ impl SessionArchiveRepository {
             return Ok(());
         }
 
-        let turn_index = i64::try_from(turn_index).context("turn_index exceeds SQLite range")?;
-        let active_turn_id =
-            i64::try_from(active_turn_id).context("active_turn_id exceeds SQLite range")?;
+        let active_node_depth = active_turn_id.max(turn_index);
+        let active_node_id = linear_node_id_for_depth(active_node_depth);
+        let total_node_count =
+            i64::try_from(active_node_depth).context("total node count exceeds SQLite range")?;
         let _guard = self.db.lock().await;
         let conn = self.db.open_connection("sessions")?;
         init_schema(&conn)?;
+        let now = chrono::Utc::now().to_rfc3339();
+        ensure_linear_story_path(&conn, session_id, active_node_depth, &now)?;
+        update_story_node_state(&conn, session_id, &active_node_id, phase, None, &now)?;
         conn.execute(
             r#"
             UPDATE sessions
-            SET phase = ?2,
-                turn_index = ?3,
-                active_turn_id = ?4,
-                updated_at = ?5,
-                last_accessed_at = ?5
+            SET active_node_id = ?2,
+                total_node_count = MAX(total_node_count, ?3),
+                updated_at = ?4,
+                last_accessed_at = ?4
             WHERE session_id = ?1
             "#,
-            params![
-                session_id,
-                serialize_phase(phase)?,
-                turn_index,
-                active_turn_id,
-                chrono::Utc::now().to_rfc3339(),
-            ],
+            params![session_id, active_node_id, total_node_count, now],
         )
         .context("failed to update session turn state")?;
         Ok(())
@@ -273,35 +287,40 @@ impl SessionArchiveRepository {
         conn.query_row(
             r#"
             SELECT
-                session_id,
-                world_profile,
-                protagonist_profile,
-                key_story_beats,
-                phase,
-                turn_index,
-                active_turn_id,
-                flow_end
-            FROM sessions
-            WHERE session_id = ?1
+                s.session_id,
+                s.world_profile,
+                s.protagonist_profile,
+                s.key_story_beats,
+                n.phase,
+                n.node_depth,
+                n.flow_end
+            FROM sessions s
+            JOIN story_nodes n
+                ON n.session_id = s.session_id
+                AND n.node_id = s.active_node_id
+            WHERE s.session_id = ?1
             "#,
             params![session_id],
             |row| {
                 let phase: String = row.get(4)?;
+                let phase = deserialize_phase(&phase).map_err(|err| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
+                    )
+                })?;
+                let node_depth: u64 = row.get::<_, i64>(5)?.try_into().unwrap_or_default();
+                let (turn_index, active_turn_id) = turn_state_from_active_node(phase, node_depth);
                 Ok(StoredSessionMetadata {
                     session_id: row.get(0)?,
                     world_profile: row.get(1)?,
                     protagonist_profile: row.get(2)?,
                     key_story_beats: row.get(3)?,
-                    phase: deserialize_phase(&phase).map_err(|err| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            4,
-                            rusqlite::types::Type::Text,
-                            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
-                        )
-                    })?,
-                    turn_index: row.get::<_, i64>(5)?.try_into().unwrap_or_default(),
-                    active_turn_id: row.get::<_, i64>(6)?.try_into().unwrap_or_default(),
-                    flow_end: row.get(7)?,
+                    phase,
+                    turn_index,
+                    active_turn_id,
+                    flow_end: row.get(6)?,
                 })
             },
         )
@@ -309,76 +328,170 @@ impl SessionArchiveRepository {
         .context("failed to load session metadata")
     }
 
-    pub async fn save_agent_context(&self, update: &AgentContextUpdate) -> Result<()> {
+    pub async fn save_agent_context_item(&self, update: &AgentContextItemAppended) -> Result<()> {
         let session_id = update.session_id.trim();
         let agent_name = update.agent_name.trim();
         if session_id.is_empty() || agent_name.is_empty() {
             return Ok(());
         }
 
-        let round =
-            i64::try_from(update.round).context("agent context round exceeds SQLite range")?;
-        let context_json =
-            serde_json::to_string(&update.context).context("failed to serialize agent context")?;
+        let node_id = linear_node_id_for_depth(update.round);
         let _guard = self.db.lock().await;
-        let conn = self.db.open_connection("agent contexts")?;
+        let conn = self.db.open_connection("agent context items")?;
         init_schema(&conn)?;
         let now = chrono::Utc::now().to_rfc3339();
-        conn.execute(
-            r#"
-            INSERT INTO agent_contexts (
-                session_id,
-                agent_name,
-                round,
-                context_json,
-                created_at,
-                updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?5)
-            ON CONFLICT(session_id, agent_name) DO UPDATE SET
-                round = excluded.round,
-                context_json = excluded.context_json,
-                updated_at = excluded.updated_at
-            "#,
-            params![session_id, agent_name, round, context_json, now],
+        ensure_linear_story_path(&conn, session_id, update.round, &now)?;
+        insert_agent_context_message(
+            &conn,
+            session_id,
+            &node_id,
+            agent_name,
+            &update.message,
+            &now,
+        )?;
+        Ok(())
+    }
+
+    pub async fn save_agent_context_rollback(&self, rollback: &AgentContextRollback) -> Result<()> {
+        let session_id = rollback.session_id.trim();
+        let agent_name = rollback.agent_name.trim();
+        if session_id.is_empty() || agent_name.is_empty() {
+            return Ok(());
+        }
+
+        let node_id = linear_node_id_for_depth(rollback.round);
+        let _guard = self.db.lock().await;
+        let conn = self.db.open_connection("agent context rollbacks")?;
+        init_schema(&conn)?;
+        let now = chrono::Utc::now().to_rfc3339();
+        ensure_linear_story_path(&conn, session_id, rollback.round, &now)?;
+        match rollback.policy {
+            AgentContextRollbackPolicy::LatestInput => {
+                insert_agent_context_rollback(&conn, session_id, &node_id, agent_name, &now)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn replace_agent_contexts_from_contexts(
+        &self,
+        session_id: &str,
+        round: u64,
+        contexts: &[(&str, &AgentContext)],
+    ) -> Result<()> {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return Ok(());
+        }
+
+        let node_id = linear_node_id_for_depth(round);
+        let _guard = self.db.lock().await;
+        let mut conn = self.db.open_connection("agent context replacement")?;
+        init_schema(&conn)?;
+        let tx = conn
+            .transaction()
+            .context("failed to start agent context replacement transaction")?;
+        let now = chrono::Utc::now().to_rfc3339();
+        ensure_linear_story_path(&tx, session_id, round, &now)?;
+        tx.execute(
+            "DELETE FROM agent_context_items WHERE session_id = ?1",
+            params![session_id],
         )
-        .context("failed to upsert agent context")?;
+        .context("failed to clear existing agent context items")?;
+        for (agent_name, context) in contexts {
+            for message in context_messages_for_storage(context) {
+                insert_agent_context_message(
+                    &tx, session_id, &node_id, agent_name, &message, &now,
+                )?;
+            }
+        }
+        tx.commit()
+            .context("failed to commit agent context replacement")?;
         Ok(())
     }
 
     pub async fn load_agent_contexts(&self, session_id: &str) -> Result<Vec<StoredAgentContext>> {
         let _guard = self.db.lock().await;
-        let conn = self.db.open_connection("agent contexts")?;
+        let conn = self.db.open_connection("agent context items")?;
         init_schema(&conn)?;
         let mut stmt = conn
             .prepare(
                 r#"
-                SELECT agent_name, context_json
-                FROM agent_contexts
-                WHERE session_id = ?1
-                ORDER BY agent_name ASC
+                WITH RECURSIVE active_path(node_id, parent_node_id, node_depth) AS (
+                    SELECT n.node_id, n.parent_node_id, n.node_depth
+                    FROM story_nodes n
+                    JOIN sessions s
+                        ON s.session_id = n.session_id
+                        AND s.active_node_id = n.node_id
+                    WHERE n.session_id = ?1
+                    UNION ALL
+                    SELECT parent.node_id, parent.parent_node_id, parent.node_depth
+                    FROM story_nodes parent
+                    JOIN active_path child
+                        ON child.parent_node_id = parent.node_id
+                    WHERE parent.session_id = ?1
+                )
+                SELECT
+                    item.agent_name,
+                    item.item_kind,
+                    item.message_json
+                FROM agent_context_items item
+                JOIN active_path
+                    ON active_path.node_id = item.node_id
+                WHERE item.session_id = ?1
+                ORDER BY
+                    item.agent_name ASC,
+                    active_path.node_depth ASC,
+                    item.item_index ASC,
+                    item.id ASC
                 "#,
             )
             .context("failed to prepare agent context load")?;
-        let rows = stmt
-            .query_map(params![session_id], |row| {
-                let context_json: String = row.get(1)?;
-                let context =
-                    serde_json::from_str::<AgentContext>(&context_json).map_err(|err| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            1,
-                            rusqlite::types::Type::Text,
-                            Box::new(err),
-                        )
-                    })?;
-                Ok(StoredAgentContext {
-                    agent_name: row.get(0)?,
-                    context,
-                })
-            })
-            .context("failed to query agent contexts")?;
+        let mut rows = stmt
+            .query(params![session_id])
+            .context("failed to query agent context items")?;
+        let mut contexts = std::collections::BTreeMap::<String, AgentContext>::new();
+        while let Some(row) = rows
+            .next()
+            .context("failed to read agent context item row")?
+        {
+            let agent_name: String = row.get(0)?;
+            let item_kind: String = row.get(1)?;
+            let context = contexts.entry(agent_name).or_default();
+            match item_kind.as_str() {
+                "message" => {
+                    let message_json: String =
+                        row.get::<_, Option<String>>(2)?.ok_or_else(|| {
+                            rusqlite::Error::InvalidColumnType(
+                                2,
+                                "message_json".to_string(),
+                                rusqlite::types::Type::Null,
+                            )
+                        })?;
+                    let message =
+                        serde_json::from_str::<Message>(&message_json).map_err(|err| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                2,
+                                rusqlite::types::Type::Text,
+                                Box::new(err),
+                            )
+                        })?;
+                    context.add_message(message);
+                }
+                "rollback_latest_input" => {
+                    context.rollback_latest_input();
+                }
+                _ => {}
+            }
+        }
 
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .context("failed to read agent contexts")
+        Ok(contexts
+            .into_iter()
+            .map(|(agent_name, context)| StoredAgentContext {
+                agent_name,
+                context,
+            })
+            .collect())
     }
 
     pub async fn save_player_input(&self, input: &PlayerInput) -> Result<()> {
@@ -388,55 +501,96 @@ impl SessionArchiveRepository {
             return Ok(());
         }
 
-        let round =
-            i64::try_from(input.round).context("player input round exceeds SQLite range")?;
+        let from_node_id = linear_node_id_for_depth(input.round);
+        let to_node_id = linear_node_id_for_depth(input.round + 1);
         let _guard = self.db.lock().await;
-        let conn = self.db.open_connection("player inputs")?;
+        let conn = self.db.open_connection("story edges")?;
         init_schema(&conn)?;
+        let now = chrono::Utc::now().to_rfc3339();
+        ensure_linear_story_path(&conn, session_id, input.round, &now)?;
+        let choice_option = choice_option_for_story_edge(
+            &conn,
+            session_id,
+            input.round,
+            input.action_type,
+            action,
+        )?;
+        let action_json = serialize_choice_option(&choice_option)?;
         conn.execute(
             r#"
-            INSERT INTO player_inputs (
+            INSERT INTO story_edges (
                 session_id,
-                round,
+                from_node_id,
+                to_node_id,
                 action_type,
                 action,
                 created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5)
-            ON CONFLICT(session_id, round) DO UPDATE SET
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(session_id, from_node_id, to_node_id) DO UPDATE SET
                 action_type = excluded.action_type,
                 action = excluded.action,
                 created_at = excluded.created_at
             "#,
             params![
                 session_id,
-                round,
+                from_node_id,
+                to_node_id,
                 serialize_player_action_type(input.action_type)?,
-                action,
-                chrono::Utc::now().to_rfc3339(),
+                action_json,
+                now,
             ],
         )
-        .context("failed to upsert player input")?;
+        .context("failed to upsert story edge action")?;
         Ok(())
     }
 
-    pub async fn load_player_inputs(&self, session_id: &str) -> Result<Vec<StoredPlayerInput>> {
+    pub async fn load_story_edge_actions(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<StoredStoryEdgeAction>> {
         let _guard = self.db.lock().await;
-        let conn = self.db.open_connection("player inputs")?;
+        let conn = self.db.open_connection("story edges")?;
         init_schema(&conn)?;
         let mut stmt = conn
             .prepare(
                 r#"
-                SELECT round, action_type, action
-                FROM player_inputs
-                WHERE session_id = ?1
-                ORDER BY round ASC
+                WITH RECURSIVE active_path(node_id, parent_node_id, node_depth) AS (
+                    SELECT n.node_id, n.parent_node_id, n.node_depth
+                    FROM story_nodes n
+                    JOIN sessions s
+                        ON s.session_id = n.session_id
+                        AND s.active_node_id = n.node_id
+                    WHERE n.session_id = ?1
+                    UNION ALL
+                    SELECT parent.node_id, parent.parent_node_id, parent.node_depth
+                    FROM story_nodes parent
+                    JOIN active_path child
+                        ON child.parent_node_id = parent.node_id
+                    WHERE parent.session_id = ?1
+                )
+                SELECT active_path.node_depth, e.action_type, e.action
+                FROM story_edges e
+                JOIN active_path
+                    ON active_path.node_id = e.from_node_id
+                WHERE e.session_id = ?1
+                    AND active_path.node_depth > 0
+                ORDER BY active_path.node_depth ASC
                 "#,
             )
-            .context("failed to prepare player input load")?;
+            .context("failed to prepare story edge action load")?;
         let rows = stmt
             .query_map(params![session_id], |row| {
                 let action_type: String = row.get(1)?;
-                Ok(StoredPlayerInput {
+                let action_json: String = row.get(2)?;
+                let choice_option = serde_json::from_str::<ProtagonistOption>(&action_json)
+                    .map_err(|err| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            2,
+                            rusqlite::types::Type::Text,
+                            Box::new(err),
+                        )
+                    })?;
+                Ok(StoredStoryEdgeAction {
                     round: row.get::<_, i64>(0)?.try_into().unwrap_or_default(),
                     action_type: deserialize_player_action_type(&action_type).map_err(|err| {
                         rusqlite::Error::FromSqlConversionFailure(
@@ -445,16 +599,16 @@ impl SessionArchiveRepository {
                             Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
                         )
                     })?,
-                    action: row.get(2)?,
+                    action: choice_option.action,
                 })
             })
-            .context("failed to query player inputs")?;
+            .context("failed to query story edge actions")?;
 
         rows.collect::<std::result::Result<Vec<_>, _>>()
-            .context("failed to read player inputs")
+            .context("failed to read story edge actions")
     }
 
-    pub async fn replace_player_inputs_from_rounds(
+    pub async fn replace_story_edges_from_rounds(
         &self,
         session_id: &str,
         rounds: &[RoundHistoryEntry],
@@ -465,17 +619,18 @@ impl SessionArchiveRepository {
         }
 
         let _guard = self.db.lock().await;
-        let mut conn = self.db.open_connection("player inputs")?;
+        let mut conn = self.db.open_connection("story edges")?;
         init_schema(&conn)?;
         let tx = conn
             .transaction()
-            .context("failed to start player inputs replacement transaction")?;
+            .context("failed to start story edges replacement transaction")?;
         tx.execute(
-            "DELETE FROM player_inputs WHERE session_id = ?1",
+            "DELETE FROM story_edges WHERE session_id = ?1",
             params![session_id],
         )
-        .context("failed to clear existing player inputs")?;
+        .context("failed to clear existing story edges")?;
 
+        let now = chrono::Utc::now().to_rfc3339();
         for round in rounds {
             let Some(action) = round
                 .committed_action
@@ -485,40 +640,48 @@ impl SessionArchiveRepository {
             else {
                 continue;
             };
-            let round_index =
-                i64::try_from(round.round).context("player input round exceeds SQLite range")?;
-            let action_type = if round
+            ensure_linear_story_path(&tx, session_id, round.round, &now)?;
+            let from_node_id = linear_node_id_for_depth(round.round);
+            let to_node_id = linear_node_id_for_depth(round.round + 1);
+            let selected_choice = round
                 .choices
                 .iter()
-                .any(|choice| choice.option.action == action)
-            {
+                .find(|choice| choice.option.action == action)
+                .cloned();
+            let action_type = if selected_choice.is_some() {
                 PlayerActionType::SelectedOption
             } else {
                 PlayerActionType::FreeText
             };
+            let choice_option = selected_choice
+                .map(|choice| choice.option)
+                .unwrap_or_else(|| synthetic_choice_option(action));
+            let action_json = serialize_choice_option(&choice_option)?;
             tx.execute(
                 r#"
-                INSERT INTO player_inputs (
+                INSERT INTO story_edges (
                     session_id,
-                    round,
+                    from_node_id,
+                    to_node_id,
                     action_type,
                     action,
                     created_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                 "#,
                 params![
                     session_id,
-                    round_index,
+                    from_node_id,
+                    to_node_id,
                     serialize_player_action_type(action_type)?,
-                    action,
-                    chrono::Utc::now().to_rfc3339(),
+                    action_json,
+                    now,
                 ],
             )
-            .context("failed to insert archived player input")?;
+            .context("failed to insert archived story edge")?;
         }
 
         tx.commit()
-            .context("failed to commit player inputs replacement")?;
+            .context("failed to commit story edges replacement")?;
         Ok(())
     }
 
@@ -552,17 +715,33 @@ impl SessionArchiveRepository {
         let _guard = self.db.lock().await;
         let conn = self.db.open_connection("sessions")?;
         init_schema(&conn)?;
+        let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
             r#"
-            UPDATE sessions
+            UPDATE story_nodes
             SET flow_end = 1,
                 updated_at = ?2,
                 last_accessed_at = ?2
             WHERE session_id = ?1
+                AND node_id = (
+                    SELECT active_node_id
+                    FROM sessions
+                    WHERE session_id = ?1
+                )
             "#,
-            params![session_id, chrono::Utc::now().to_rfc3339()],
+            params![session_id, now],
         )
         .context("failed to mark session flow end")?;
+        conn.execute(
+            r#"
+            UPDATE sessions
+            SET updated_at = ?2,
+                last_accessed_at = ?2
+            WHERE session_id = ?1
+            "#,
+            params![session_id, now],
+        )
+        .context("failed to touch session after flow end")?;
         Ok(())
     }
 
@@ -573,32 +752,38 @@ impl SessionArchiveRepository {
             return Ok(());
         }
 
-        let round = i64::try_from(update.round).context("flow turn round exceeds SQLite range")?;
+        let node_id = linear_node_id_for_depth(update.round);
         let stage = serialize_phase(update.stage)?;
         let output_type = serialize_agent_output_type(update.output_type)?;
         let _guard = self.db.lock().await;
-        let conn = self.db.open_connection("flow turns")?;
+        let conn = self.db.open_connection("flow outputs")?;
         init_schema(&conn)?;
+        let now = chrono::Utc::now().to_rfc3339();
+        ensure_linear_story_path(&conn, session_id, update.round, &now)?;
         conn.execute(
             r#"
-            INSERT INTO flow_turns (
+            INSERT INTO flow_outputs (
                 session_id,
-                round,
+                node_id,
                 stage,
                 entity_name,
                 output_type,
-                content
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-            ON CONFLICT(session_id, round, stage, entity_name, output_type) DO UPDATE SET
-                content = excluded.content
+                content,
+                created_at,
+                updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+            ON CONFLICT(session_id, node_id, stage, entity_name, output_type) DO UPDATE SET
+                content = excluded.content,
+                updated_at = excluded.updated_at
             "#,
             params![
                 session_id,
-                round,
+                node_id,
                 stage,
                 entity_name,
                 output_type,
-                update.content
+                update.content,
+                now,
             ],
         )
         .context("failed to upsert flow turn output")?;
@@ -612,39 +797,43 @@ impl SessionArchiveRepository {
         }
 
         let _guard = self.db.lock().await;
-        let mut conn = self.db.open_connection("session rounds")?;
+        let mut conn = self.db.open_connection("story nodes")?;
         init_schema(&conn)?;
         let tx = conn
             .transaction()
             .context("failed to start session rounds transaction")?;
 
         for round in rounds {
-            let round_index =
-                i64::try_from(round.round).context("session round exceeds SQLite INTEGER range")?;
+            let now = chrono::Utc::now().to_rfc3339();
+            ensure_linear_story_path(&tx, session_id, round.round, &now)?;
+            let node_id = linear_node_id_for_depth(round.round);
             tx.execute(
-                "DELETE FROM flow_turns WHERE session_id = ?1 AND round = ?2",
-                params![session_id, round_index],
+                "DELETE FROM flow_outputs WHERE session_id = ?1 AND node_id = ?2",
+                params![session_id, node_id],
             )
             .context("failed to clear existing flow turn outputs for round")?;
             for output in flow_outputs_from_round(session_id, round)? {
                 tx.execute(
                     r#"
-                    INSERT INTO flow_turns (
+                    INSERT INTO flow_outputs (
                         session_id,
-                        round,
+                        node_id,
                         stage,
                         entity_name,
                         output_type,
-                        content
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                        content,
+                        created_at,
+                        updated_at
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
                     "#,
                     params![
                         output.session_id,
-                        output.round,
+                        output.node_id,
                         output.stage,
                         output.entity_name,
                         output.output_type,
-                        output.content
+                        output.content,
+                        now,
                     ],
                 )
                 .context("failed to insert archived flow turn output")?;
@@ -676,10 +865,248 @@ impl SessionArchiveRepository {
     }
 }
 
+struct SessionBaseRecord<'a> {
+    session_id: &'a str,
+    world_profile: &'a str,
+    protagonist_profile: &'a str,
+    key_story_beats: &'a str,
+    active_node_id: &'a str,
+    total_node_count: i64,
+}
+
+struct StoryNodeSeed<'a> {
+    session_id: &'a str,
+    node_id: &'a str,
+    parent_node_id: Option<&'a str>,
+    node_depth: u64,
+    phase: TurnPhase,
+    flow_end: bool,
+}
+
+fn upsert_session_base(conn: &Connection, record: SessionBaseRecord<'_>, now: &str) -> Result<()> {
+    conn.execute(
+        r#"
+        INSERT INTO sessions (
+            session_id,
+            root_node_id,
+            active_node_id,
+            total_node_count,
+            world_profile,
+            protagonist_profile,
+            key_story_beats,
+            created_at,
+            updated_at,
+            last_accessed_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?8)
+        ON CONFLICT(session_id) DO UPDATE SET
+            root_node_id = excluded.root_node_id,
+            active_node_id = excluded.active_node_id,
+            total_node_count = MAX(sessions.total_node_count, excluded.total_node_count),
+            world_profile = excluded.world_profile,
+            protagonist_profile = excluded.protagonist_profile,
+            key_story_beats = excluded.key_story_beats,
+            updated_at = excluded.updated_at,
+            last_accessed_at = excluded.last_accessed_at
+        "#,
+        params![
+            record.session_id,
+            ROOT_NODE_ID,
+            record.active_node_id,
+            record.total_node_count,
+            record.world_profile,
+            record.protagonist_profile,
+            record.key_story_beats,
+            now,
+        ],
+    )
+    .context("failed to upsert session metadata")?;
+    Ok(())
+}
+
+fn ensure_linear_story_path(
+    conn: &Connection,
+    session_id: &str,
+    through_depth: u64,
+    now: &str,
+) -> Result<()> {
+    ensure_story_node_exists(
+        conn,
+        StoryNodeSeed {
+            session_id,
+            node_id: ROOT_NODE_ID,
+            parent_node_id: None,
+            node_depth: 0,
+            phase: TurnPhase::Start,
+            flow_end: false,
+        },
+        now,
+    )?;
+
+    for depth in 1..=through_depth {
+        let node_id = linear_node_id_for_depth(depth);
+        let parent_node_id = linear_node_id_for_depth(depth.saturating_sub(1));
+        ensure_story_node_exists(
+            conn,
+            StoryNodeSeed {
+                session_id,
+                node_id: &node_id,
+                parent_node_id: Some(parent_node_id.as_str()),
+                node_depth: depth,
+                phase: TurnPhase::TurnCompleted,
+                flow_end: false,
+            },
+            now,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn ensure_story_node_exists(conn: &Connection, seed: StoryNodeSeed<'_>, now: &str) -> Result<()> {
+    let node_depth = i64::try_from(seed.node_depth)
+        .context("story node node_depth exceeds SQLite INTEGER range")?;
+    conn.execute(
+        r#"
+        INSERT OR IGNORE INTO story_nodes (
+            session_id,
+            node_id,
+            parent_node_id,
+            node_depth,
+            sequence_index,
+            phase,
+            flow_end,
+            created_at,
+            updated_at,
+            last_accessed_at
+        ) VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, ?7, ?7)
+        "#,
+        params![
+            seed.session_id,
+            seed.node_id,
+            seed.parent_node_id,
+            node_depth,
+            serialize_phase(seed.phase)?,
+            seed.flow_end,
+            now,
+        ],
+    )
+    .context("failed to ensure story node")?;
+    Ok(())
+}
+
+fn update_story_node_state(
+    conn: &Connection,
+    session_id: &str,
+    node_id: &str,
+    phase: TurnPhase,
+    flow_end: Option<bool>,
+    now: &str,
+) -> Result<()> {
+    conn.execute(
+        r#"
+        UPDATE story_nodes
+        SET phase = ?3,
+            flow_end = COALESCE(?4, flow_end),
+            updated_at = ?5,
+            last_accessed_at = ?5
+        WHERE session_id = ?1
+            AND node_id = ?2
+        "#,
+        params![session_id, node_id, serialize_phase(phase)?, flow_end, now,],
+    )
+    .context("failed to update story node state")?;
+    Ok(())
+}
+
+fn linear_node_id_for_depth(depth: u64) -> String {
+    if depth == 0 {
+        ROOT_NODE_ID.to_string()
+    } else {
+        format!("node-{depth}")
+    }
+}
+
+fn turn_state_from_active_node(phase: TurnPhase, node_depth: u64) -> (u64, u64) {
+    match phase {
+        TurnPhase::Start => (0, 0),
+        TurnPhase::Simulation | TurnPhase::Application | TurnPhase::Failed => {
+            (node_depth.saturating_sub(1), node_depth)
+        }
+        TurnPhase::AwaitingPlayer | TurnPhase::TurnCompleted | TurnPhase::Ended => {
+            (node_depth, node_depth)
+        }
+    }
+}
+
+fn choice_option_for_story_edge(
+    conn: &Connection,
+    session_id: &str,
+    round: u64,
+    action_type: PlayerActionType,
+    action: &str,
+) -> Result<ProtagonistOption> {
+    if action_type == PlayerActionType::SelectedOption
+        && let Some(choice) = selected_choice_option_for_action(conn, session_id, round, action)?
+    {
+        return Ok(choice);
+    }
+
+    Ok(synthetic_choice_option(action))
+}
+
+fn selected_choice_option_for_action(
+    conn: &Connection,
+    session_id: &str,
+    round: u64,
+    action: &str,
+) -> Result<Option<ProtagonistOption>> {
+    let node_id = linear_node_id_for_depth(round);
+    let stage = serialize_phase(TurnPhase::Application)?;
+    let output_type = serialize_agent_output_type(AgentOutputType::Json)?;
+    let content = conn
+        .query_row(
+            r#"
+            SELECT content
+            FROM flow_outputs
+            WHERE session_id = ?1
+                AND node_id = ?2
+                AND stage = ?3
+                AND entity_name = 'Protagonist'
+                AND output_type = ?4
+            "#,
+            params![session_id, node_id, stage, output_type],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .context("failed to load protagonist options for story edge")?;
+
+    let Some(content) = content else {
+        return Ok(None);
+    };
+    let options = serde_json::from_str::<ProtagonistOptions>(&content)
+        .context("failed to deserialize protagonist options for story edge")?;
+    Ok(options
+        .options
+        .into_iter()
+        .find(|option| option.action == action))
+}
+
+fn synthetic_choice_option(action: &str) -> ProtagonistOption {
+    ProtagonistOption {
+        title: action.to_string(),
+        action: action.to_string(),
+        motivation_and_risk: String::new(),
+    }
+}
+
+fn serialize_choice_option(choice_option: &ProtagonistOption) -> Result<String> {
+    serde_json::to_string(choice_option).context("failed to serialize story edge choice option")
+}
+
 #[derive(Debug)]
 struct FlowOutputRow {
     session_id: String,
-    round: i64,
+    node_id: String,
     stage: String,
     entity_name: String,
     output_type: String,
@@ -690,14 +1117,13 @@ fn flow_outputs_from_round(
     session_id: &str,
     round: &RoundHistoryEntry,
 ) -> Result<Vec<FlowOutputRow>> {
-    let round_index =
-        i64::try_from(round.round).context("session round exceeds SQLite INTEGER range")?;
+    let node_id = linear_node_id_for_depth(round.round);
     let mut outputs = Vec::new();
 
     if let Some(world_snapshot) = &round.world_snapshot {
         outputs.push(FlowOutputRow {
             session_id: session_id.to_string(),
-            round: round_index,
+            node_id: node_id.clone(),
             stage: serialize_phase(TurnPhase::Simulation)?,
             entity_name: "FateWeaver".to_string(),
             output_type: serialize_agent_output_type(AgentOutputType::Json)?,
@@ -714,7 +1140,7 @@ fn flow_outputs_from_round(
     {
         outputs.push(FlowOutputRow {
             session_id: session_id.to_string(),
-            round: round_index,
+            node_id: node_id.clone(),
             stage: serialize_phase(TurnPhase::Application)?,
             entity_name: "UpperNarrator".to_string(),
             output_type: serialize_agent_output_type(AgentOutputType::Text)?,
@@ -732,7 +1158,7 @@ fn flow_outputs_from_round(
         };
         outputs.push(FlowOutputRow {
             session_id: session_id.to_string(),
-            round: round_index,
+            node_id,
             stage: serialize_phase(TurnPhase::Application)?,
             entity_name: "Protagonist".to_string(),
             output_type: serialize_agent_output_type(AgentOutputType::Json)?,
@@ -745,8 +1171,9 @@ fn flow_outputs_from_round(
 }
 
 fn load_rounds_from_outputs(conn: &Connection, session_id: &str) -> Result<Vec<RoundHistoryEntry>> {
-    let round_numbers = select_round_numbers(conn, session_id, None, None)?;
-    load_rounds_by_numbers(conn, session_id, &round_numbers)
+    let mut path_nodes = select_story_path_nodes(conn, session_id, None, None)?;
+    path_nodes.reverse();
+    load_rounds_by_nodes(conn, session_id, &path_nodes)
 }
 
 fn load_round_page_from_outputs(
@@ -757,14 +1184,14 @@ fn load_round_page_from_outputs(
 ) -> Result<StoredSessionRoundPage> {
     let limit = limit.max(1);
     let fetch_limit = limit + 1;
-    let mut round_numbers =
-        select_round_numbers(conn, session_id, before_round, Some(fetch_limit))?;
-    let has_more = round_numbers.len() > limit;
+    let mut path_nodes =
+        select_story_path_nodes(conn, session_id, before_round, Some(fetch_limit))?;
+    let has_more = path_nodes.len() > limit;
     if has_more {
-        round_numbers.truncate(limit);
+        path_nodes.truncate(limit);
     }
-    round_numbers.reverse();
-    let rounds = load_rounds_by_numbers(conn, session_id, &round_numbers)?;
+    path_nodes.reverse();
+    let rounds = load_rounds_by_nodes(conn, session_id, &path_nodes)?;
     let next_before_round = has_more.then(|| {
         rounds
             .first()
@@ -779,127 +1206,126 @@ fn load_round_page_from_outputs(
     })
 }
 
-fn select_round_numbers(
+fn select_story_path_nodes(
     conn: &Connection,
     session_id: &str,
     before_round: Option<u64>,
     limit: Option<usize>,
-) -> Result<Vec<u64>> {
-    let before_round = before_round
-        .map(i64::try_from)
-        .transpose()
-        .context("before round exceeds SQLite INTEGER range")?;
-    let limit = limit
-        .map(i64::try_from)
-        .transpose()
-        .context("session round page limit too large")?;
-
-    let mut rounds = match (before_round, limit) {
-        (Some(before_round), Some(limit)) => {
-            let mut stmt = conn
-                .prepare(
-                    r#"
-                    SELECT DISTINCT round
-                    FROM flow_turns
-                    WHERE session_id = ?1 AND round < ?2
-                    ORDER BY round DESC
-                    LIMIT ?3
-                    "#,
-                )
-                .context("failed to prepare older flow turn round query")?;
-            stmt.query_map(params![session_id, before_round, limit], |row| {
-                row.get::<_, i64>(0)
-            })
-            .context("failed to query older flow turn rounds")?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .context("failed to read older flow turn rounds")?
-        }
-        (Some(before_round), None) => {
-            let mut stmt = conn
-                .prepare(
-                    r#"
-                    SELECT DISTINCT round
-                    FROM flow_turns
-                    WHERE session_id = ?1 AND round < ?2
-                    ORDER BY round DESC
-                    "#,
-                )
-                .context("failed to prepare bounded flow turn round query")?;
-            stmt.query_map(params![session_id, before_round], |row| {
-                row.get::<_, i64>(0)
-            })
-            .context("failed to query bounded flow turn rounds")?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .context("failed to read bounded flow turn rounds")?
-        }
-        (None, Some(limit)) => {
-            let mut stmt = conn
-                .prepare(
-                    r#"
-                    SELECT DISTINCT round
-                    FROM flow_turns
-                    WHERE session_id = ?1
-                    ORDER BY round DESC
-                    LIMIT ?2
-                    "#,
-                )
-                .context("failed to prepare latest flow turn round query")?;
-            stmt.query_map(params![session_id, limit], |row| row.get::<_, i64>(0))
-                .context("failed to query latest flow turn rounds")?
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .context("failed to read latest flow turn rounds")?
-        }
-        (None, None) => {
-            let mut stmt = conn
-                .prepare(
-                    r#"
-                    SELECT DISTINCT round
-                    FROM flow_turns
-                    WHERE session_id = ?1
-                    ORDER BY round ASC
-                    "#,
-                )
-                .context("failed to prepare flow turn round query")?;
-            stmt.query_map(params![session_id], |row| row.get::<_, i64>(0))
-                .context("failed to query flow turn rounds")?
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .context("failed to read flow turn rounds")?
-        }
-    };
-
-    if before_round.is_some() || limit.is_some() {
-        rounds.retain(|round| *round >= 0);
+) -> Result<Vec<StoryPathNode>> {
+    let mut nodes = select_active_story_path_nodes(conn, session_id)?;
+    if nodes.is_empty() {
+        nodes = select_all_story_nodes_with_outputs(conn, session_id)?;
     }
 
-    rounds
-        .into_iter()
-        .map(|round| round.try_into().context("flow turn round is negative"))
-        .collect()
+    if let Some(before_round) = before_round {
+        nodes.retain(|node| node.node_depth < before_round);
+    }
+
+    if let Some(limit) = limit {
+        nodes.truncate(limit);
+    }
+
+    Ok(nodes)
 }
 
-fn load_rounds_by_numbers(
+fn select_active_story_path_nodes(
     conn: &Connection,
     session_id: &str,
-    round_numbers: &[u64],
+) -> Result<Vec<StoryPathNode>> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            WITH RECURSIVE active_path(node_id, parent_node_id, node_depth) AS (
+                SELECT n.node_id, n.parent_node_id, n.node_depth
+                FROM story_nodes n
+                JOIN sessions s
+                    ON s.session_id = n.session_id
+                    AND s.active_node_id = n.node_id
+                WHERE n.session_id = ?1
+                UNION ALL
+                SELECT parent.node_id, parent.parent_node_id, parent.node_depth
+                FROM story_nodes parent
+                JOIN active_path child
+                    ON child.parent_node_id = parent.node_id
+                WHERE parent.session_id = ?1
+            )
+            SELECT active_path.node_id, active_path.node_depth
+            FROM active_path
+            WHERE active_path.node_depth > 0
+                AND EXISTS (
+                    SELECT 1
+                    FROM flow_outputs output
+                    WHERE output.session_id = ?1
+                        AND output.node_id = active_path.node_id
+                )
+            ORDER BY active_path.node_depth DESC
+            "#,
+        )
+        .context("failed to prepare active story path query")?;
+    let rows = stmt
+        .query_map(params![session_id], story_path_node_from_row)
+        .context("failed to query active story path")?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .context("failed to read active story path")
+}
+
+fn select_all_story_nodes_with_outputs(
+    conn: &Connection,
+    session_id: &str,
+) -> Result<Vec<StoryPathNode>> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT node.node_id, node.node_depth
+            FROM story_nodes node
+            WHERE node.session_id = ?1
+                AND node.node_depth > 0
+                AND EXISTS (
+                    SELECT 1
+                    FROM flow_outputs output
+                    WHERE output.session_id = ?1
+                        AND output.node_id = node.node_id
+                )
+            ORDER BY node.node_depth DESC, node.sequence_index DESC
+            "#,
+        )
+        .context("failed to prepare story node fallback query")?;
+    let rows = stmt
+        .query_map(params![session_id], story_path_node_from_row)
+        .context("failed to query story node fallback path")?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .context("failed to read story node fallback path")
+}
+
+fn story_path_node_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoryPathNode> {
+    Ok(StoryPathNode {
+        node_id: row.get(0)?,
+        node_depth: row.get::<_, i64>(1)?.try_into().unwrap_or_default(),
+    })
+}
+
+fn load_rounds_by_nodes(
+    conn: &Connection,
+    session_id: &str,
+    path_nodes: &[StoryPathNode],
 ) -> Result<Vec<RoundHistoryEntry>> {
-    round_numbers
+    path_nodes
         .iter()
-        .map(|round| load_round_by_number(conn, session_id, *round))
+        .map(|node| load_round_by_node(conn, session_id, node))
         .collect()
 }
 
-fn load_round_by_number(
+fn load_round_by_node(
     conn: &Connection,
     session_id: &str,
-    round: u64,
+    path_node: &StoryPathNode,
 ) -> Result<RoundHistoryEntry> {
-    let round_index = i64::try_from(round).context("flow turn round exceeds SQLite range")?;
     let mut stmt = conn
         .prepare(
             r#"
             SELECT stage, entity_name, output_type, content
-            FROM flow_turns
-            WHERE session_id = ?1 AND round = ?2
+            FROM flow_outputs
+            WHERE session_id = ?1 AND node_id = ?2
             ORDER BY
                 CASE stage
                     WHEN 'simulation' THEN 0
@@ -912,7 +1338,7 @@ fn load_round_by_number(
         )
         .context("failed to prepare flow turn output query")?;
     let rows = stmt
-        .query_map(params![session_id, round_index], |row| {
+        .query_map(params![session_id, path_node.node_id], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -922,7 +1348,7 @@ fn load_round_by_number(
         })
         .context("failed to query flow turn outputs")?;
     let mut entry = RoundHistoryEntry {
-        round,
+        round: path_node.node_depth,
         ..RoundHistoryEntry::default()
     };
     for row in rows {
@@ -963,15 +1389,122 @@ fn apply_flow_turn_output(
     Ok(())
 }
 
+fn insert_agent_context_message(
+    conn: &Connection,
+    session_id: &str,
+    node_id: &str,
+    agent_name: &str,
+    message: &Message,
+    now: &str,
+) -> Result<()> {
+    let item_index = next_agent_context_item_index(conn, session_id, node_id, agent_name)?;
+    let message_json =
+        serde_json::to_string(message).context("failed to serialize agent context message")?;
+    conn.execute(
+        r#"
+        INSERT INTO agent_context_items (
+            session_id,
+            node_id,
+            agent_name,
+            item_index,
+            item_kind,
+            message_role,
+            content,
+            message_json,
+            created_at
+        ) VALUES (?1, ?2, ?3, ?4, 'message', ?5, ?6, ?7, ?8)
+        "#,
+        params![
+            session_id,
+            node_id,
+            agent_name,
+            item_index,
+            message_role(message),
+            message.content(),
+            message_json,
+            now,
+        ],
+    )
+    .context("failed to insert agent context message")?;
+    Ok(())
+}
+
+fn insert_agent_context_rollback(
+    conn: &Connection,
+    session_id: &str,
+    node_id: &str,
+    agent_name: &str,
+    now: &str,
+) -> Result<()> {
+    let item_index = next_agent_context_item_index(conn, session_id, node_id, agent_name)?;
+    conn.execute(
+        r#"
+        INSERT INTO agent_context_items (
+            session_id,
+            node_id,
+            agent_name,
+            item_index,
+            item_kind,
+            created_at
+        ) VALUES (?1, ?2, ?3, ?4, 'rollback_latest_input', ?5)
+        "#,
+        params![session_id, node_id, agent_name, item_index, now],
+    )
+    .context("failed to insert agent context rollback")?;
+    Ok(())
+}
+
+fn next_agent_context_item_index(
+    conn: &Connection,
+    session_id: &str,
+    node_id: &str,
+    agent_name: &str,
+) -> Result<i64> {
+    conn.query_row(
+        r#"
+        SELECT COALESCE(MAX(item_index), 0) + 1
+        FROM agent_context_items
+        WHERE session_id = ?1
+            AND node_id = ?2
+            AND agent_name = ?3
+        "#,
+        params![session_id, node_id, agent_name],
+        |row| row.get(0),
+    )
+    .context("failed to compute next agent context item index")
+}
+
+fn context_messages_for_storage(context: &AgentContext) -> Vec<Message> {
+    let messages = context.conversation();
+    if messages.is_empty() {
+        context.to_messages()
+    } else {
+        messages
+    }
+}
+
+fn message_role(message: &Message) -> &'static str {
+    match message {
+        Message::System { .. } => "system",
+        Message::User { .. } => "user",
+        Message::Assistant { .. } => "assistant",
+        Message::Tool { .. } => "tool",
+    }
+}
+
 fn init_schema(conn: &Connection) -> Result<()> {
+    conn.execute_batch(DROP_OBSOLETE_AGENT_CONTEXTS_TABLE_SQL)
+        .context("failed to drop obsolete agent contexts schema")?;
     conn.execute_batch(CREATE_SESSIONS_TABLE_SQL)
         .context("failed to initialize sessions schema")?;
-    conn.execute_batch(CREATE_FLOW_TURNS_TABLE_SQL)
-        .context("failed to initialize flow turns schema")?;
-    conn.execute_batch(CREATE_AGENT_CONTEXTS_TABLE_SQL)
-        .context("failed to initialize agent contexts schema")?;
-    conn.execute_batch(CREATE_PLAYER_INPUTS_TABLE_SQL)
-        .context("failed to initialize player inputs schema")
+    conn.execute_batch(CREATE_STORY_NODES_TABLE_SQL)
+        .context("failed to initialize story nodes schema")?;
+    conn.execute_batch(CREATE_STORY_EDGES_TABLE_SQL)
+        .context("failed to initialize story edges schema")?;
+    conn.execute_batch(CREATE_FLOW_OUTPUTS_TABLE_SQL)
+        .context("failed to initialize flow outputs schema")?;
+    conn.execute_batch(CREATE_AGENT_CONTEXT_ITEMS_TABLE_SQL)
+        .context("failed to initialize agent context items schema")
 }
 
 fn serialize_phase(phase: TurnPhase) -> Result<String> {
@@ -1031,6 +1564,7 @@ mod tests {
     use crate::{analytics::AnalyticsRepository, api::site::AnalyticsEventInput};
     use agent::core::Message;
     use serde_json::json;
+    use story_engine::components::outcome::PendingProtagonistChoice;
     use uuid::Uuid;
 
     #[tokio::test]
@@ -1044,25 +1578,28 @@ mod tests {
         let sessions = SessionArchiveRepository::new(db);
 
         analytics
-            .append_events(&[AnalyticsEventInput {
-                id: "evt-shared".to_string(),
-                event_name: "session_created".to_string(),
-                anonymous_user_id: "anon-shared".to_string(),
-                client_session_id: "visit-shared".to_string(),
-                game_session_id: Some("session-shared".to_string()),
-                source_session_id: None,
-                occurred_at: "2026-06-10T00:00:00Z".to_string(),
-                app: "game-web".to_string(),
-                app_version: None,
-                path: Some("/play".to_string()),
-                referrer_domain: None,
-                utm_source: None,
-                utm_medium: None,
-                utm_campaign: None,
-                device_type: Some("desktop".to_string()),
-                platform: Some("MacIntel".to_string()),
-                properties: json!({}),
-            }])
+            .append_events(
+                &[AnalyticsEventInput {
+                    id: "evt-shared".to_string(),
+                    event_name: "session_created".to_string(),
+                    anonymous_user_id: "anon-shared".to_string(),
+                    client_session_id: "visit-shared".to_string(),
+                    game_session_id: Some("session-shared".to_string()),
+                    source_session_id: None,
+                    occurred_at: "2026-06-10T00:00:00Z".to_string(),
+                    app: "game-web".to_string(),
+                    app_version: None,
+                    path: Some("/play".to_string()),
+                    referrer_domain: None,
+                    utm_source: None,
+                    utm_medium: None,
+                    utm_campaign: None,
+                    device_type: Some("desktop".to_string()),
+                    platform: Some("MacIntel".to_string()),
+                    properties: json!({}),
+                }],
+                None,
+            )
             .await
             .expect("analytics event should save");
         sessions
@@ -1085,26 +1622,61 @@ mod tests {
             .expect("session metadata should load")
             .expect("session metadata should exist");
         let conn = Connection::open(db_path).expect("sqlite db should open");
-        let deleted_table_count: i64 = conn
+        let removed_table_count: i64 = conn
             .query_row(
                 r#"
                 SELECT COUNT(*)
                 FROM sqlite_master
                 WHERE type = 'table'
-                    AND name IN ('session_rounds', 'game_session_archives')
+                    AND name IN (
+                        'session_rounds',
+                        'game_session_archives',
+                        'flow_turns',
+                        'player_inputs',
+                        'agent_contexts'
+                    )
                 "#,
                 [],
                 |row| row.get(0),
             )
             .expect("schema should be queryable");
+        let story_graph_table_count: i64 = conn
+            .query_row(
+                r#"
+                SELECT COUNT(*)
+                FROM sqlite_master
+                WHERE type = 'table'
+                    AND name IN (
+                        'sessions',
+                        'story_nodes',
+                        'story_edges',
+                        'flow_outputs',
+                        'agent_context_items'
+                    )
+                "#,
+                [],
+                |row| row.get(0),
+            )
+            .expect("story graph schema should be queryable");
+        let story_edge_columns = conn
+            .prepare("PRAGMA table_info(story_edges)")
+            .expect("story_edges columns should be inspectable")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("story_edges columns should query")
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .expect("story_edges columns should read");
 
         assert_eq!(summary.totals.events, 1);
         assert_eq!(metadata.world_profile, "world");
-        assert_eq!(deleted_table_count, 0);
+        assert_eq!(removed_table_count, 0);
+        assert_eq!(story_graph_table_count, 5);
+        assert!(story_edge_columns.contains(&"action".to_string()));
+        assert!(!story_edge_columns.contains(&"choice_item_json".to_string()));
+        assert!(!story_edge_columns.contains(&"choice_id".to_string()));
     }
 
     #[tokio::test]
-    async fn flow_turns_upsert_and_page_with_before_cursor() {
+    async fn flow_outputs_upsert_and_page_with_before_cursor() {
         let repo = test_repo();
         let rounds = (1..=5)
             .map(|round| round_entry(round, &format!("round-{round}")))
@@ -1200,6 +1772,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn story_edges_store_choice_option_in_action_column() {
+        let db_path = std::env::temp_dir().join(format!(
+            "akasa-story-edge-choice-{}.sqlite3",
+            Uuid::new_v4().simple()
+        ));
+        let repo = SessionArchiveRepository::new(AppDatabase::new(db_path.clone()));
+        let choice = PendingProtagonistChoice {
+            id: "choice-1".to_string(),
+            option: ProtagonistOption {
+                title: "绕行".to_string(),
+                action: "绕到钟楼背面".to_string(),
+                motivation_and_risk: "视野更好，但会暴露脚步声".to_string(),
+            },
+        };
+
+        repo.save_session_created(&SessionCreated {
+            session_id: "session-choice-edge".to_string(),
+            world_profile: "world".to_string(),
+            protagonist_profile: "hero".to_string(),
+            key_story_beats: "beats".to_string(),
+        })
+        .await
+        .expect("session metadata should save");
+        repo.save_rounds(
+            "session-choice-edge",
+            &[RoundHistoryEntry {
+                round: 1,
+                choices: vec![choice.clone()],
+                ..RoundHistoryEntry::default()
+            }],
+        )
+        .await
+        .expect("round choices should save");
+        repo.update_session_turn_state("session-choice-edge", TurnPhase::AwaitingPlayer, 1, 1)
+            .await
+            .expect("session active node should update");
+        repo.save_player_input(&PlayerInput {
+            session_id: "session-choice-edge".to_string(),
+            round: 1,
+            action_type: PlayerActionType::SelectedOption,
+            action: choice.option.action.clone(),
+        })
+        .await
+        .expect("story edge should save");
+
+        let conn = Connection::open(db_path).expect("sqlite db should open");
+        let action_json: String = conn
+            .query_row(
+                "SELECT action FROM story_edges WHERE session_id = ?1",
+                params!["session-choice-edge"],
+                |row| row.get(0),
+            )
+            .expect("story edge action JSON should be stored");
+        let stored_option = serde_json::from_str::<ProtagonistOption>(&action_json)
+            .expect("story edge action JSON should deserialize");
+        let action_value =
+            serde_json::from_str::<serde_json::Value>(&action_json).expect("action should be JSON");
+        let loaded_actions = repo
+            .load_story_edge_actions("session-choice-edge")
+            .await
+            .expect("story edge actions should load");
+
+        assert_eq!(stored_option, choice.option);
+        assert!(action_value.get("id").is_none());
+        assert!(action_value.get("option").is_none());
+        assert_eq!(loaded_actions.len(), 1);
+        assert_eq!(loaded_actions[0].action, "绕到钟楼背面");
+    }
+
+    #[tokio::test]
     async fn session_flow_turn_and_agent_context_tables_round_trip() {
         let repo = test_repo();
         repo.save_session_created(&SessionCreated {
@@ -1217,7 +1859,7 @@ mod tests {
             .expect("metadata should load")
             .expect("metadata should exist");
         assert_eq!(metadata.world_profile, "world");
-        assert_eq!(metadata.phase, TurnPhase::Idle);
+        assert_eq!(metadata.phase, TurnPhase::Start);
         assert!(!metadata.flow_end);
 
         repo.save_rounds("session-db", &[round_entry(1, "round-1")])
@@ -1247,26 +1889,37 @@ mod tests {
         assert_eq!(metadata.phase, TurnPhase::Ended);
         assert!(metadata.flow_end);
 
-        let mut context = AgentContext::new();
-        context.add_message(Message::user("latest context"));
-        repo.save_agent_context(&AgentContextUpdate {
+        repo.save_agent_context_item(&AgentContextItemAppended {
             session_id: "session-db".to_string(),
             round: 1,
             agent_name: "UpperNarrator".to_string(),
-            context,
+            message: Message::user("latest context"),
         })
         .await
-        .expect("agent context should save");
+        .expect("agent context item should save");
+        repo.save_agent_context_item(&AgentContextItemAppended {
+            session_id: "session-db".to_string(),
+            round: 1,
+            agent_name: "UpperNarrator".to_string(),
+            message: Message::assistant("discarded response"),
+        })
+        .await
+        .expect("assistant context item should save");
+        repo.save_agent_context_rollback(&AgentContextRollback {
+            session_id: "session-db".to_string(),
+            round: 1,
+            agent_name: "UpperNarrator".to_string(),
+            policy: AgentContextRollbackPolicy::LatestInput,
+        })
+        .await
+        .expect("agent context rollback should save");
         let contexts = repo
             .load_agent_contexts("session-db")
             .await
             .expect("agent contexts should load");
         assert_eq!(contexts.len(), 1);
         assert_eq!(contexts[0].agent_name, "UpperNarrator");
-        assert!(matches!(
-            contexts[0].context.conversation().last(),
-            Some(Message::User { content }) if content == "latest context"
-        ));
+        assert!(contexts[0].context.conversation().is_empty());
 
         repo.save_player_input(&PlayerInput {
             session_id: "session-db".to_string(),
@@ -1275,11 +1928,11 @@ mod tests {
             action: "绕到钟楼背面".to_string(),
         })
         .await
-        .expect("player input should save");
+        .expect("story edge action should save");
         let inputs = repo
-            .load_player_inputs("session-db")
+            .load_story_edge_actions("session-db")
             .await
-            .expect("player inputs should load");
+            .expect("story edge actions should load");
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[0].round, 1);
         assert_eq!(inputs[0].action_type, PlayerActionType::SelectedOption);

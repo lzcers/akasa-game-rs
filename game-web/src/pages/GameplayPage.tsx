@@ -28,6 +28,16 @@ import type { Choice } from "../lib/api";
 const EMPTY_BROADCAST_ITEMS: string[] = [];
 const AUTO_CHOICE_STORAGE_KEY = "akasa:auto-choice-enabled";
 
+interface SubmittedChoiceDisplay {
+  action: string;
+  text: string;
+}
+
+interface SubmittedChoiceState {
+  choices: Record<number, SubmittedChoiceDisplay>;
+  sessionId: string | null;
+}
+
 const GameplayPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -98,10 +108,22 @@ const GameplayPage: React.FC = () => {
   const [expandedChoicePanelRound, setExpandedChoicePanelRound] = useState<
     number | null
   >(null);
+  const [submittedChoiceState, setSubmittedChoiceState] =
+    useState<SubmittedChoiceState>({
+      choices: {},
+      sessionId: null,
+    });
   const autoChoiceKeyRef = useRef<string | null>(null);
   const reachedRoundKeyRef = useRef<string | null>(null);
 
   const currentRound = Math.max(displayRound || turnIndex || 1, 1);
+  const submittedChoices = useMemo(
+    () =>
+      submittedChoiceState.sessionId === sessionId
+        ? submittedChoiceState.choices
+        : {},
+    [sessionId, submittedChoiceState],
+  );
   const narrationHistory = useMemo<NarrationRoundEntry[]>(
     () =>
       Object.values(roundStates)
@@ -109,10 +131,23 @@ const GameplayPage: React.FC = () => {
           (entry) =>
             entry.narrationText ||
             entry.selectedChoiceText ||
+            submittedChoices[entry.round] ||
             entry.isAwaitingNarration,
         )
+        .map((entry) => {
+          const submittedChoice = submittedChoices[entry.round];
+          if (!submittedChoice || entry.selectedChoiceText) {
+            return entry;
+          }
+
+          return {
+            ...entry,
+            selectedChoiceText: submittedChoice.text,
+            selectedChoiceAction: submittedChoice.action,
+          };
+        })
         .sort((left, right) => left.round - right.round),
-    [roundStates],
+    [roundStates, submittedChoices],
   );
   const activeRoundState = roundStates[currentRound];
   const isEndingReviewMode =
@@ -133,12 +168,20 @@ const GameplayPage: React.FC = () => {
   const hasChoices = currentRoundChoices.length > 0;
   const isNarrationStreaming =
     activeRoundState?.narrationStatus === "running";
-  const shouldType =
-    Boolean(activeRoundState?.isAwaitingNarration) || isNarrationStreaming;
-  const typingKey = `${currentRound}:${activeRoundState?.isAwaitingNarration ? "1" : "0"}`;
-  const isTyping = shouldType && completedTypingKey !== typingKey;
+  const shouldAnimateCurrentNarration =
+    !skipRestoredNarrationAnimation && !isEndingReviewMode;
+  const currentNarrationText = activeRoundState?.narrationText ?? "";
+  const typingKey = `${currentRound}:${currentNarrationText}`;
+  const isCurrentNarrationTyping =
+    shouldAnimateCurrentNarration &&
+    currentNarrationText.trim().length > 0 &&
+    completedTypingKey !== typingKey;
+  const isNarrationOutputPending =
+    Boolean(activeRoundState?.isAwaitingNarration) ||
+    isNarrationStreaming ||
+    isCurrentNarrationTyping;
   const isChoiceInteractionDisabled =
-    isEndingReviewMode || isTyping || isLoading;
+    isEndingReviewMode || isNarrationOutputPending || isLoading;
   const canContinueWithoutChoice =
     phase === "awaiting_player" &&
     activeRoundState?.choicesStatus === "ready" &&
@@ -305,10 +348,52 @@ const GameplayPage: React.FC = () => {
     }
   };
 
+  const resetChoicePanelAfterSubmission = useCallback(() => {
+    setExpandedChoicePanelRound(null);
+    setRoundControls({
+      round: currentRound,
+      activeObsession: false,
+      obsessionInput: "",
+      previews: {},
+    });
+  }, [currentRound]);
+
+  const rememberSubmittedChoice = useCallback(
+    (choice: SubmittedChoiceDisplay) => {
+      setSubmittedChoiceState((prev) => ({
+        sessionId,
+        choices: {
+          ...(prev.sessionId === sessionId ? prev.choices : {}),
+          [currentRound]: choice,
+        },
+      }));
+    },
+    [currentRound, sessionId],
+  );
+
+  const forgetSubmittedChoice = useCallback(() => {
+    setSubmittedChoiceState((prev) => {
+      if (prev.sessionId !== sessionId || !prev.choices[currentRound]) {
+        return prev;
+      }
+
+      const next = { ...prev.choices };
+      delete next[currentRound];
+      return {
+        sessionId,
+        choices: next,
+      };
+    });
+  }, [currentRound, sessionId]);
+
   const handleChoiceClick = useCallback(
     async (choice: Choice) => {
       try {
-        await submitChoice(
+        rememberSubmittedChoice({
+          action: choice.action,
+          text: activeObsession ? `${choice.text} [执念]` : choice.text,
+        });
+        const submission = submitChoice(
           {
             input: {
               type: "selected_option",
@@ -318,40 +403,51 @@ const GameplayPage: React.FC = () => {
           },
           activeObsession,
         );
-        setRoundControls({
-          round: currentRound,
-          activeObsession: false,
-          obsessionInput: "",
-          previews: {},
-        });
+        resetChoicePanelAfterSubmission();
+        await submission;
         setFeedback(null);
       } catch (submitError) {
+        forgetSubmittedChoice();
         setFeedback(readErrorMessage(submitError, "推进回响失败。"));
       }
     },
-    [activeObsession, currentRound, readErrorMessage, submitChoice],
+    [
+      activeObsession,
+      forgetSubmittedChoice,
+      rememberSubmittedChoice,
+      readErrorMessage,
+      resetChoicePanelAfterSubmission,
+      submitChoice,
+    ],
   );
 
   const handleContinueClick = useCallback(async () => {
     try {
-      await submitChoice({
+      rememberSubmittedChoice({
+        action: "continue",
+        text: "继续回响",
+      });
+      const submission = submitChoice({
         input: {
           type: "free_text",
           action: "continue",
         },
         displayText: "继续回响",
       });
-      setRoundControls({
-        round: currentRound,
-        activeObsession: false,
-        obsessionInput: "",
-        previews: {},
-      });
+      resetChoicePanelAfterSubmission();
+      await submission;
       setFeedback(null);
     } catch (submitError) {
+      forgetSubmittedChoice();
       setFeedback(readErrorMessage(submitError, "续写回响失败。"));
     }
-  }, [currentRound, readErrorMessage, submitChoice]);
+  }, [
+    forgetSubmittedChoice,
+    readErrorMessage,
+    rememberSubmittedChoice,
+    resetChoicePanelAfterSubmission,
+    submitChoice,
+  ]);
 
   useEffect(() => {
     if (!autoChoiceEnabled || isEndingReviewMode) {
@@ -406,7 +502,11 @@ const GameplayPage: React.FC = () => {
     }
 
     try {
-      await submitChoice(
+      rememberSubmittedChoice({
+        action: actionText,
+        text: `${actionText} [执念]`,
+      });
+      const submission = submitChoice(
         {
           input: {
             type: "free_text",
@@ -416,14 +516,11 @@ const GameplayPage: React.FC = () => {
         },
         true,
       );
-      setRoundControls({
-        round: currentRound,
-        activeObsession: false,
-        obsessionInput: "",
-        previews: {},
-      });
+      resetChoicePanelAfterSubmission();
+      await submission;
       setFeedback(null);
     } catch (submitError) {
+      forgetSubmittedChoice();
       setFeedback(readErrorMessage(submitError, "执念写入失败。"));
     }
   };

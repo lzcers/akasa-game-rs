@@ -22,7 +22,13 @@ interface NarrationPanelProps {
 }
 
 const NarrationHistoryItem: React.FC<NarrationHistoryItemProps> = React.memo(
-  ({ entry, isCurrentRound, animateCurrentRound, isFinished, onComplete }) => {
+  ({
+    entry,
+    isCurrentRound,
+    animateCurrentRound,
+    isFinished,
+    onComplete,
+  }) => {
     const selectedChoiceAction = entry.selectedChoiceAction?.trim();
     const shouldShowSelectedChoiceAction = Boolean(
       selectedChoiceAction &&
@@ -165,6 +171,31 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
 
     return () => window.cancelAnimationFrame(frameId);
   }, [currentRound, narrationHistory, skipRestoredNarrationAnimation]);
+
+  useEffect(() => {
+    if (skipRestoredNarrationAnimation || isScrollbarDragging) {
+      return undefined;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      const scrollElement = scrollContainerRef.current;
+      if (!scrollElement) {
+        return;
+      }
+
+      scrollElement.scrollTop = scrollElement.scrollHeight;
+      updateNarrationScrollbar();
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [
+    currentRound,
+    isAwaitingNarration,
+    isScrollbarDragging,
+    narrationHistory,
+    skipRestoredNarrationAnimation,
+    updateNarrationScrollbar,
+  ]);
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(updateNarrationScrollbar);

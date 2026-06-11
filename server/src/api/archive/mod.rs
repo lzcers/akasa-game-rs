@@ -26,7 +26,6 @@ pub async fn load_archive_payload(
                 key_story_beats: payload.key_story_beats,
                 phase: payload.turn_state.phase,
                 turn_index: payload.turn_state.turn_index,
-                active_turn_id: payload.turn_state.active_turn_id,
                 world_snapshot: payload.world_snapshot,
                 committed_action: payload.protagonist_decision.committed_action,
                 choices: payload.protagonist_decision.choices,

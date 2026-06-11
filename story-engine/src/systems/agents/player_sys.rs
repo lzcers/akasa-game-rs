@@ -30,7 +30,7 @@ pub fn player_input_consume_system(
 
     for (entity, event_sink, flow, mut decision_state, outcome) in sessions.iter_mut() {
         if flow.stage != TurnStage::AwaitingPlayer
-            || outcome.is_some_and(|outcome| outcome.turn_id == flow.active_turn_id)
+            || outcome.is_some_and(|outcome| outcome.turn_id == flow.active_turn_id())
         {
             continue;
         }
@@ -42,7 +42,7 @@ pub fn player_input_consume_system(
                     turn_id,
                     input,
                 } => {
-                    if *session_entity != entity || *turn_id != flow.active_turn_id {
+                    if *session_entity != entity || *turn_id != flow.active_turn_id() {
                         continue;
                     }
                     let action = input.action.trim();
@@ -56,12 +56,12 @@ pub fn player_input_consume_system(
                     let action_type = input.r#type;
                     let committed_action = decision_state.commit_action(action);
                     event_sink.publish_player_input(
-                        flow.active_turn_id.max(1),
+                        flow.active_turn_id().max(1),
                         action_type,
                         committed_action,
                     );
                     commands.entity(entity).insert(PlayerInputCompleted {
-                        turn_id: flow.active_turn_id,
+                        turn_id: flow.active_turn_id(),
                     });
                     break;
                 }

@@ -49,14 +49,14 @@ pub fn narration_dispatch_system(
                 owner.parent() == session_entity
                     && agent.role == AgentRole::Narrator
                     && agent_tasks.task_result(*entity).is_none()
-                    && !outcome.is_some_and(|outcome| outcome.turn_id == flow.active_turn_id)
+                    && !outcome.is_some_and(|outcome| outcome.turn_id == flow.active_turn_id())
             })
         {
-            agent.append_user_message(&prompt);
-            event_sink.publish_agent_context_update(
-                flow.active_turn_id.max(1),
+            let message = agent.append_user_message(&prompt);
+            event_sink.publish_agent_context_item_appended(
+                flow.active_turn_id().max(1),
                 agent.name.clone(),
-                agent.context.clone(),
+                message,
             );
             commands.entity(entity).insert(PendingReasoning);
         }
@@ -88,14 +88,14 @@ pub fn narration_apply_system(
                     else {
                         continue;
                     };
-                    agent.append_assistant_message(&output);
-                    event_sink.publish_agent_context_update(
-                        flow.active_turn_id.max(1),
+                    let message = agent.append_assistant_message(&output);
+                    event_sink.publish_agent_context_item_appended(
+                        flow.active_turn_id().max(1),
                         agent.name.clone(),
-                        agent.context.clone(),
+                        message,
                     );
                     event_sink.publish_flow_turn_update(
-                        flow.active_turn_id.max(1),
+                        flow.active_turn_id().max(1),
                         flow.stage,
                         agent.name.clone(),
                         agent.output_type,
@@ -104,11 +104,11 @@ pub fn narration_apply_system(
                     commands
                         .entity(entity)
                         .insert(NarrationOutcome {
-                            turn_id: flow.active_turn_id,
+                            turn_id: flow.active_turn_id(),
                             content: output,
                         })
                         .insert(ApplicationCompleted {
-                            turn_id: flow.active_turn_id,
+                            turn_id: flow.active_turn_id(),
                         });
                 }
                 TaskStatus::Error => {

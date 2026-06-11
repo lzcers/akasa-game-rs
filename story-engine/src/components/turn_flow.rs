@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct TurnFlow {
     pub turn_index: u64,
-    pub active_turn_id: u64,
     pub stage: TurnStage,
 }
 
@@ -12,7 +11,7 @@ pub struct TurnFlow {
 #[serde(rename_all = "snake_case")]
 pub enum TurnStage {
     #[default]
-    Idle,
+    Start,
     Simulation,
     Application,
     AwaitingPlayer,
@@ -25,33 +24,35 @@ impl Default for TurnFlow {
     fn default() -> Self {
         Self {
             turn_index: 0,
-            active_turn_id: 0,
-            stage: TurnStage::Idle,
+            stage: TurnStage::Start,
         }
     }
 }
 
 impl TurnFlow {
+    pub const fn active_turn_id(self) -> u64 {
+        match self.stage {
+            TurnStage::Start | TurnStage::TurnCompleted | TurnStage::Ended => self.turn_index,
+            TurnStage::Simulation
+            | TurnStage::Application
+            | TurnStage::AwaitingPlayer
+            | TurnStage::Failed => self.turn_index + 1,
+        }
+    }
+
     pub fn finish_turn(&mut self) {
-        self.turn_index = self.active_turn_id.max(self.turn_index + 1);
-        self.active_turn_id = self.turn_index;
+        self.turn_index = self.active_turn_id();
         self.stage = TurnStage::TurnCompleted;
     }
 
     pub fn end(&mut self) {
-        self.turn_index = self.active_turn_id.max(self.turn_index + 1);
-        self.active_turn_id = self.turn_index;
+        self.turn_index = self.active_turn_id();
         self.stage = TurnStage::Ended;
     }
 
     pub fn advance(&mut self) {
         match self.stage {
-            TurnStage::Idle => {
-                self.active_turn_id = self.turn_index + 1;
-                self.stage = TurnStage::Simulation;
-            }
-            TurnStage::TurnCompleted => {
-                self.active_turn_id = self.turn_index + 1;
+            TurnStage::Start | TurnStage::TurnCompleted => {
                 self.stage = TurnStage::Simulation;
             }
             _ => {}
@@ -63,7 +64,7 @@ impl TurnStage {
     pub const fn is_stable(self) -> bool {
         matches!(
             self,
-            TurnStage::Idle
+            TurnStage::Start
                 | TurnStage::AwaitingPlayer
                 | TurnStage::TurnCompleted
                 | TurnStage::Ended
@@ -81,17 +82,53 @@ mod tests {
         let mut flow = TurnFlow::default();
 
         flow.advance();
-        assert_eq!(flow.active_turn_id, 1);
+        assert_eq!(flow.active_turn_id(), 1);
         assert_eq!(flow.stage, TurnStage::Simulation);
 
         flow.finish_turn();
         assert_eq!(flow.turn_index, 1);
-        assert_eq!(flow.active_turn_id, 1);
+        assert_eq!(flow.active_turn_id(), 1);
         assert_eq!(flow.stage, TurnStage::TurnCompleted);
 
         flow.advance();
-        assert_eq!(flow.active_turn_id, 2);
+        assert_eq!(flow.active_turn_id(), 2);
         assert_eq!(flow.stage, TurnStage::Simulation);
+    }
+
+    #[test]
+    fn computes_active_turn_id_from_stage() {
+        assert_eq!(
+            TurnFlow {
+                turn_index: 3,
+                stage: TurnStage::Start,
+            }
+            .active_turn_id(),
+            3
+        );
+        assert_eq!(
+            TurnFlow {
+                turn_index: 3,
+                stage: TurnStage::Simulation,
+            }
+            .active_turn_id(),
+            4
+        );
+        assert_eq!(
+            TurnFlow {
+                turn_index: 3,
+                stage: TurnStage::AwaitingPlayer,
+            }
+            .active_turn_id(),
+            4
+        );
+        assert_eq!(
+            TurnFlow {
+                turn_index: 4,
+                stage: TurnStage::TurnCompleted,
+            }
+            .active_turn_id(),
+            4
+        );
     }
 
     #[test]
