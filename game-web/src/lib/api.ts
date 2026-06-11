@@ -53,12 +53,12 @@ export interface RuntimeStateView {
   activeTurnId: number;
   currentLocation: string;
   currentScene: string;
-  protagonistState: string;
+  characterState: string;
   npcsState: string;
   latestHistory: string;
   latestBroadcastSummary: string;
   latestBroadcastItems?: string[];
-  latestProtagonistAction: string;
+  latestCharacterAction: string;
   isEnding: boolean;
   endingType?: string | null;
 }
@@ -81,8 +81,8 @@ export interface SessionWorldState {
   focalPoint: string;
   isEnding: boolean;
   endingType?: string | null;
-  protagonistCondition: string;
-  protagonistKnownSecrets: string[];
+  characterCondition: string;
+  characterKnownSecrets: string[];
 }
 
 export interface ApiResponse<T> {
@@ -105,23 +105,24 @@ export interface TurnStateArchive {
   active_turn_id: number;
 }
 
-export interface ProtagonistDecisionArchive {
-  committed_action: string;
-  choices: PendingProtagonistChoice[];
+export interface CharacterDecisionArchive {
+  committed_actions: PlayerActionItem[];
+  choices: PendingCharacterChoice[];
 }
 
 export interface SessionArchivePayload {
   session_id: string;
   title: string;
+  character_name?: string;
   world_profile: string;
-  protagonist_profile: string;
+  character_profile: string;
   key_story_beats?: string;
   turn_state: TurnStateArchive;
   fate_weaver: unknown;
   upper_narrator: unknown;
-  protagonist: unknown;
+  character_agent: unknown;
   world_snapshot: unknown;
-  protagonist_decision: ProtagonistDecisionArchive;
+  character_decision: CharacterDecisionArchive;
   history_log: unknown;
 }
 
@@ -139,7 +140,7 @@ export interface LoadArchiveInput {
 
 export interface GeneratedProfiles {
   world: string;
-  protagonist: string;
+  character: string;
   keyStoryBeats: string;
 }
 
@@ -156,28 +157,37 @@ export interface StorySummaryData {
 }
 
 export interface CreateGameSessionInput {
+  characterName?: string;
   worldProfile: string;
-  protagonistProfile: string;
+  characterProfile: string;
   keyStoryBeats?: string;
 }
 
-export interface ProtagonistOption {
+export interface CharacterOption {
   title: string;
   action: string;
   motivationAndRisk?: string;
   motivation_and_risk?: string;
 }
 
-export interface PendingProtagonistChoice {
+export interface PendingCharacterChoice {
   id: string;
-  option: ProtagonistOption;
+  option: CharacterOption;
 }
 
 export type PlayerActionType = 'selected_option' | 'free_text';
 
-export interface PlayerActionInput {
-  type: PlayerActionType;
+export interface PlayerActionItem {
+  character_name?: string;
+  player_id?: string | null;
+  action_type?: PlayerActionType;
+  title?: string;
   action: string;
+  motivation_and_risk?: string;
+}
+
+export interface PlayerActionInput {
+  actions: PlayerActionItem[];
 }
 
 export interface GameSessionWorldStateData {
@@ -191,15 +201,15 @@ export interface GameSessionWorldStateData {
   worldState: SessionWorldState;
   latestNarration: string;
   currentOutcome: string;
-  choices: PendingProtagonistChoice[];
+  choices: PendingCharacterChoice[];
 }
 
 export interface SessionRoundHistoryData {
   round: number;
   worldState: SessionWorldState | null;
   narrationText: string;
-  choices: PendingProtagonistChoice[];
-  committedAction?: string | null;
+  choices: PendingCharacterChoice[];
+  committedActions: PlayerActionItem[];
   selectedChoiceText?: string | null;
 }
 
@@ -224,7 +234,7 @@ export type EngineEvent =
       type: 'session_created';
       session_id: string;
       world_profile: string;
-      protagonist_profile: string;
+      character_profile: string;
       key_story_beats: string;
     }
   | {
@@ -245,8 +255,7 @@ export type EngineEvent =
       type: 'player_input';
       session_id: string;
       round: number;
-      action_type: PlayerActionType;
-      action: string;
+      actions: PlayerActionItem[];
     }
   | {
       type: 'agent_context_item_appended';

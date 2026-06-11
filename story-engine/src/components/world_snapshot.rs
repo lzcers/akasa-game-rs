@@ -21,7 +21,7 @@ pub struct WorldSnapshot {
     pub description: String,
     /// 刚刚发生或正在发生的核心事件
     pub current_event: String,
-    /// 本段情境中主角可感知的新线索或信息
+    /// 本段情境中玩家角色可感知的新线索或信息
     pub new_info: Vec<String>,
     /// 情境中蕴藏的冲突、压力或两难
     pub inner_conflict: String,
@@ -36,10 +36,10 @@ pub struct WorldSnapshot {
     /// 结局的情绪基调或主题；非结局时为空
     #[serde(default)]
     pub ending_type: Option<String>,
-    /// 主角当前身心状态的文学化描述
-    pub protagonist_condition: String,
-    /// 主角已确切知晓的剧情秘密
-    pub protagonist_known_secrets: Vec<String>,
+    /// 玩家角色当前身心状态的文学化描述
+    pub character_condition: String,
+    /// 玩家角色已确切知晓的剧情秘密
+    pub character_known_secrets: Vec<String>,
     pub npcs: Vec<NpcState>,
     pub items: Vec<ItemState>,
     pub events_in_progress: Vec<OngoingEvent>,
@@ -55,7 +55,7 @@ pub struct NpcState {
     pub location: String,
     /// 当前情绪与心理状态的描述
     pub mood: String,
-    /// 对主角的态度，使用自然语言，如 "既信赖又隐隐藏着愧疚"
+    /// 对玩家角色的态度，使用自然语言，如 "既信赖又隐隐藏着愧疚"
     pub attitude: String,
     /// 此刻最直接的意图或行动倾向
     pub goal: String,
@@ -71,7 +71,7 @@ pub struct ItemState {
     pub location: String,
     /// 状态或可用性，如 "已被激活，光芒渐弱"
     pub status: String,
-    /// 被主角察觉的程度，如 "刚瞥见"、"未察觉"
+    /// 被玩家角色察觉的程度，如 "刚瞥见"、"未察觉"
     #[serde(default, alias = "aware")]
     pub awareness: String,
     /// 此物与主线伏笔的关联

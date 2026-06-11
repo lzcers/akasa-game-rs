@@ -3,8 +3,8 @@ use bevy_ecs::component::Component;
 use serde::{Deserialize, Serialize};
 
 use crate::prompts::{
+    character_prompt::CHARACTER_PROMPT,
     fate_weaver_prompt::{FATE_BASE_SYSTEM_PROMPT, OUTPUT_SCHEMA},
-    protagonist_prompt::PROTAGONIST_PROMPT,
     upper_narrator_prompt::UPPER_NARRATOR_PROMPT,
 };
 #[derive(Component, Debug, Clone)]
@@ -25,7 +25,7 @@ pub struct Applicator;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentOutputType {
-    #[serde(alias = "world_snapshot", alias = "protagonist_options")]
+    #[serde(alias = "world_snapshot", alias = "character_options")]
     Json,
     #[serde(alias = "simulation_text", alias = "narration")]
     Text,
@@ -36,7 +36,7 @@ pub enum AgentOutputType {
 pub enum AgentRole {
     Simulator,
     Narrator,
-    Protagonist,
+    Character,
 }
 
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
@@ -45,12 +45,12 @@ pub struct PendingReasoning;
 impl Agent {
     pub fn new_fate_weaver(
         world_profile: &str,
-        protagonist_profile: &str,
+        character_profile: &str,
         key_story_beats: &str,
     ) -> Self {
         let system_prompt = FATE_BASE_SYSTEM_PROMPT
             .replace("{world_profile}", world_profile)
-            .replace("{protagonist_profile}", protagonist_profile)
+            .replace("{character_profile}", character_profile)
             .replace("{key_story_beats}", key_story_beats)
             .replace("{output_schema}", OUTPUT_SCHEMA);
         Self::new_with_role(
@@ -61,10 +61,10 @@ impl Agent {
         )
     }
 
-    pub fn new_upper_narrator(world_profile: &str, protagonist_profile: &str) -> Self {
+    pub fn new_upper_narrator(world_profile: &str, character_profile: &str) -> Self {
         let system_prompt = UPPER_NARRATOR_PROMPT
             .replace("{world_profile}", world_profile)
-            .replace("{protagonist_profile}", protagonist_profile);
+            .replace("{character_profile}", character_profile);
         Self::new_with_role(
             AgentRole::Narrator,
             AgentOutputType::Text,
@@ -73,14 +73,18 @@ impl Agent {
         )
     }
 
-    pub fn new_protagonist(world_profile: &str, protagonist_profile: &str) -> Self {
-        let system_prompt = PROTAGONIST_PROMPT
+    pub fn new_character_agent(
+        character_name: &str,
+        world_profile: &str,
+        character_profile: &str,
+    ) -> Self {
+        let system_prompt = CHARACTER_PROMPT
             .replace("{world_profile}", world_profile)
-            .replace("{protagonist_profile}", protagonist_profile);
+            .replace("{character_profile}", character_profile);
         Self::new_with_role(
-            AgentRole::Protagonist,
+            AgentRole::Character,
             AgentOutputType::Json,
-            "Protagonist",
+            character_name,
             system_prompt,
         )
     }

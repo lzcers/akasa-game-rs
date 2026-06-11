@@ -18,7 +18,7 @@ import { createGameUIActions } from './ui/actionsRuntime';
 export type StartupStage =
   | 'idle'
   | 'generating_world'
-  | 'generating_protagonist'
+  | 'generating_character'
   | 'ready_to_enter'
   | 'creating_session';
 
@@ -35,7 +35,7 @@ export interface GameUIState {
   isLoading: boolean;
   // 开局前过渡页当前聚焦的阶段。
   startupStage: StartupStage;
-  // 已生成但尚未正式注入会话的世界/主角设定。
+  // 已生成但尚未正式注入会话的世界/玩家角色设定。
   preparedProfiles: GeneratedProfiles | null;
   // 当前会话生成页显影出的记录文案，用于故事内回看。
   generatedProfiles: GeneratedProfiles | null;

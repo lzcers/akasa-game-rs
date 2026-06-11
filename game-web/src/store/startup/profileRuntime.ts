@@ -52,7 +52,7 @@ export function scheduleStartupProfileStageProgress(runtime: StartupProfileRunti
   scheduleStartupStageProgress(() => {
     if (runtime.get().startupStage === 'generating_world') {
       runtime.set({
-        startupStage: 'generating_protagonist',
+        startupStage: 'generating_character',
       });
     }
   });

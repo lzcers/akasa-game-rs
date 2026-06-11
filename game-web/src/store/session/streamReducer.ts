@@ -1,4 +1,4 @@
-import type { EngineEvent, RuntimeStateView } from '../../lib/api';
+import type { EngineEvent, PlayerActionItem, RuntimeStateView } from '../../lib/api';
 import {
   createRoundState,
   type GameInternalState,
@@ -7,9 +7,9 @@ import {
 import { summarizeFatePlanning } from './fatePlanningSummary';
 import { parseJsonValue } from './jsonValue';
 import {
-  protagonistActionChoices,
-  protagonistActionText,
-} from './protagonistChoices';
+  characterActionChoices,
+  characterActionText,
+} from './characterChoices';
 import { streamEntityLabel } from './taskContent';
 
 interface StreamEventUIState {
@@ -106,7 +106,7 @@ export function reduceStreamEvent({
     }
 
     if (event.stage === 'application' && event.output_type === 'json') {
-      const reduction = reduceProtagonistOptions(
+      const reduction = reduceCharacterOptions(
         internalState,
         uiState.stateView,
         activeRound,
@@ -122,7 +122,7 @@ export function reduceStreamEvent({
     const reduction = reducePlayerInput(
       internalState,
       activeRound,
-      event.action,
+      event.actions[0],
     );
     internalStatePatch = reduction.internalStatePatch;
   }
@@ -181,18 +181,23 @@ export function reduceStreamEvent({
 function reducePlayerInput(
   internalState: GameInternalState,
   round: number,
-  action: string,
+  action: PlayerActionItem | undefined,
 ): Pick<StreamEventReduction, 'internalStatePatch'> {
+  if (!action) {
+    return { internalStatePatch: null };
+  }
   const previousRoundState = internalState.roundStates[round];
+  const actionText = action.action;
   const selectedChoiceText =
     previousRoundState?.selectedChoiceText
-    ?? previousRoundState?.choices.find((choice) => choice.action === action)?.text
-    ?? action;
+    ?? previousRoundState?.choices.find((choice) => choice.action === actionText)?.text
+    ?? action.title
+    ?? actionText;
   const nextRoundState = createRoundState(round, {
     ...(previousRoundState ?? {}),
     round,
     selectedChoiceText,
-    selectedChoiceAction: action,
+    selectedChoiceAction: actionText,
     choices: [],
     choicesStatus: 'idle',
     isAwaitingNarration: false,
@@ -337,7 +342,7 @@ function reduceWorldSnapshotEvent(
         activeTurnId: nextRound,
         currentScene: summary?.sceneTitle ?? streamEntityLabel(entityName),
         currentLocation: summary?.locationName ?? stateView.currentLocation,
-        protagonistState: summary?.protagonistCondition ?? stateView.protagonistState,
+        characterState: summary?.characterCondition ?? stateView.characterState,
         latestBroadcastSummary:
           summary?.currentEvent
           ?? summary?.newInfo[0]
@@ -354,13 +359,13 @@ function reduceWorldSnapshotEvent(
   return { internalStatePatch, uiStatePatch };
 }
 
-function reduceProtagonistOptions(
+function reduceCharacterOptions(
   internalState: GameInternalState,
   stateView: RuntimeStateView | null,
   round: number,
   content: string,
 ): Pick<StreamEventReduction, 'internalStatePatch' | 'uiStatePatch'> {
-  const nextChoices = protagonistActionChoices(content);
+  const nextChoices = characterActionChoices(content);
   const previousRoundState = internalState.roundStates[round];
   const normalizedChoices = nextChoices ?? [];
   let internalStatePatch: Partial<GameInternalState> | null = null;
@@ -386,14 +391,14 @@ function reduceProtagonistOptions(
     };
   }
 
-  const nextProtagonistAction = protagonistActionText(content);
+  const nextCharacterAction = characterActionText(content);
   if (stateView) {
     uiStatePatch = {
       stateView: {
         ...stateView,
         phase: nextChoices ? 'awaiting_player' : stateView.phase,
-        latestProtagonistAction:
-          nextProtagonistAction ?? stateView.latestProtagonistAction,
+        latestCharacterAction:
+          nextCharacterAction ?? stateView.latestCharacterAction,
       },
     };
   }

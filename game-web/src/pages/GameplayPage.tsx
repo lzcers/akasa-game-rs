@@ -47,6 +47,7 @@ const GameplayPage: React.FC = () => {
     latestBroadcastItems,
     latestBroadcastSummary,
     generatedProfiles,
+    characterName,
     isEnding,
     isLoading,
     error,
@@ -59,6 +60,7 @@ const GameplayPage: React.FC = () => {
         state.stateView?.latestBroadcastItems ?? EMPTY_BROADCAST_ITEMS,
       latestBroadcastSummary: state.stateView?.latestBroadcastSummary ?? "",
       generatedProfiles: state.generatedProfiles,
+      characterName: state.character.name,
       isEnding: state.stateView?.isEnding ?? false,
       isLoading: state.isLoading,
       error: state.error,
@@ -117,6 +119,7 @@ const GameplayPage: React.FC = () => {
   const reachedRoundKeyRef = useRef<string | null>(null);
 
   const currentRound = Math.max(displayRound || turnIndex || 1, 1);
+  const playableCharacterName = characterName.trim() || "玩家角色";
   const submittedChoices = useMemo(
     () =>
       submittedChoiceState.sessionId === sessionId
@@ -396,8 +399,13 @@ const GameplayPage: React.FC = () => {
         const submission = submitChoice(
           {
             input: {
-              type: "selected_option",
-              action: choice.action,
+              actions: [{
+                character_name: playableCharacterName,
+                action_type: 'selected_option',
+                title: choice.text,
+                action: choice.action,
+                motivation_and_risk: choice.motivationAndRisk,
+              }],
             },
             displayText: choice.text,
           },
@@ -414,6 +422,7 @@ const GameplayPage: React.FC = () => {
     [
       activeObsession,
       forgetSubmittedChoice,
+      playableCharacterName,
       rememberSubmittedChoice,
       readErrorMessage,
       resetChoicePanelAfterSubmission,
@@ -429,8 +438,11 @@ const GameplayPage: React.FC = () => {
       });
       const submission = submitChoice({
         input: {
-          type: "free_text",
-          action: "continue",
+          actions: [{
+            character_name: playableCharacterName,
+            action_type: 'free_text',
+            action: "continue",
+          }],
         },
         displayText: "继续回响",
       });
@@ -443,6 +455,7 @@ const GameplayPage: React.FC = () => {
     }
   }, [
     forgetSubmittedChoice,
+    playableCharacterName,
     readErrorMessage,
     rememberSubmittedChoice,
     resetChoicePanelAfterSubmission,
@@ -509,8 +522,11 @@ const GameplayPage: React.FC = () => {
       const submission = submitChoice(
         {
           input: {
-            type: "free_text",
-            action: actionText,
+            actions: [{
+              character_name: playableCharacterName,
+              action_type: 'free_text',
+              action: actionText,
+            }],
           },
           displayText: actionText,
         },

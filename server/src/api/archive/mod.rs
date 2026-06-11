@@ -21,17 +21,18 @@ pub async fn load_archive_payload(
         .create_session_from_archive(
             session_id,
             SessionArchiveState {
+                character_name: payload.character_name,
                 world_profile: payload.world_profile,
-                protagonist_profile: payload.protagonist_profile,
+                character_profile: payload.character_profile,
                 key_story_beats: payload.key_story_beats,
                 phase: payload.turn_state.phase,
                 turn_index: payload.turn_state.turn_index,
                 world_snapshot: payload.world_snapshot,
-                committed_action: payload.protagonist_decision.committed_action,
-                choices: payload.protagonist_decision.choices,
+                committed_actions: payload.character_decision.committed_actions,
+                choices: payload.character_decision.choices,
                 fate_weaver_context: payload.fate_weaver,
                 upper_narrator_context: payload.upper_narrator,
-                protagonist_context: payload.protagonist,
+                character_agent_context: payload.character_agent,
             },
         )
         .await
@@ -80,7 +81,7 @@ mod tests {
     use super::*;
     use agent::agent::context::Context;
     use story_engine::components::{
-        outcome::{PendingProtagonistChoice, ProtagonistOption},
+        outcome::{CharacterOption, PendingCharacterChoice, PlayerActionItem},
         world_snapshot::WorldSnapshot,
     };
 
@@ -91,8 +92,9 @@ mod tests {
         let payload = SessionArchivePayload {
             session_id: "session-compress".to_string(),
             title: "第3轮：塔楼回响".to_string(),
+            character_name: "洛寒".to_string(),
             world_profile: "world".to_string(),
-            protagonist_profile: "protagonist".to_string(),
+            character_profile: "character".to_string(),
             key_story_beats: "beats".to_string(),
             turn_state: TurnStateArchive {
                 phase: TurnPhase::AwaitingPlayer,
@@ -101,17 +103,17 @@ mod tests {
             },
             fate_weaver: Context::default(),
             upper_narrator: Context::default(),
-            protagonist: Context::default(),
+            character_agent: Context::default(),
             world_snapshot: WorldSnapshot {
                 round: 3,
                 scene_title: "塔楼回响".to_string(),
                 ..WorldSnapshot::default()
             },
-            protagonist_decision: ProtagonistDecisionArchive {
-                committed_action: "推门".to_string(),
-                choices: vec![PendingProtagonistChoice {
+            character_decision: CharacterDecisionArchive {
+                committed_actions: vec![PlayerActionItem::character_free_text("推门")],
+                choices: vec![PendingCharacterChoice {
                     id: "choice-1".to_string(),
-                    option: ProtagonistOption {
+                    option: CharacterOption {
                         title: "推门".to_string(),
                         action: "推门".to_string(),
                         motivation_and_risk: "可能惊动楼上的守望者".to_string(),
@@ -128,7 +130,7 @@ mod tests {
                     }),
                     narration_text: Some("旧钟仍在震颤。".to_string()),
                     choices: vec![],
-                    committed_action: Some("推门".to_string()),
+                    committed_actions: vec![PlayerActionItem::character_free_text("推门")],
                 }],
             },
         };
@@ -144,8 +146,9 @@ mod tests {
         let payload = SessionArchivePayload {
             session_id: "session-round-trip".to_string(),
             title: "第4轮：潮声之门".to_string(),
+            character_name: "洛寒".to_string(),
             world_profile: "world".to_string(),
-            protagonist_profile: "protagonist".to_string(),
+            character_profile: "character".to_string(),
             key_story_beats: "beats".to_string(),
             turn_state: TurnStateArchive {
                 phase: TurnPhase::AwaitingPlayer,
@@ -154,14 +157,14 @@ mod tests {
             },
             fate_weaver: Context::default(),
             upper_narrator: Context::default(),
-            protagonist: Context::default(),
+            character_agent: Context::default(),
             world_snapshot: WorldSnapshot {
                 round: 4,
                 scene_title: "潮声之门".to_string(),
                 ..WorldSnapshot::default()
             },
-            protagonist_decision: ProtagonistDecisionArchive {
-                committed_action: "开门".to_string(),
+            character_decision: CharacterDecisionArchive {
+                committed_actions: vec![PlayerActionItem::character_free_text("开门")],
                 choices: vec![],
             },
             history_log: SessionHistoryLog {
@@ -174,7 +177,7 @@ mod tests {
                     }),
                     narration_text: Some("海风从门缝里灌进来。".to_string()),
                     choices: vec![],
-                    committed_action: Some("开门".to_string()),
+                    committed_actions: vec![PlayerActionItem::character_free_text("开门")],
                 }],
             },
         };

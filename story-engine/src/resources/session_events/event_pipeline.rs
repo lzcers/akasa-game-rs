@@ -1,7 +1,7 @@
 use agent::core::Message;
 use tokio::sync::broadcast;
 
-use crate::components::{agent::AgentOutputType, outcome::PlayerActionType, turn_flow::TurnStage};
+use crate::components::{agent::AgentOutputType, outcome::PlayerActionItem, turn_flow::TurnStage};
 
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -22,8 +22,9 @@ pub enum EngineEvent {
 #[serde(rename_all = "snake_case")]
 pub struct SessionCreated {
     pub session_id: String,
+    pub character_name: String,
     pub world_profile: String,
-    pub protagonist_profile: String,
+    pub character_profile: String,
     pub key_story_beats: String,
 }
 
@@ -50,8 +51,7 @@ pub struct TaskCompleted {
 pub struct PlayerInput {
     pub session_id: String,
     pub round: u64,
-    pub action_type: PlayerActionType,
-    pub action: String,
+    pub actions: Vec<PlayerActionItem>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]

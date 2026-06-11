@@ -34,7 +34,7 @@ interface StageHeadline {
 
 type ProfileStepKey =
   | "generating_world"
-  | "generating_protagonist"
+  | "generating_character"
   | "creating_session";
 
 const startupSteps: StartupStep[] = [
@@ -46,7 +46,7 @@ const startupSteps: StartupStep[] = [
       "正在从你的设定中提取时代纹理、核心矛盾与规则压力，让世界从记录中浮现。",
   },
   {
-    key: "generating_protagonist",
+    key: "generating_character",
     label: "角色显影中",
     title: "凝聚角色回响",
     description:
@@ -62,7 +62,7 @@ const startupSteps: StartupStep[] = [
 
 const stageOrder: Exclude<StartupStage, "idle">[] = [
   "generating_world",
-  "generating_protagonist",
+  "generating_character",
   "creating_session",
   "ready_to_enter",
 ];
@@ -73,7 +73,7 @@ const rotatingMessages: Record<Exclude<StartupStage, "idle">, string[]> = {
     "正在收束世界规则与禁忌",
     "正在校准冲突将如何逼近角色",
   ],
-  generating_protagonist: [
+  generating_character: [
     "正在收束角色欲望",
     "正在打磨角色弱点与裂缝",
     "正在让性格倾向落成可演绎的行动方式",
@@ -113,7 +113,7 @@ function stageHeadline(
   hasPlayableSession: boolean,
 ): StageHeadline {
   switch (stage) {
-    case "generating_protagonist":
+    case "generating_character":
       return {
         title: "角色记录正在显影",
         subtitle: `${name} 的欲望、弱点与行动倾向正在被收束成更适合展开剧情的记录底稿。`,
@@ -177,6 +177,7 @@ const GeneratingPage: React.FC = () => {
     startupStage === "ready_to_enter" &&
     Boolean(sessionId) &&
     hasPlayableSession;
+  const isEnterWorldPending = !canEnterWorld || isLoading;
   const headline = stageHeadline(
     startupStage,
     character.name || "这位角色",
@@ -211,7 +212,7 @@ const GeneratingPage: React.FC = () => {
     if (preparedProfiles) {
       track("generated_profiles_accepted", {
         generatedWorldProfile: preparedProfiles.world,
-        generatedProtagonistProfile: preparedProfiles.protagonist,
+        generatedCharacterProfile: preparedProfiles.character,
         generatedKeyStoryBeats: preparedProfiles.keyStoryBeats,
       });
     }
@@ -228,7 +229,7 @@ const GeneratingPage: React.FC = () => {
   const profileSetKey = preparedProfiles
     ? [
         preparedProfiles.world,
-        preparedProfiles.protagonist,
+        preparedProfiles.character,
         preparedProfiles.keyStoryBeats,
       ].join("\n---\n")
     : "";
@@ -392,10 +393,10 @@ const GeneratingPage: React.FC = () => {
               </SecondaryButton>
               <PrimaryButton
                 onClick={handleEnterWorld}
-                disabled={isLoading}
+                disabled={isEnterWorldPending}
                 className="min-h-9 min-w-0 flex-1 px-3 py-2 text-xs sm:flex-none sm:px-4 sm:text-sm"
               >
-                {isLoading ? "共鸣中..." : "步入回响"}
+                {isEnterWorldPending ? "共鸣中..." : "步入回响"}
               </PrimaryButton>
             </div>
           ) : null}

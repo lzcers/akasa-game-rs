@@ -1,13 +1,13 @@
 import type { Choice } from '../../lib/api';
 
-interface StreamedProtagonistOption {
+interface StreamedCharacterOption {
   title?: string;
   action?: string;
   motivation_and_risk?: string;
   motivationAndRisk?: string;
 }
 
-function toChoiceFromStreamOption(option: StreamedProtagonistOption, index: number): Choice {
+function toChoiceFromStreamOption(option: StreamedCharacterOption, index: number): Choice {
   const action = option.action?.trim() || '';
   return {
     id: `choice-${index + 1}`,
@@ -18,9 +18,9 @@ function toChoiceFromStreamOption(option: StreamedProtagonistOption, index: numb
   };
 }
 
-function parseProtagonistChoicesPayload(raw: string): Choice[] | null {
+function parseCharacterChoicesPayload(raw: string): Choice[] | null {
   try {
-    const parsed = JSON.parse(raw) as { options?: StreamedProtagonistOption[] };
+    const parsed = JSON.parse(raw) as { options?: StreamedCharacterOption[] };
     return (parsed.options ?? []).map(toChoiceFromStreamOption);
   } catch {
     return null;
@@ -76,8 +76,8 @@ function extractCompletedJsonObjects(raw: string): string[] {
   return objects;
 }
 
-function parseStreamingProtagonistChoices(raw: string): Choice[] | null {
-  const parsed = parseProtagonistChoicesPayload(raw);
+function parseStreamingCharacterChoices(raw: string): Choice[] | null {
+  const parsed = parseCharacterChoicesPayload(raw);
   if (parsed) {
     return parsed;
   }
@@ -95,7 +95,7 @@ function parseStreamingProtagonistChoices(raw: string): Choice[] | null {
 
   const options = optionObjects.flatMap((item) => {
     try {
-      return [JSON.parse(item) as StreamedProtagonistOption];
+      return [JSON.parse(item) as StreamedCharacterOption];
     } catch {
       return [];
     }
@@ -104,21 +104,21 @@ function parseStreamingProtagonistChoices(raw: string): Choice[] | null {
   return options.map(toChoiceFromStreamOption);
 }
 
-export function protagonistActionChoices(raw: string): Choice[] | null {
+export function characterActionChoices(raw: string): Choice[] | null {
   if (!raw.trim()) {
     return null;
   }
 
-  return parseStreamingProtagonistChoices(raw);
+  return parseStreamingCharacterChoices(raw);
 }
 
-export function protagonistActionText(raw: string): string | null {
+export function characterActionText(raw: string): string | null {
   if (!raw.trim()) {
     return null;
   }
 
   try {
-    const parsedChoices = parseStreamingProtagonistChoices(raw);
+    const parsedChoices = parseStreamingCharacterChoices(raw);
     if (parsedChoices) {
       if (parsedChoices.length === 0) {
         return '前路暂时未显，请稍等记录展开。';
@@ -126,7 +126,7 @@ export function protagonistActionText(raw: string): string | null {
       return parsedChoices.map((choice) => choice.text).join(' / ');
     }
 
-    const parsed = JSON.parse(raw) as { options?: StreamedProtagonistOption[] };
+    const parsed = JSON.parse(raw) as { options?: StreamedCharacterOption[] };
     const options = parsed.options ?? [];
     if (options.length === 0) {
       return '前路暂时未显，请稍等记录展开。';

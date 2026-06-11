@@ -18,9 +18,9 @@ export function generatedProfilePanels(
       className: "border-[#5b6f96]/30 bg-[#0f1624]/80 text-[#c7d5f2]",
     },
     {
-      key: "protagonist",
+      key: "character",
       title: "阿卡夏显影出的角色记录",
-      text: profiles.protagonist,
+      text: profiles.character,
       className: "border-[#6f5f96]/30 bg-[#151325]/80 text-[#d8d0f2]",
     },
     {

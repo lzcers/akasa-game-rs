@@ -48,12 +48,12 @@ pub fn world_snapshot_ledger(snapshot: &WorldSnapshot) -> String {
         writeln!(out, "镜头焦点：{}", snapshot.focal_point).unwrap();
     }
 
-    writeln!(out, "主角状态：{}", snapshot.protagonist_condition).unwrap();
-    if !snapshot.protagonist_known_secrets.is_empty() {
+    writeln!(out, "玩家角色状态：{}", snapshot.character_condition).unwrap();
+    if !snapshot.character_known_secrets.is_empty() {
         writeln!(
             out,
-            "主角已知秘密：{}",
-            snapshot.protagonist_known_secrets.join("；")
+            "玩家角色已知秘密：{}",
+            snapshot.character_known_secrets.join("；")
         )
         .unwrap();
     }
@@ -77,7 +77,7 @@ pub fn world_snapshot_ledger(snapshot: &WorldSnapshot) -> String {
         for item in &snapshot.items {
             writeln!(
                 out,
-                "- {}（{}，状态：{}，主角察觉：{}，剧情关联：{}）",
+                "- {}（{}，状态：{}，玩家角色察觉：{}，剧情关联：{}）",
                 item.name, item.location, item.status, item.awareness, item.relevance
             )
             .unwrap();
@@ -111,9 +111,9 @@ pub fn world_snapshot_ledger(snapshot: &WorldSnapshot) -> String {
     out
 }
 
-pub fn story_prompt(snapshot: &WorldSnapshot, protagonist_action: Option<&str>) -> String {
-    let previous_protagonist_action =
-        protagonist_action.filter(|action| *action != "start" && !action.trim().is_empty());
+pub fn story_prompt(snapshot: &WorldSnapshot, character_action: Option<&str>) -> String {
+    let previous_character_action =
+        character_action.filter(|action| *action != "start" && !action.trim().is_empty());
     let npcs: Vec<_> = snapshot
         .npcs
         .iter()
@@ -136,7 +136,7 @@ pub fn story_prompt(snapshot: &WorldSnapshot, protagonist_action: Option<&str>) 
     serde_json::to_string_pretty(&json!({
         "task": "write_story",
         "round": snapshot.round,
-        "previous_protagonist_action": previous_protagonist_action,
+        "previous_character_action": previous_character_action,
         "scene_title": &snapshot.scene_title,
         "time_absolute": &snapshot.time_absolute,
         "time_relative": &snapshot.time_relative,
@@ -153,8 +153,8 @@ pub fn story_prompt(snapshot: &WorldSnapshot, protagonist_action: Option<&str>) 
         "focal_point": &snapshot.focal_point,
         "is_ending": snapshot.is_ending,
         "ending_type": &snapshot.ending_type,
-        "protagonist_condition": &snapshot.protagonist_condition,
-        "protagonist_known_secrets": &snapshot.protagonist_known_secrets,
+        "character_condition": &snapshot.character_condition,
+        "character_known_secrets": &snapshot.character_known_secrets,
         "npcs": npcs,
         "items": &snapshot.items,
         "events_in_progress": &snapshot.events_in_progress,
@@ -163,9 +163,9 @@ pub fn story_prompt(snapshot: &WorldSnapshot, protagonist_action: Option<&str>) 
     .expect("story prompt payload should serialize")
 }
 
-pub fn protagonist_prompt(snapshot: &WorldSnapshot, protagonist_action: Option<&str>) -> String {
-    let previous_protagonist_action =
-        protagonist_action.filter(|action| *action != "start" && !action.trim().is_empty());
+pub fn character_prompt(snapshot: &WorldSnapshot, character_action: Option<&str>) -> String {
+    let previous_character_action =
+        character_action.filter(|action| *action != "start" && !action.trim().is_empty());
     let npcs: Vec<_> = snapshot
         .npcs
         .iter()
@@ -181,9 +181,9 @@ pub fn protagonist_prompt(snapshot: &WorldSnapshot, protagonist_action: Option<&
         .collect();
 
     serde_json::to_string_pretty(&json!({
-        "task": "generate_protagonist_options",
+        "task": "generate_character_options",
         "round": snapshot.round,
-        "previous_protagonist_action": previous_protagonist_action,
+        "previous_character_action": previous_character_action,
         "scene_title": &snapshot.scene_title,
         "time_absolute": &snapshot.time_absolute,
         "time_relative": &snapshot.time_relative,
@@ -194,12 +194,12 @@ pub fn protagonist_prompt(snapshot: &WorldSnapshot, protagonist_action: Option<&
         "current_event": &snapshot.current_event,
         "new_info": &snapshot.new_info,
         "inner_conflict": &snapshot.inner_conflict,
-        "protagonist_condition": &snapshot.protagonist_condition,
-        "protagonist_known_secrets": &snapshot.protagonist_known_secrets,
+        "character_condition": &snapshot.character_condition,
+        "character_known_secrets": &snapshot.character_known_secrets,
         "npcs": npcs,
         "items": &snapshot.items,
         "events_in_progress": &snapshot.events_in_progress,
-        "instruction": "请根据本 JSON 输入生成符合主角认知、性格与身心状态的可行行动选项。",
+        "instruction": "请根据本 JSON 输入生成符合玩家角色认知、性格与身心状态的可行行动选项。",
     }))
-    .expect("protagonist prompt payload should serialize")
+    .expect("character prompt payload should serialize")
 }

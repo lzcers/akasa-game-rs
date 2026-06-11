@@ -1,9 +1,9 @@
 import type {
   Choice,
-  PendingProtagonistChoice,
+  PendingCharacterChoice,
 } from '../../lib/api';
 
-export function toChoiceFromSession(choice: PendingProtagonistChoice): Choice {
+export function toChoiceFromSession(choice: PendingCharacterChoice): Choice {
   const motivationAndRisk = choice.option.motivationAndRisk?.trim()
     || choice.option.motivation_and_risk?.trim();
 

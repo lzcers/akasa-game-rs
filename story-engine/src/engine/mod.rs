@@ -10,7 +10,7 @@ use tokio::sync::{broadcast, oneshot};
 use crate::{
     archive::validate_archive_state,
     components::{agent::Agent, outcome::PlayerActionInput},
-    profile::{DEFAULT_KEY_STORY_BEATS, DEFAULT_PROTAGONIST_PROFILE, DEFAULT_WORLD_PROFILE},
+    profile::{DEFAULT_CHARACTER_PROFILE, DEFAULT_KEY_STORY_BEATS, DEFAULT_WORLD_PROFILE},
     resources::{
         agent_task_manager::AgentTaskManager,
         session_events::{EngineEvent, SessionEventHandle},
@@ -56,15 +56,17 @@ impl AkashicEngine {
     pub async fn create_session(
         &self,
         session_id: impl Into<String>,
+        character_name: &str,
         world_profile: &str,
-        protagonist_profile: &str,
+        character_profile: &str,
         key_story_beats: &str,
     ) -> Result<AkashicSessionEngine, String> {
         self.create_session_from_state(
             session_id.into(),
             NewSessionState::Profiles {
+                character_name: character_name.to_string(),
                 world_profile: world_profile.to_string(),
-                protagonist_profile: protagonist_profile.to_string(),
+                character_profile: character_profile.to_string(),
                 key_story_beats: key_story_beats.to_string(),
             },
         )
@@ -77,8 +79,9 @@ impl AkashicEngine {
     ) -> Result<AkashicSessionEngine, String> {
         self.create_session(
             session_id,
+            crate::components::outcome::DEFAULT_PLAYER_CHARACTER_NAME,
             DEFAULT_WORLD_PROFILE,
-            DEFAULT_PROTAGONIST_PROFILE,
+            DEFAULT_CHARACTER_PROFILE,
             DEFAULT_KEY_STORY_BEATS,
         )
         .await

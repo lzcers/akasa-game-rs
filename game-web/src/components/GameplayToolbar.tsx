@@ -58,7 +58,7 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
     shareCardOpenKey === archiveActionKey && !isArchiveActionDisabled;
   const hasGeneratedProfiles = Boolean(
     generatedProfiles?.world.trim() &&
-    generatedProfiles?.protagonist.trim() &&
+    generatedProfiles?.character.trim() &&
     generatedProfiles?.keyStoryBeats.trim(),
   );
 
@@ -69,7 +69,7 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
   const recordSetKey = generatedProfiles
     ? [
         generatedProfiles.world,
-        generatedProfiles.protagonist,
+        generatedProfiles.character,
         generatedProfiles.keyStoryBeats,
       ].join("\n---\n")
     : "";

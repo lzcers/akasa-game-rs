@@ -9,7 +9,7 @@ use crate::{
     components::{
         agent::{Agent, AgentRole, Applicator, PendingReasoning},
         flow::{ApplicationCompleted, ApplicationSkipped, FlowEnd},
-        outcome::{ProtagonistDecisionState, ProtagonistOptions},
+        outcome::{CharacterDecisionState, CharacterOptions},
         session_event_sink::SessionEventSink,
         turn_flow::{TurnFlow, TurnStage},
         world_snapshot::WorldSnapshot,
@@ -23,13 +23,13 @@ use crate::{
 use super::{output_preview, publish_apply_error};
 
 #[allow(clippy::type_complexity)]
-pub fn protagonist_dispatch_system(
+pub fn character_dispatch_system(
     mut commands: Commands,
     sessions: Query<(
         Entity,
         &SessionEventSink,
         &TurnFlow,
-        &ProtagonistDecisionState,
+        &CharacterDecisionState,
         &WorldSnapshot,
     )>,
     agent_tasks: Res<AgentTaskManager>,
@@ -46,7 +46,7 @@ pub fn protagonist_dispatch_system(
             commands.entity(session_entity).insert(FlowEnd);
             for (entity, ..) in agents.iter_mut().filter(|(_, agent, owner, completed)| {
                 owner.parent() == session_entity
-                    && agent.role == AgentRole::Protagonist
+                    && agent.role == AgentRole::Character
                     && !completed
                         .is_some_and(|completed| completed.turn_id == flow.active_turn_id())
             }) {
@@ -62,17 +62,15 @@ pub fn protagonist_dispatch_system(
             continue;
         }
 
-        let prompt = world_prompt::protagonist_prompt(
-            world_snapshot,
-            Some(decision_state.committed_action()),
-        );
+        let committed_action = decision_state.committed_action();
+        let prompt = world_prompt::character_prompt(world_snapshot, Some(&committed_action));
 
         for (entity, mut agent, ..) in
             agents
                 .iter_mut()
                 .filter(|(entity, agent, owner, completed)| {
                     owner.parent() == session_entity
-                        && agent.role == AgentRole::Protagonist
+                        && agent.role == AgentRole::Character
                         && agent_tasks.task_result(*entity).is_none()
                         && !completed
                             .is_some_and(|completed| completed.turn_id == flow.active_turn_id())
@@ -90,13 +88,13 @@ pub fn protagonist_dispatch_system(
 }
 
 #[allow(clippy::type_complexity)]
-pub fn protagonist_apply_system(
+pub fn character_apply_system(
     mut commands: Commands,
     mut sessions: Query<(
         Entity,
         &SessionEventSink,
         &mut TurnFlow,
-        &mut ProtagonistDecisionState,
+        &mut CharacterDecisionState,
     )>,
     mut agents: Query<(Entity, &mut Agent, &ChildOf), With<Applicator>>,
     mut agent_tasks: ResMut<AgentTaskManager>,
@@ -106,7 +104,7 @@ pub fn protagonist_apply_system(
         .filter(|(_, _, flow, _)| flow.stage == TurnStage::Application)
     {
         for (entity, mut agent, _) in agents.iter_mut().filter(|(_, agent, owner)| {
-            owner.parent() == session_entity && agent.role == AgentRole::Protagonist
+            owner.parent() == session_entity && agent.role == AgentRole::Character
         }) {
             let Some(result) = agent_tasks.task_result(entity).cloned() else {
                 continue;
@@ -116,11 +114,11 @@ pub fn protagonist_apply_system(
                     let Some(output) = result.output.clone() else {
                         continue;
                     };
-                    let mut options = match parse_json_response::<ProtagonistOptions>(&output) {
+                    let mut options = match parse_json_response::<CharacterOptions>(&output) {
                         Ok(options) => options,
                         Err(error) => {
                             let error = format!(
-                                "Protagonist 输出无法解析为行动选项：{error}。输出预览：{}",
+                                "CharacterAgent 输出无法解析为行动选项：{error}。输出预览：{}",
                                 output_preview(&output)
                             );
                             if agent_tasks.retry_task(entity, error.clone()) {

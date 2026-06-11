@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use story_engine::components::{
-    outcome::{PendingProtagonistChoice, PlayerActionInput},
+    outcome::{PendingCharacterChoice, PlayerActionInput, PlayerActionItem},
     world_snapshot::{ItemState, NpcState, OngoingEvent, WorldSnapshot},
 };
 
@@ -28,8 +28,10 @@ pub struct StorySummaryData {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateGameSessionRequest {
+    #[serde(default)]
+    pub character_name: String,
     pub world_profile: String,
-    pub protagonist_profile: String,
+    pub character_profile: String,
     #[serde(default)]
     pub key_story_beats: String,
 }
@@ -91,14 +93,14 @@ pub struct GameSessionWorldStateData {
     pub world_state: WorldStateData,
     pub latest_narration: String,
     pub current_outcome: String,
-    pub choices: Vec<PendingProtagonistChoice>,
+    pub choices: Vec<PendingCharacterChoice>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneratedProfilesData {
     pub world: String,
-    pub protagonist: String,
+    pub character: String,
     pub key_story_beats: String,
 }
 
@@ -108,8 +110,8 @@ pub struct RoundHistoryData {
     pub round: u64,
     pub world_state: Option<WorldStateData>,
     pub narration_text: String,
-    pub choices: Vec<PendingProtagonistChoice>,
-    pub committed_action: Option<String>,
+    pub choices: Vec<PendingCharacterChoice>,
+    pub committed_actions: Vec<PlayerActionItem>,
     pub selected_choice_text: Option<String>,
 }
 
@@ -142,8 +144,8 @@ pub struct WorldStateData {
     pub focal_point: String,
     pub is_ending: bool,
     pub ending_type: Option<String>,
-    pub protagonist_condition: String,
-    pub protagonist_known_secrets: Vec<String>,
+    pub character_condition: String,
+    pub character_known_secrets: Vec<String>,
     pub npcs: Vec<NpcStateData>,
     pub items: Vec<ItemStateData>,
     pub events_in_progress: Vec<OngoingEventData>,
@@ -200,8 +202,8 @@ impl From<WorldSnapshot> for WorldStateData {
             focal_point: value.focal_point,
             is_ending: value.is_ending,
             ending_type: value.ending_type,
-            protagonist_condition: value.protagonist_condition,
-            protagonist_known_secrets: value.protagonist_known_secrets,
+            character_condition: value.character_condition,
+            character_known_secrets: value.character_known_secrets,
             npcs: value.npcs.into_iter().map(Into::into).collect(),
             items: value.items.into_iter().map(Into::into).collect(),
             events_in_progress: value
@@ -217,20 +219,37 @@ impl From<WorldSnapshot> for WorldStateData {
 
 impl From<RoundHistoryEntry> for RoundHistoryData {
     fn from(value: RoundHistoryEntry) -> Self {
-        let selected_choice_text = value.committed_action.as_ref().and_then(|action| {
-            value.choices.iter().find_map(|choice| {
-                (choice.option.action == *action).then(|| choice.option.title.clone())
-            })
-        });
+        let selected_choice_text = selected_choice_text(&value);
 
         Self {
             round: value.round,
             world_state: value.world_snapshot.map(Into::into),
             narration_text: value.narration_text.unwrap_or_default(),
             choices: value.choices,
-            committed_action: value.committed_action,
+            committed_actions: value.committed_actions,
             selected_choice_text,
         }
+    }
+}
+
+fn selected_choice_text(value: &RoundHistoryEntry) -> Option<String> {
+    match value.committed_actions.as_slice() {
+        [] => None,
+        [single] => value
+            .choices
+            .iter()
+            .find_map(|choice| {
+                (choice.option.action == single.action).then(|| choice.option.title.clone())
+            })
+            .or_else(|| Some(single.title.clone()))
+            .filter(|title| !title.trim().is_empty())
+            .or_else(|| Some(single.action.clone())),
+        many => Some(
+            many.iter()
+                .map(|action| format!("{}: {}", action.character_name, action.action))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
     }
 }
 

@@ -8,8 +8,8 @@ export function streamEntityLabel(entityName: string): string {
     case 'UpperNarrator':
     case 'narration':
       return '回响展开中...';
-    case 'Protagonist':
-    case 'protagonist_action':
+    case 'CharacterAgent':
+    case 'character_action':
       return '角色抉择';
     default:
       return '记录推进';

@@ -2,7 +2,7 @@ use agent::core::Message;
 use bevy_ecs::component::Component;
 
 use crate::{
-    components::{agent::AgentOutputType, outcome::PlayerActionType, turn_flow::TurnStage},
+    components::{agent::AgentOutputType, outcome::PlayerActionItem, turn_flow::TurnStage},
     resources::session_events::{
         AgentContextItemAppended, AgentContextRollback, AgentContextRollbackPolicy, EngineEvent,
         EventPipeline, FlowTurnCompleted, FlowTurnEnd, FlowTurnError, FlowTurnUpdate, PlayerInput,
@@ -30,14 +30,16 @@ impl SessionEventSink {
 
     pub fn publish_session_created(
         &self,
+        character_name: impl Into<String>,
         world_profile: impl Into<String>,
-        protagonist_profile: impl Into<String>,
+        character_profile: impl Into<String>,
         key_story_beats: impl Into<String>,
     ) {
         let created = SessionCreated {
             session_id: self.session_id.clone(),
+            character_name: character_name.into(),
             world_profile: world_profile.into(),
-            protagonist_profile: protagonist_profile.into(),
+            character_profile: character_profile.into(),
             key_story_beats: key_story_beats.into(),
         };
         self.event_pipeline
@@ -75,17 +77,11 @@ impl SessionEventSink {
             .publish(EngineEvent::TaskCompleted(completed));
     }
 
-    pub fn publish_player_input(
-        &self,
-        round: u64,
-        action_type: PlayerActionType,
-        action: impl Into<String>,
-    ) {
+    pub fn publish_player_input(&self, round: u64, actions: Vec<PlayerActionItem>) {
         let input = PlayerInput {
             session_id: self.session_id.clone(),
             round,
-            action_type,
-            action: action.into(),
+            actions,
         };
         self.event_pipeline.publish(EngineEvent::PlayerInput(input));
     }
@@ -189,12 +185,13 @@ mod tests {
         let (sink, handle) = SessionEventSink::new("session-1");
         let mut events = handle.subscribe_events();
 
-        sink.publish_session_created("world", "hero", "beats");
+        sink.publish_session_created("洛寒", "world", "hero", "beats");
         match events.recv().await.unwrap() {
             EngineEvent::SessionCreated(created) => {
                 assert_eq!(created.session_id, "session-1");
+                assert_eq!(created.character_name, "洛寒");
                 assert_eq!(created.world_profile, "world");
-                assert_eq!(created.protagonist_profile, "hero");
+                assert_eq!(created.character_profile, "hero");
                 assert_eq!(created.key_story_beats, "beats");
             }
             other => panic!("expected session created, got {other:?}"),
@@ -211,13 +208,13 @@ mod tests {
             other => panic!("expected task update, got {other:?}"),
         }
 
-        sink.publish_player_input(3, PlayerActionType::SelectedOption, "推开门");
+        sink.publish_player_input(3, vec![PlayerActionItem::character_free_text("推开门")]);
         match events.recv().await.unwrap() {
             EngineEvent::PlayerInput(input) => {
                 assert_eq!(input.session_id, "session-1");
                 assert_eq!(input.round, 3);
-                assert_eq!(input.action_type, PlayerActionType::SelectedOption);
-                assert_eq!(input.action, "推开门");
+                assert_eq!(input.actions.len(), 1);
+                assert_eq!(input.actions[0].action, "推开门");
             }
             other => panic!("expected player input, got {other:?}"),
         }

@@ -54,7 +54,7 @@ export function stateViewFromSession(session: GameSessionWorldStateData): Runtim
     activeTurnId: session.activeTurnId,
     currentLocation: session.worldState.locationName || '记录现场',
     currentScene: session.worldState.sceneTitle || '记录回响',
-    protagonistState: session.worldState.protagonistCondition || '记录仍在酝酿',
+    characterState: session.worldState.characterCondition || '记录仍在酝酿',
     npcsState: session.worldState.currentEvent || '诸多回响正在汇聚',
     latestHistory: latestHistoryFromSession(session),
     latestBroadcastSummary:
@@ -62,7 +62,7 @@ export function stateViewFromSession(session: GameSessionWorldStateData): Runtim
       || session.worldState.description
       || '记录已续上',
     latestBroadcastItems,
-    latestProtagonistAction: session.currentOutcome || '你还没有写下选择',
+    latestCharacterAction: session.currentOutcome || '你还没有写下选择',
     isEnding: session.worldState.isEnding,
     endingType: session.worldState.endingType ?? null,
   };
@@ -87,7 +87,7 @@ export function roundStateFromPersistedHistoryEntry(
   const selectedChoiceText = entry.selectedChoiceText?.trim()
     || deriveSelectedChoiceText(entry)
     || null;
-  const selectedChoiceAction = entry.committedAction?.trim() || null;
+  const selectedChoiceAction = entry.committedActions[0]?.action.trim() || null;
 
   return createRoundState(entry.round, {
     title: titleFromWorldState(entry.worldState),
@@ -102,13 +102,13 @@ export function roundStateFromPersistedHistoryEntry(
 }
 
 function deriveSelectedChoiceText(entry: SessionRoundHistoryData): string | null {
-  const committedAction = entry.committedAction?.trim();
+  const committedAction = entry.committedActions[0]?.action.trim();
   if (!committedAction) {
     return null;
   }
 
   const matchedChoice = entry.choices.find((choice) => choice.option.action === committedAction);
-  return matchedChoice?.option.title || committedAction;
+  return matchedChoice?.option.title || entry.committedActions[0]?.title || committedAction;
 }
 
 function currentRoundStateFromSession(

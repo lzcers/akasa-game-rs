@@ -5,10 +5,10 @@ use bevy_ecs::{
 
 use crate::systems::{
     agents::{
+        character_sys::{character_apply_system, character_dispatch_system},
         fate_weaver_sys::{fate_weaver_apply_system, fate_weaver_dispatch_system},
         narration_sys::{narration_apply_system, narration_dispatch_system},
         player_sys::player_input_consume_system,
-        protagonist_sys::{protagonist_apply_system, protagonist_dispatch_system},
     },
     flow::{agent_task_system, cleanup_previous_turn_outcomes_system, flow_progress_system},
 };
@@ -38,7 +38,7 @@ pub(crate) fn build_schedule() -> Schedule {
         (
             fate_weaver_dispatch_system,
             narration_dispatch_system,
-            protagonist_dispatch_system,
+            character_dispatch_system,
         )
             .in_set(StoryScheduleSet::Dispatch),
     );
@@ -47,7 +47,7 @@ pub(crate) fn build_schedule() -> Schedule {
         (
             fate_weaver_apply_system,
             narration_apply_system,
-            protagonist_apply_system,
+            character_apply_system,
             player_input_consume_system,
         )
             .in_set(StoryScheduleSet::ApplyResults),

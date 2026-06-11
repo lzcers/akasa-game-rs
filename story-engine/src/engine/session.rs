@@ -5,7 +5,7 @@ use crate::{
     archive::SessionArchiveState,
     components::{
         agent::{Agent, AgentOutputType, AgentRole, Applicator, Simulator},
-        outcome::ProtagonistDecisionState,
+        outcome::CharacterDecisionState,
         session::{SessionProfiles, StorySession},
         session_event_sink::SessionEventSink,
         turn_flow::TurnFlow,
@@ -19,8 +19,9 @@ use super::{AkashicSessionEngine, runtime::EngineCommand};
 
 pub(crate) enum NewSessionState {
     Profiles {
+        character_name: String,
         world_profile: String,
-        protagonist_profile: String,
+        character_profile: String,
         key_story_beats: String,
     },
     Archive(Box<SessionArchiveState>),
@@ -44,27 +45,31 @@ impl SessionRuntime {
         let (event_sink, session_event_handle) = SessionEventSink::new(session_id.clone());
         let session_entity = match state {
             NewSessionState::Profiles {
+                character_name,
                 world_profile,
-                protagonist_profile,
+                character_profile,
                 key_story_beats,
             } => {
                 event_sink.publish_session_created(
+                    character_name.clone(),
                     world_profile.clone(),
-                    protagonist_profile.clone(),
+                    character_profile.clone(),
                     key_story_beats.clone(),
                 );
                 self.spawn_session_from_profiles(
                     &session_id,
+                    character_name,
                     world_profile,
-                    protagonist_profile,
+                    character_profile,
                     key_story_beats,
                     event_sink,
                 )
             }
             NewSessionState::Archive(state) => {
                 event_sink.publish_session_created(
+                    state.character_name.clone(),
                     state.world_profile.clone(),
-                    state.protagonist_profile.clone(),
+                    state.character_profile.clone(),
                     state.key_story_beats.clone(),
                 );
                 self.spawn_session_from_archive(&session_id, *state, event_sink)
@@ -130,8 +135,9 @@ impl SessionRuntime {
     fn spawn_session_from_profiles(
         &mut self,
         session_id: &str,
+        character_name: String,
         world_profile: String,
-        protagonist_profile: String,
+        character_profile: String,
         key_story_beats: String,
         event_sink: SessionEventSink,
     ) -> Result<Entity, String> {
@@ -143,12 +149,12 @@ impl SessionRuntime {
                 },
                 SessionProfiles {
                     world_profile: world_profile.clone(),
-                    protagonist_profile: protagonist_profile.clone(),
+                    character_profile: character_profile.clone(),
                     key_story_beats: key_story_beats.clone(),
                 },
                 TurnFlow::default(),
                 WorldSnapshot::default(),
-                ProtagonistDecisionState::default(),
+                CharacterDecisionState::default(),
                 event_sink,
             ))
             .id();
@@ -156,11 +162,11 @@ impl SessionRuntime {
             session_entity,
             vec![Agent::new_fate_weaver(
                 &world_profile,
-                &protagonist_profile,
+                &character_profile,
                 &key_story_beats,
             )],
-            Agent::new_upper_narrator(&world_profile, &protagonist_profile),
-            Agent::new_protagonist(&world_profile, &protagonist_profile),
+            Agent::new_upper_narrator(&world_profile, &character_profile),
+            Agent::new_character_agent(&character_name, &world_profile, &character_profile),
         );
         Ok(session_entity)
     }
@@ -179,7 +185,7 @@ impl SessionRuntime {
                 },
                 SessionProfiles {
                     world_profile: state.world_profile,
-                    protagonist_profile: state.protagonist_profile,
+                    character_profile: state.character_profile,
                     key_story_beats: state.key_story_beats,
                 },
                 TurnFlow {
@@ -187,7 +193,7 @@ impl SessionRuntime {
                     stage: state.phase,
                 },
                 state.world_snapshot,
-                ProtagonistDecisionState::from_archive(state.committed_action, state.choices),
+                CharacterDecisionState::from_archive(state.committed_actions, state.choices),
                 event_sink,
             ))
             .id();
@@ -208,11 +214,11 @@ impl SessionRuntime {
                 state.upper_narrator_context,
             ),
             Agent::from_context_with_role(
-                AgentRole::Protagonist,
+                AgentRole::Character,
                 AgentOutputType::Json,
-                "Protagonist",
+                state.character_name,
                 "",
-                state.protagonist_context,
+                state.character_agent_context,
             ),
         );
         Ok(session_entity)
@@ -223,7 +229,7 @@ impl SessionRuntime {
         session_entity: Entity,
         simulators: Vec<Agent>,
         narrator: Agent,
-        protagonist: Agent,
+        character: Agent,
     ) {
         for agent in simulators {
             self.world
@@ -232,7 +238,7 @@ impl SessionRuntime {
         self.world
             .spawn((narrator, ChildOf(session_entity), Applicator));
         self.world
-            .spawn((protagonist, ChildOf(session_entity), Applicator));
+            .spawn((character, ChildOf(session_entity), Applicator));
     }
 
     pub(super) fn session_entity(&self, session_id: &str) -> Option<Entity> {

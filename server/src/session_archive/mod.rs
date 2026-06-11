@@ -4,7 +4,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use story_engine::{
     components::{
         agent::AgentOutputType,
-        outcome::{PlayerActionType, ProtagonistOption, ProtagonistOptions},
+        outcome::{CharacterOption, CharacterOptions, PlayerActionItem, PlayerActionType},
         world_snapshot::WorldSnapshot,
     },
     resources::session_events::{
@@ -27,8 +27,9 @@ pub struct SessionArchiveRepository {
 #[derive(Debug, Clone)]
 pub struct StoredSessionMetadata {
     pub session_id: String,
+    pub character_name: String,
     pub world_profile: String,
-    pub protagonist_profile: String,
+    pub character_profile: String,
     pub key_story_beats: String,
     pub phase: TurnPhase,
     pub turn_index: u64,
@@ -45,8 +46,7 @@ pub struct StoredAgentContext {
 #[derive(Debug, Clone)]
 pub struct StoredStoryEdgeAction {
     pub round: u64,
-    pub action_type: PlayerActionType,
-    pub action: String,
+    pub action: PlayerActionItem,
 }
 
 #[derive(Debug, Clone)]
@@ -63,7 +63,16 @@ struct StoryPathNode {
 }
 
 const ROOT_NODE_ID: &str = "start";
-const DEFAULT_PLAYER_CHARACTER_ID: &str = "protagonist";
+const DEFAULT_PLAYER_CHARACTER_NAME: &str = "玩家角色";
+
+fn normalized_character_name(character_name: &str) -> String {
+    let character_name = character_name.trim();
+    if character_name.is_empty() {
+        DEFAULT_PLAYER_CHARACTER_NAME.to_string()
+    } else {
+        character_name.to_string()
+    }
+}
 
 impl SessionArchiveRepository {
     pub fn new(db: AppDatabase) -> Self {
@@ -84,8 +93,9 @@ impl SessionArchiveRepository {
             &conn,
             SessionBaseRecord {
                 session_id,
+                character_name: &event.character_name,
                 world_profile: &event.world_profile,
-                protagonist_profile: &event.protagonist_profile,
+                character_profile: &event.character_profile,
                 key_story_beats: &event.key_story_beats,
                 active_node_id: ROOT_NODE_ID,
                 total_node_count: 0,
@@ -122,8 +132,9 @@ impl SessionArchiveRepository {
             &conn,
             SessionBaseRecord {
                 session_id,
+                character_name: &metadata.character_name,
                 world_profile: &metadata.world_profile,
-                protagonist_profile: &metadata.protagonist_profile,
+                character_profile: &metadata.character_profile,
                 key_story_beats: &metadata.key_story_beats,
                 active_node_id: &active_node_id,
                 total_node_count,
@@ -190,39 +201,48 @@ impl SessionArchiveRepository {
             r#"
             SELECT
                 s.session_id,
-                s.world_profile,
-                s.protagonist_profile,
-                s.key_story_beats,
+                c.character_name,
+                w.world_profile,
+                c.character_profile,
+                COALESCE(c.key_story_beats, w.global_key_story_beats),
                 n.phase,
                 n.node_depth,
                 n.flow_end
             FROM sessions s
+            JOIN session_worlds w
+                ON w.session_id = s.session_id
+            JOIN session_characters c
+                ON c.session_id = s.session_id
+                AND c.is_playable = 1
             JOIN story_nodes n
                 ON n.session_id = s.session_id
                 AND n.node_id = s.active_node_id
             WHERE s.session_id = ?1
+            ORDER BY c.created_at ASC, c.character_name ASC
+            LIMIT 1
             "#,
             params![session_id],
             |row| {
-                let phase: String = row.get(4)?;
+                let phase: String = row.get(5)?;
                 let phase = deserialize_phase(&phase).map_err(|err| {
                     rusqlite::Error::FromSqlConversionFailure(
-                        4,
+                        5,
                         rusqlite::types::Type::Text,
                         Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
                     )
                 })?;
-                let node_depth: u64 = row.get::<_, i64>(5)?.try_into().unwrap_or_default();
+                let node_depth: u64 = row.get::<_, i64>(6)?.try_into().unwrap_or_default();
                 let (turn_index, active_turn_id) = turn_state_from_active_node(phase, node_depth);
                 Ok(StoredSessionMetadata {
                     session_id: row.get(0)?,
-                    world_profile: row.get(1)?,
-                    protagonist_profile: row.get(2)?,
-                    key_story_beats: row.get(3)?,
+                    character_name: row.get(1)?,
+                    world_profile: row.get(2)?,
+                    character_profile: row.get(3)?,
+                    key_story_beats: row.get(4)?,
                     phase,
                     turn_index,
                     active_turn_id,
-                    flow_end: row.get(6)?,
+                    flow_end: row.get(7)?,
                 })
             },
         )
@@ -336,7 +356,8 @@ impl SessionArchiveRepository {
                 SELECT
                     item.agent_name,
                     item.item_kind,
-                    item.message_json
+                    item.message_role,
+                    item.content
                 FROM agent_context_items item
                 JOIN active_path
                     ON active_path.node_id = item.node_id
@@ -362,20 +383,27 @@ impl SessionArchiveRepository {
             let context = contexts.entry(agent_name).or_default();
             match item_kind.as_str() {
                 "message" => {
-                    let message_json: String =
+                    let message_role: String =
                         row.get::<_, Option<String>>(2)?.ok_or_else(|| {
                             rusqlite::Error::InvalidColumnType(
                                 2,
-                                "message_json".to_string(),
+                                "message_role".to_string(),
                                 rusqlite::types::Type::Null,
                             )
                         })?;
+                    let content: String = row.get::<_, Option<String>>(3)?.ok_or_else(|| {
+                        rusqlite::Error::InvalidColumnType(
+                            3,
+                            "content".to_string(),
+                            rusqlite::types::Type::Null,
+                        )
+                    })?;
                     let message =
-                        serde_json::from_str::<Message>(&message_json).map_err(|err| {
+                        message_from_role_and_content(&message_role, content).map_err(|err| {
                             rusqlite::Error::FromSqlConversionFailure(
                                 2,
                                 rusqlite::types::Type::Text,
-                                Box::new(err),
+                                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
                             )
                         })?;
                     context.add_message(message);
@@ -398,8 +426,14 @@ impl SessionArchiveRepository {
 
     pub async fn save_player_input(&self, input: &PlayerInput) -> Result<()> {
         let session_id = input.session_id.trim();
-        let action = input.action.trim();
-        if session_id.is_empty() || action.is_empty() {
+        let actions = input
+            .actions
+            .iter()
+            .cloned()
+            .map(PlayerActionItem::normalized)
+            .filter(|action| !action.action.is_empty())
+            .collect::<Vec<_>>();
+        if session_id.is_empty() || actions.is_empty() {
             return Ok(());
         }
 
@@ -410,13 +444,6 @@ impl SessionArchiveRepository {
         schema::init(&conn)?;
         let now = chrono::Utc::now().to_rfc3339();
         ensure_linear_story_path(&conn, session_id, input.round + 1, &now)?;
-        let choice_option = choice_option_for_story_edge(
-            &conn,
-            session_id,
-            input.round,
-            input.action_type,
-            action,
-        )?;
         conn.execute(
             r#"
             INSERT INTO story_edges (
@@ -431,19 +458,21 @@ impl SessionArchiveRepository {
             params![session_id, from_node_id, to_node_id, now,],
         )
         .context("failed to upsert story edge")?;
-        upsert_story_edge_action(
-            &conn,
-            StoryEdgeActionRecord {
-                session_id,
-                from_node_id: &from_node_id,
-                to_node_id: &to_node_id,
-                character_id: DEFAULT_PLAYER_CHARACTER_ID,
-                player_id: None,
-                action_type: input.action_type,
-                choice_option: &choice_option,
-                submitted_at: &now,
-            },
-        )?;
+        for action in &actions {
+            let choice_option =
+                choice_option_for_story_edge(&conn, session_id, input.round, action)?;
+            upsert_story_edge_action(
+                &conn,
+                StoryEdgeActionRecord {
+                    session_id,
+                    from_node_id: &from_node_id,
+                    to_node_id: &to_node_id,
+                    action,
+                    choice_option: &choice_option,
+                    submitted_at: &now,
+                },
+            )?;
+        }
         Ok(())
     }
 
@@ -471,7 +500,14 @@ impl SessionArchiveRepository {
                         ON child.parent_node_id = parent.node_id
                     WHERE parent.session_id = ?1
                 )
-                SELECT active_path.node_depth, action.action_type, action.action
+                SELECT
+                    active_path.node_depth,
+                    action.character_name,
+                    action.player_id,
+                    action.action_type,
+                    action.title,
+                    action.action,
+                    action.motivation_and_risk
                 FROM story_edge_actions action
                 JOIN story_edges e
                     ON e.session_id = action.session_id
@@ -481,23 +517,34 @@ impl SessionArchiveRepository {
                     ON active_path.node_id = e.from_node_id
                 WHERE action.session_id = ?1
                     AND active_path.node_depth > 0
-                ORDER BY active_path.node_depth ASC, action.character_id ASC
+                ORDER BY active_path.node_depth ASC, action.character_name ASC
                 "#,
             )
             .context("failed to prepare story edge action load")?;
         let rows = stmt
             .query_map(params![session_id], |row| {
-                let action_type: String = row.get(1)?;
+                let action_type: String = row.get(3)?;
                 Ok(StoredStoryEdgeAction {
                     round: row.get::<_, i64>(0)?.try_into().unwrap_or_default(),
-                    action_type: deserialize_player_action_type(&action_type).map_err(|err| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            1,
-                            rusqlite::types::Type::Text,
-                            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
-                        )
-                    })?,
-                    action: row.get(2)?,
+                    action: PlayerActionItem {
+                        character_name: row.get(1)?,
+                        player_id: row.get(2)?,
+                        action_type: deserialize_player_action_type(&action_type).map_err(
+                            |err| {
+                                rusqlite::Error::FromSqlConversionFailure(
+                                    3,
+                                    rusqlite::types::Type::Text,
+                                    Box::new(std::io::Error::new(
+                                        std::io::ErrorKind::InvalidData,
+                                        err,
+                                    )),
+                                )
+                            },
+                        )?,
+                        title: row.get(4)?,
+                        action: row.get(5)?,
+                        motivation_and_risk: row.get(6)?,
+                    },
                 })
             })
             .context("failed to query story edge actions")?;
@@ -535,30 +582,19 @@ impl SessionArchiveRepository {
 
         let now = chrono::Utc::now().to_rfc3339();
         for round in rounds {
-            let Some(action) = round
-                .committed_action
-                .as_deref()
-                .map(str::trim)
-                .filter(|action| !action.is_empty())
-            else {
+            let actions = round
+                .committed_actions
+                .iter()
+                .cloned()
+                .map(PlayerActionItem::normalized)
+                .filter(|action| !action.action.is_empty())
+                .collect::<Vec<_>>();
+            if actions.is_empty() {
                 continue;
-            };
+            }
             ensure_linear_story_path(&tx, session_id, round.round + 1, &now)?;
             let from_node_id = linear_node_id_for_depth(round.round);
             let to_node_id = linear_node_id_for_depth(round.round + 1);
-            let selected_choice = round
-                .choices
-                .iter()
-                .find(|choice| choice.option.action == action)
-                .cloned();
-            let action_type = if selected_choice.is_some() {
-                PlayerActionType::SelectedOption
-            } else {
-                PlayerActionType::FreeText
-            };
-            let choice_option = selected_choice
-                .map(|choice| choice.option)
-                .unwrap_or_else(|| synthetic_choice_option(action));
             tx.execute(
                 r#"
                 INSERT INTO story_edges (
@@ -571,19 +607,20 @@ impl SessionArchiveRepository {
                 params![session_id, from_node_id, to_node_id, now,],
             )
             .context("failed to insert archived story edge")?;
-            upsert_story_edge_action(
-                &tx,
-                StoryEdgeActionRecord {
-                    session_id,
-                    from_node_id: &from_node_id,
-                    to_node_id: &to_node_id,
-                    character_id: DEFAULT_PLAYER_CHARACTER_ID,
-                    player_id: None,
-                    action_type,
-                    choice_option: &choice_option,
-                    submitted_at: &now,
-                },
-            )?;
+            for action in &actions {
+                let choice_option = choice_option_from_round_action(round, action);
+                upsert_story_edge_action(
+                    &tx,
+                    StoryEdgeActionRecord {
+                        session_id,
+                        from_node_id: &from_node_id,
+                        to_node_id: &to_node_id,
+                        action,
+                        choice_option: &choice_option,
+                        submitted_at: &now,
+                    },
+                )?;
+            }
         }
 
         tx.commit()
@@ -773,8 +810,9 @@ impl SessionArchiveRepository {
 
 struct SessionBaseRecord<'a> {
     session_id: &'a str,
+    character_name: &'a str,
     world_profile: &'a str,
-    protagonist_profile: &'a str,
+    character_profile: &'a str,
     key_story_beats: &'a str,
     active_node_id: &'a str,
     total_node_count: i64,
@@ -797,20 +835,14 @@ fn upsert_session_base(conn: &Connection, record: SessionBaseRecord<'_>, now: &s
             root_node_id,
             active_node_id,
             total_node_count,
-            world_profile,
-            protagonist_profile,
-            key_story_beats,
             created_at,
             updated_at,
             last_accessed_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?8)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?5)
         ON CONFLICT(session_id) DO UPDATE SET
             root_node_id = excluded.root_node_id,
             active_node_id = excluded.active_node_id,
             total_node_count = MAX(sessions.total_node_count, excluded.total_node_count),
-            world_profile = excluded.world_profile,
-            protagonist_profile = excluded.protagonist_profile,
-            key_story_beats = excluded.key_story_beats,
             updated_at = excluded.updated_at,
             last_accessed_at = excluded.last_accessed_at
         "#,
@@ -819,13 +851,59 @@ fn upsert_session_base(conn: &Connection, record: SessionBaseRecord<'_>, now: &s
             ROOT_NODE_ID,
             record.active_node_id,
             record.total_node_count,
-            record.world_profile,
-            record.protagonist_profile,
-            record.key_story_beats,
             now,
         ],
     )
     .context("failed to upsert session metadata")?;
+    conn.execute(
+        r#"
+        INSERT INTO session_worlds (
+            session_id,
+            world_profile,
+            global_key_story_beats,
+            created_at,
+            updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?4)
+        ON CONFLICT(session_id) DO UPDATE SET
+            world_profile = excluded.world_profile,
+            global_key_story_beats = excluded.global_key_story_beats,
+            updated_at = excluded.updated_at
+        "#,
+        params![
+            record.session_id,
+            record.world_profile,
+            record.key_story_beats,
+            now,
+        ],
+    )
+    .context("failed to upsert session world profile")?;
+    conn.execute(
+        r#"
+        INSERT INTO session_characters (
+            session_id,
+            character_name,
+            character_profile,
+            key_story_beats,
+            player_id,
+            is_playable,
+            created_at,
+            updated_at
+        ) VALUES (?1, ?2, ?3, ?4, NULL, 1, ?5, ?5)
+        ON CONFLICT(session_id, character_name) DO UPDATE SET
+            character_profile = excluded.character_profile,
+            key_story_beats = excluded.key_story_beats,
+            is_playable = excluded.is_playable,
+            updated_at = excluded.updated_at
+        "#,
+        params![
+            record.session_id,
+            normalized_character_name(record.character_name),
+            record.character_profile,
+            record.key_story_beats,
+            now,
+        ],
+    )
+    .context("failed to upsert session character profile")?;
     Ok(())
 }
 
@@ -948,16 +1026,16 @@ fn choice_option_for_story_edge(
     conn: &Connection,
     session_id: &str,
     round: u64,
-    action_type: PlayerActionType,
-    action: &str,
-) -> Result<ProtagonistOption> {
-    if action_type == PlayerActionType::SelectedOption
-        && let Some(choice) = selected_choice_option_for_action(conn, session_id, round, action)?
+    action: &PlayerActionItem,
+) -> Result<CharacterOption> {
+    if action.action_type == PlayerActionType::SelectedOption
+        && let Some(choice) =
+            selected_choice_option_for_action(conn, session_id, round, &action.action)?
     {
         return Ok(choice);
     }
 
-    Ok(synthetic_choice_option(action))
+    Ok(choice_option_from_action(action))
 }
 
 fn selected_choice_option_for_action(
@@ -965,7 +1043,7 @@ fn selected_choice_option_for_action(
     session_id: &str,
     round: u64,
     action: &str,
-) -> Result<Option<ProtagonistOption>> {
+) -> Result<Option<CharacterOption>> {
     let node_id = linear_node_id_for_depth(round);
     let stage = serialize_phase(TurnPhase::Application)?;
     let output_type = serialize_agent_output_type(AgentOutputType::Json)?;
@@ -977,42 +1055,56 @@ fn selected_choice_option_for_action(
             WHERE session_id = ?1
                 AND node_id = ?2
                 AND stage = ?3
-                AND entity_name = 'Protagonist'
                 AND output_type = ?4
+            ORDER BY entity_name ASC
+            LIMIT 1
             "#,
             params![session_id, node_id, stage, output_type],
             |row| row.get::<_, String>(0),
         )
         .optional()
-        .context("failed to load protagonist options for story edge")?;
+        .context("failed to load character options for story edge")?;
 
     let Some(content) = content else {
         return Ok(None);
     };
-    let options = serde_json::from_str::<ProtagonistOptions>(&content)
-        .context("failed to deserialize protagonist options for story edge")?;
+    let options = serde_json::from_str::<CharacterOptions>(&content)
+        .context("failed to deserialize character options for story edge")?;
     Ok(options
         .options
         .into_iter()
         .find(|option| option.action == action))
 }
 
-fn synthetic_choice_option(action: &str) -> ProtagonistOption {
-    ProtagonistOption {
-        title: action.to_string(),
-        action: action.to_string(),
-        motivation_and_risk: String::new(),
+fn choice_option_from_action(action: &PlayerActionItem) -> CharacterOption {
+    CharacterOption {
+        title: action.title.clone(),
+        action: action.action.clone(),
+        motivation_and_risk: action.motivation_and_risk.clone(),
     }
+}
+
+fn choice_option_from_round_action(
+    round: &RoundHistoryEntry,
+    action: &PlayerActionItem,
+) -> CharacterOption {
+    if action.action_type == PlayerActionType::SelectedOption
+        && let Some(choice) = round
+            .choices
+            .iter()
+            .find(|choice| choice.option.action == action.action)
+    {
+        return choice.option.clone();
+    }
+    choice_option_from_action(action)
 }
 
 struct StoryEdgeActionRecord<'a> {
     session_id: &'a str,
     from_node_id: &'a str,
     to_node_id: &'a str,
-    character_id: &'a str,
-    player_id: Option<&'a str>,
-    action_type: PlayerActionType,
-    choice_option: &'a ProtagonistOption,
+    action: &'a PlayerActionItem,
+    choice_option: &'a CharacterOption,
     submitted_at: &'a str,
 }
 
@@ -1023,7 +1115,7 @@ fn upsert_story_edge_action(conn: &Connection, record: StoryEdgeActionRecord<'_>
             session_id,
             from_node_id,
             to_node_id,
-            character_id,
+            character_name,
             player_id,
             action_type,
             title,
@@ -1031,7 +1123,7 @@ fn upsert_story_edge_action(conn: &Connection, record: StoryEdgeActionRecord<'_>
             motivation_and_risk,
             submitted_at
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-        ON CONFLICT(session_id, from_node_id, to_node_id, character_id) DO UPDATE SET
+        ON CONFLICT(session_id, from_node_id, to_node_id, character_name) DO UPDATE SET
             player_id = excluded.player_id,
             action_type = excluded.action_type,
             title = excluded.title,
@@ -1043,9 +1135,9 @@ fn upsert_story_edge_action(conn: &Connection, record: StoryEdgeActionRecord<'_>
             record.session_id,
             record.from_node_id,
             record.to_node_id,
-            record.character_id,
-            record.player_id,
-            serialize_player_action_type(record.action_type)?,
+            record.action.character_name.as_str(),
+            record.action.player_id.as_deref(),
+            serialize_player_action_type(record.action.action_type)?,
             record.choice_option.title.as_str(),
             record.choice_option.action.as_str(),
             record.choice_option.motivation_and_risk.as_str(),
@@ -1102,7 +1194,7 @@ fn flow_outputs_from_round(
     }
 
     if !round.choices.is_empty() {
-        let options = ProtagonistOptions {
+        let options = CharacterOptions {
             options: round
                 .choices
                 .iter()
@@ -1113,10 +1205,10 @@ fn flow_outputs_from_round(
             session_id: session_id.to_string(),
             node_id,
             stage: serialize_phase(TurnPhase::Application)?,
-            entity_name: "Protagonist".to_string(),
+            entity_name: DEFAULT_PLAYER_CHARACTER_NAME.to_string(),
             output_type: serialize_agent_output_type(AgentOutputType::Json)?,
             content: serde_json::to_string(&options)
-                .context("failed to serialize protagonist options output")?,
+                .context("failed to serialize character options output")?,
         });
     }
 
@@ -1333,8 +1425,8 @@ fn apply_flow_turn_output(
             entry.narration_text = Some(content.to_string());
         }
         (TurnPhase::Application, AgentOutputType::Json) => {
-            let options = serde_json::from_str::<ProtagonistOptions>(content)
-                .context("failed to deserialize protagonist options flow output")?;
+            let options = serde_json::from_str::<CharacterOptions>(content)
+                .context("failed to deserialize character options flow output")?;
             entry.choices = pending_choices_from_options(options);
         }
         _ => {}
@@ -1351,8 +1443,6 @@ fn insert_agent_context_message(
     now: &str,
 ) -> Result<()> {
     let item_index = next_agent_context_item_index(conn, session_id, node_id, agent_name)?;
-    let message_json =
-        serde_json::to_string(message).context("failed to serialize agent context message")?;
     conn.execute(
         r#"
         INSERT INTO agent_context_items (
@@ -1363,9 +1453,8 @@ fn insert_agent_context_message(
             item_kind,
             message_role,
             content,
-            message_json,
             created_at
-        ) VALUES (?1, ?2, ?3, ?4, 'message', ?5, ?6, ?7, ?8)
+        ) VALUES (?1, ?2, ?3, ?4, 'message', ?5, ?6, ?7)
         "#,
         params![
             session_id,
@@ -1374,7 +1463,6 @@ fn insert_agent_context_message(
             item_index,
             message_role(message),
             message.content(),
-            message_json,
             now,
         ],
     )
@@ -1445,6 +1533,22 @@ fn message_role(message: &Message) -> &'static str {
     }
 }
 
+fn message_from_role_and_content(
+    role: &str,
+    content: String,
+) -> std::result::Result<Message, String> {
+    match role {
+        "system" => Ok(Message::system(content)),
+        "user" => Ok(Message::user(content)),
+        "assistant" => Ok(Message::assistant(content)),
+        "tool" => Err(
+            "tool messages require tool_call_id and cannot be restored from role/content"
+                .to_string(),
+        ),
+        other => Err(format!("unknown agent context message role: {other}")),
+    }
+}
+
 fn serialize_phase(phase: TurnPhase) -> Result<String> {
     serde_json::to_string(&phase)
         .map(|value| value.trim_matches('"').to_string())
@@ -1476,14 +1580,14 @@ fn deserialize_player_action_type(value: &str) -> std::result::Result<PlayerActi
 }
 
 fn pending_choices_from_options(
-    options: ProtagonistOptions,
-) -> Vec<story_engine::components::outcome::PendingProtagonistChoice> {
+    options: CharacterOptions,
+) -> Vec<story_engine::components::outcome::PendingCharacterChoice> {
     options
         .options
         .into_iter()
         .enumerate()
         .map(
-            |(index, option)| story_engine::components::outcome::PendingProtagonistChoice {
+            |(index, option)| story_engine::components::outcome::PendingCharacterChoice {
                 id: format!("choice-{}", index + 1),
                 option,
             },
@@ -1502,7 +1606,7 @@ mod tests {
     use crate::{analytics::AnalyticsRepository, api::site::AnalyticsEventInput};
     use agent::core::Message;
     use serde_json::json;
-    use story_engine::components::outcome::PendingProtagonistChoice;
+    use story_engine::components::outcome::PendingCharacterChoice;
     use uuid::Uuid;
 
     #[tokio::test]
@@ -1543,8 +1647,9 @@ mod tests {
         sessions
             .save_session_created(&SessionCreated {
                 session_id: "session-shared".to_string(),
+                character_name: "hero".to_string(),
                 world_profile: "world".to_string(),
-                protagonist_profile: "hero".to_string(),
+                character_profile: "hero".to_string(),
                 key_story_beats: "beats".to_string(),
             })
             .await
@@ -1586,6 +1691,8 @@ mod tests {
                 WHERE type = 'table'
                     AND name IN (
                         'sessions',
+                        'session_worlds',
+                        'session_characters',
                         'story_nodes',
                         'story_edges',
                         'story_edge_actions',
@@ -1604,6 +1711,27 @@ mod tests {
             .expect("story_edges columns should query")
             .collect::<std::result::Result<Vec<_>, _>>()
             .expect("story_edges columns should read");
+        let session_columns = conn
+            .prepare("PRAGMA table_info(sessions)")
+            .expect("sessions columns should be inspectable")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("sessions columns should query")
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .expect("sessions columns should read");
+        let session_world_columns = conn
+            .prepare("PRAGMA table_info(session_worlds)")
+            .expect("session_worlds columns should be inspectable")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("session_worlds columns should query")
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .expect("session_worlds columns should read");
+        let session_character_columns = conn
+            .prepare("PRAGMA table_info(session_characters)")
+            .expect("session_characters columns should be inspectable")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("session_characters columns should query")
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .expect("session_characters columns should read");
         let story_edge_action_columns = conn
             .prepare("PRAGMA table_info(story_edge_actions)")
             .expect("story_edge_actions columns should be inspectable")
@@ -1611,19 +1739,39 @@ mod tests {
             .expect("story_edge_actions columns should query")
             .collect::<std::result::Result<Vec<_>, _>>()
             .expect("story_edge_actions columns should read");
+        let agent_context_item_columns = conn
+            .prepare("PRAGMA table_info(agent_context_items)")
+            .expect("agent_context_items columns should be inspectable")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("agent_context_items columns should query")
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .expect("agent_context_items columns should read");
 
         assert_eq!(summary.totals.events, 1);
         assert_eq!(metadata.world_profile, "world");
         assert_eq!(removed_table_count, 0);
-        assert_eq!(story_graph_table_count, 6);
+        assert_eq!(story_graph_table_count, 8);
+        assert!(!session_columns.contains(&"world_profile".to_string()));
+        assert!(!session_columns.contains(&"character_profile".to_string()));
+        assert!(!session_columns.contains(&"key_story_beats".to_string()));
+        assert!(session_world_columns.contains(&"world_profile".to_string()));
+        assert!(session_world_columns.contains(&"global_key_story_beats".to_string()));
+        assert!(session_character_columns.contains(&"character_name".to_string()));
+        assert!(session_character_columns.contains(&"character_profile".to_string()));
+        assert!(session_character_columns.contains(&"key_story_beats".to_string()));
+        assert!(session_character_columns.contains(&"player_id".to_string()));
+        assert!(session_character_columns.contains(&"is_playable".to_string()));
         assert!(!story_edge_columns.contains(&"action".to_string()));
         assert!(!story_edge_columns.contains(&"action_type".to_string()));
-        assert!(story_edge_action_columns.contains(&"character_id".to_string()));
+        assert!(story_edge_action_columns.contains(&"character_name".to_string()));
         assert!(story_edge_action_columns.contains(&"player_id".to_string()));
         assert!(story_edge_action_columns.contains(&"action_type".to_string()));
         assert!(story_edge_action_columns.contains(&"title".to_string()));
         assert!(story_edge_action_columns.contains(&"action".to_string()));
         assert!(story_edge_action_columns.contains(&"motivation_and_risk".to_string()));
+        assert!(agent_context_item_columns.contains(&"message_role".to_string()));
+        assert!(agent_context_item_columns.contains(&"content".to_string()));
+        assert!(!agent_context_item_columns.contains(&"message_json".to_string()));
     }
 
     #[tokio::test]
@@ -1729,9 +1877,9 @@ mod tests {
             Uuid::new_v4().simple()
         ));
         let repo = SessionArchiveRepository::new(AppDatabase::new(db_path.clone()));
-        let choice = PendingProtagonistChoice {
+        let choice = PendingCharacterChoice {
             id: "choice-1".to_string(),
-            option: ProtagonistOption {
+            option: CharacterOption {
                 title: "绕行".to_string(),
                 action: "绕到钟楼背面".to_string(),
                 motivation_and_risk: "视野更好，但会暴露脚步声".to_string(),
@@ -1740,8 +1888,9 @@ mod tests {
 
         repo.save_session_created(&SessionCreated {
             session_id: "session-choice-edge".to_string(),
+            character_name: "hero".to_string(),
             world_profile: "world".to_string(),
-            protagonist_profile: "hero".to_string(),
+            character_profile: "hero".to_string(),
             key_story_beats: "beats".to_string(),
         })
         .await
@@ -1762,8 +1911,7 @@ mod tests {
         repo.save_player_input(&PlayerInput {
             session_id: "session-choice-edge".to_string(),
             round: 1,
-            action_type: PlayerActionType::SelectedOption,
-            action: choice.option.action.clone(),
+            actions: vec![PlayerActionItem::character_selected_option(&choice.option)],
         })
         .await
         .expect("story edge should save");
@@ -1779,7 +1927,7 @@ mod tests {
         let stored_action: (String, Option<String>, String, String, String, String) = conn
             .query_row(
                 r#"
-                SELECT character_id, player_id, action_type, title, action, motivation_and_risk
+                SELECT character_name, player_id, action_type, title, action, motivation_and_risk
                 FROM story_edge_actions
                 WHERE session_id = ?1
                 "#,
@@ -1802,14 +1950,60 @@ mod tests {
             .expect("story edge actions should load");
 
         assert_eq!(edge_count, 1);
-        assert_eq!(stored_action.0, DEFAULT_PLAYER_CHARACTER_ID);
+        assert_eq!(stored_action.0, DEFAULT_PLAYER_CHARACTER_NAME);
         assert_eq!(stored_action.1, None);
         assert_eq!(stored_action.2, "selected_option");
         assert_eq!(stored_action.3, choice.option.title);
         assert_eq!(stored_action.4, choice.option.action);
         assert_eq!(stored_action.5, choice.option.motivation_and_risk);
         assert_eq!(loaded_actions.len(), 1);
-        assert_eq!(loaded_actions[0].action, "绕到钟楼背面");
+        assert_eq!(loaded_actions[0].action.action, "绕到钟楼背面");
+    }
+
+    #[tokio::test]
+    async fn story_edge_actions_store_empty_title_for_free_text() {
+        let db_path = std::env::temp_dir().join(format!(
+            "akasa-free-text-edge-{}.sqlite",
+            Uuid::new_v4().simple()
+        ));
+        let repo = SessionArchiveRepository::new(AppDatabase::new(db_path.clone()));
+
+        repo.save_session_created(&SessionCreated {
+            session_id: "session-free-text-edge".to_string(),
+            character_name: "hero".to_string(),
+            world_profile: "world".to_string(),
+            character_profile: "hero".to_string(),
+            key_story_beats: "beats".to_string(),
+        })
+        .await
+        .expect("session metadata should save");
+        repo.update_session_turn_state("session-free-text-edge", TurnPhase::AwaitingPlayer, 1, 1)
+            .await
+            .expect("session active node should update");
+        repo.save_player_input(&PlayerInput {
+            session_id: "session-free-text-edge".to_string(),
+            round: 1,
+            actions: vec![PlayerActionItem::character_free_text("检查密室暗门")],
+        })
+        .await
+        .expect("story edge should save");
+
+        let conn = Connection::open(db_path).expect("sqlite db should open");
+        let stored_action: (String, String, String) = conn
+            .query_row(
+                r#"
+                SELECT action_type, title, action
+                FROM story_edge_actions
+                WHERE session_id = ?1
+                "#,
+                params!["session-free-text-edge"],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("story edge action should be stored");
+
+        assert_eq!(stored_action.0, "free_text");
+        assert_eq!(stored_action.1, "");
+        assert_eq!(stored_action.2, "检查密室暗门");
     }
 
     #[tokio::test]
@@ -1817,8 +2011,9 @@ mod tests {
         let repo = test_repo();
         repo.save_session_created(&SessionCreated {
             session_id: "session-db".to_string(),
+            character_name: "hero".to_string(),
             world_profile: "world".to_string(),
-            protagonist_profile: "hero".to_string(),
+            character_profile: "hero".to_string(),
             key_story_beats: "beats".to_string(),
         })
         .await
@@ -1895,8 +2090,11 @@ mod tests {
         repo.save_player_input(&PlayerInput {
             session_id: "session-db".to_string(),
             round: 1,
-            action_type: PlayerActionType::SelectedOption,
-            action: "绕到钟楼背面".to_string(),
+            actions: vec![PlayerActionItem {
+                action_type: PlayerActionType::SelectedOption,
+                action: "绕到钟楼背面".to_string(),
+                ..PlayerActionItem::default()
+            }],
         })
         .await
         .expect("story edge action should save");
@@ -1906,8 +2104,11 @@ mod tests {
             .expect("story edge actions should load");
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[0].round, 1);
-        assert_eq!(inputs[0].action_type, PlayerActionType::SelectedOption);
-        assert_eq!(inputs[0].action, "绕到钟楼背面");
+        assert_eq!(
+            inputs[0].action.action_type,
+            PlayerActionType::SelectedOption
+        );
+        assert_eq!(inputs[0].action.action, "绕到钟楼背面");
 
         repo.record_flow_turn_error(&FlowTurnError {
             session_id: "session-db".to_string(),

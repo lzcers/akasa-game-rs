@@ -103,7 +103,7 @@ export async function enterWorldFlow(
   await waitForNextPaint();
 
   try {
-    const created = await createStartupGameSession(preparedProfiles);
+    const created = await createStartupGameSession(preparedProfiles, character.name);
     if (!isStartupFlowCurrent(runId)) {
       return null;
     }

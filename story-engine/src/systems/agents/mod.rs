@@ -1,9 +1,9 @@
 use crate::components::{session_event_sink::SessionEventSink, turn_flow::TurnFlow};
 
+pub mod character_sys;
 pub mod fate_weaver_sys;
 pub mod narration_sys;
 pub mod player_sys;
-pub mod protagonist_sys;
 
 fn publish_apply_error(
     event_sink: &SessionEventSink,

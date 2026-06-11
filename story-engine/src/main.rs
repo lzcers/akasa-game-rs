@@ -11,7 +11,8 @@ use story_engine::{
     AkashicEngine,
     components::{
         agent::AgentOutputType,
-        outcome::{PlayerActionInput, PlayerActionType, ProtagonistOptions},
+        outcome::{CharacterOptions, PlayerActionInput, PlayerActionType},
+        turn_flow::TurnStage,
     },
     resources::session_events::EngineEvent,
 };
@@ -66,7 +67,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 );
                 let choice_to_submit = {
                     let gate = auto_choices.entry(update.round).or_default();
-                    gate.record_update(&update.entity_name, update.output_type, &update.content);
+                    gate.record_update(update.stage, update.output_type, &update.content);
                     gate.take_ready_choice()
                 };
                 if let Some(content) = choice_to_submit {
@@ -76,8 +77,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             EngineEvent::PlayerInput(input) => {
                 stream_output.finish_line()?;
                 println!(
-                    "[player] round={} type={:?} action={}",
-                    input.round, input.action_type, input.action
+                    "[player] round={} actions={}",
+                    input.round,
+                    input
+                        .actions
+                        .iter()
+                        .map(|action| format!("{}: {}", action.character_name, action.action))
+                        .collect::<Vec<_>>()
+                        .join(" | ")
                 );
             }
             EngineEvent::FlowTurnCompleted(completed) => {
@@ -114,8 +121,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             EngineEvent::SessionCreated(created) => {
                 stream_output.finish_line()?;
                 println!(
-                    "[api] session created: {} world={} protagonist={}",
-                    created.session_id, created.world_profile, created.protagonist_profile
+                    "[api] session created: {} world={} character={}",
+                    created.session_id, created.world_profile, created.character_profile
                 );
             }
             EngineEvent::AgentContextItemAppended(update) => {
@@ -138,30 +145,30 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 #[derive(Default)]
 struct AutoChoiceGate {
-    protagonist_options: Option<String>,
-    protagonist_updated: bool,
+    character_options: Option<String>,
+    character_updated: bool,
     narrator_updated: bool,
     submitted: bool,
 }
 
 impl AutoChoiceGate {
-    fn record_update(&mut self, entity_name: &str, output_type: AgentOutputType, content: &str) {
-        if entity_name == "Protagonist" && output_type == AgentOutputType::Json {
-            self.protagonist_options = Some(content.to_string());
-            self.protagonist_updated = true;
+    fn record_update(&mut self, stage: TurnStage, output_type: AgentOutputType, content: &str) {
+        if stage == TurnStage::Application && output_type == AgentOutputType::Json {
+            self.character_options = Some(content.to_string());
+            self.character_updated = true;
         }
 
-        if entity_name == "UpperNarrator" && output_type == AgentOutputType::Text {
+        if stage == TurnStage::Application && output_type == AgentOutputType::Text {
             self.narrator_updated = true;
         }
     }
 
     fn take_ready_choice(&mut self) -> Option<String> {
-        if self.submitted || !self.protagonist_updated || !self.narrator_updated {
+        if self.submitted || !self.character_updated || !self.narrator_updated {
             return None;
         }
         self.submitted = true;
-        self.protagonist_options.clone()
+        self.character_options.clone()
     }
 }
 
@@ -281,7 +288,7 @@ impl StreamTypewriterOutput {
 fn should_typewrite(entity_name: &str) -> bool {
     matches!(
         entity_name,
-        "FateWeaver" | "UpperNarrator" | "Protagonist" | "Fate" | "Narration"
+        "FateWeaver" | "UpperNarrator" | "Fate" | "Narration"
     )
 }
 
@@ -289,19 +296,22 @@ fn submit_first_choice_or_continue(
     session: &story_engine::AkashicSessionEngine,
     content: &str,
 ) -> Result<(), Box<dyn Error>> {
-    let options = serde_json::from_str::<ProtagonistOptions>(content)?;
+    let options = serde_json::from_str::<CharacterOptions>(content)?;
     if let Some(choice) = options.options.first() {
         println!("[api] auto selected choice: {}", choice.action);
         session.submit_player_action(PlayerActionInput {
-            r#type: PlayerActionType::SelectedOption,
-            action: choice.action.clone(),
+            actions: vec![
+                story_engine::components::outcome::PlayerActionItem::character_selected_option(
+                    choice,
+                ),
+            ],
         })?;
     } else {
         println!("[api] no player choices available; continuing");
-        session.submit_player_action(PlayerActionInput {
-            r#type: PlayerActionType::FreeText,
-            action: "continue".to_string(),
-        })?;
+        session.submit_player_action(PlayerActionInput::single(
+            PlayerActionType::FreeText,
+            "continue",
+        ))?;
     }
     Ok(())
 }

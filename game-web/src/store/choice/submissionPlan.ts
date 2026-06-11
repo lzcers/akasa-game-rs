@@ -39,10 +39,22 @@ export function planChoiceSubmission({
   }
 
   const input: PlayerActionInput = {
-    type: submission.input.type,
-    action: submission.input.action.trim(),
+    actions: submission.input.actions
+      .map((action) => {
+        const normalizedAction = {
+          ...action,
+          character_name: action.character_name?.trim() || '玩家角色',
+          player_id: action.player_id?.trim() || undefined,
+          title: action.title?.trim() || undefined,
+          action: action.action.trim(),
+          motivation_and_risk: action.motivation_and_risk?.trim() || undefined,
+        };
+        return normalizedAction;
+      })
+      .filter((action) => action.action.length > 0),
   };
-  if (!input.action) {
+  const primaryAction = input.actions[0];
+  if (!primaryAction) {
     throw new Error('写下你此刻想写入记录的事。');
   }
 
@@ -53,10 +65,9 @@ export function planChoiceSubmission({
   const activeRound = Math.max(displayRound || 1, 1);
   const nextRound = activeRound + 1;
   const currentRoundChoices = roundStates[activeRound]?.choices ?? [];
-  if (
-    input.type === 'selected_option'
-    && !currentRoundChoices.some((choice) => choice.action === input.action)
-  ) {
+  const submitsNamedChoice = submission.displayText !== primaryAction.action;
+  const matchesCurrentChoice = currentRoundChoices.some((choice) => choice.action === primaryAction.action);
+  if (currentRoundChoices.length > 0 && submitsNamedChoice && !matchesCurrentChoice) {
     throw new Error('这条分支已失效，请重新选择。');
   }
 
@@ -85,7 +96,7 @@ export function applyChoiceSubmissionOptimisticUpdate(
         ...(state.roundStates[plan.activeRound] ?? {}),
         round: plan.activeRound,
         selectedChoiceText: plan.selectedChoiceText,
-        selectedChoiceAction: plan.input.action,
+        selectedChoiceAction: plan.input.actions[0]?.action ?? null,
         choices: [],
         choicesStatus: 'idle',
         isAwaitingNarration: false,

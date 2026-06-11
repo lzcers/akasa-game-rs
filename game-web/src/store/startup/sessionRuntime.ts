@@ -42,11 +42,13 @@ function errorAnalyticsType(error: unknown) {
 
 export async function createStartupGameSession(
   preparedProfiles: GeneratedProfiles,
+  characterName: string,
 ): Promise<CreateGameSessionData> {
   const [created] = await Promise.all([
     createGameSession({
+      characterName,
       worldProfile: preparedProfiles.world,
-      protagonistProfile: preparedProfiles.protagonist,
+      characterProfile: preparedProfiles.character,
       keyStoryBeats: preparedProfiles.keyStoryBeats,
     }),
     sleep(MIN_CREATING_SESSION_STAGE_MS),

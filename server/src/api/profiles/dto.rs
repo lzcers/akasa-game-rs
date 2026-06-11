@@ -9,6 +9,6 @@ pub struct GenerateProfilesRequest {
 #[serde(rename_all = "camelCase")]
 pub struct GenerateProfilesData {
     pub world: String,
-    pub protagonist: String,
+    pub character: String,
     pub key_story_beats: String,
 }

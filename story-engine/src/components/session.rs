@@ -8,6 +8,6 @@ pub struct StorySession {
 #[derive(Component, Debug, Clone)]
 pub struct SessionProfiles {
     pub world_profile: String,
-    pub protagonist_profile: String,
+    pub character_profile: String,
     pub key_story_beats: String,
 }

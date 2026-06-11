@@ -17,7 +17,7 @@ interface FatePlanningSummary {
   newInfo: string[];
   isEnding: boolean | null;
   endingType: string | null;
-  protagonistCondition: string | null;
+  characterCondition: string | null;
 }
 
 export function summarizeFatePlanning(value: JsonValue | null): FatePlanningSummary | null {
@@ -35,6 +35,6 @@ export function summarizeFatePlanning(value: JsonValue | null): FatePlanningSumm
     newInfo: readJsonStringArray(value.new_info),
     isEnding: readJsonBoolean(value.is_ending),
     endingType: readJsonString(value.ending_type),
-    protagonistCondition: readJsonString(value.protagonist_condition),
+    characterCondition: readJsonString(value.character_condition),
   };
 }

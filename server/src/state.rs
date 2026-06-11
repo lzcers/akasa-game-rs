@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use story_engine::{
     components::{
         agent::{Agent as StoryAgent, AgentOutputType},
-        outcome::{PendingProtagonistChoice, PlayerActionType},
+        outcome::{PendingCharacterChoice, PlayerActionItem, PlayerActionType},
         world_snapshot::WorldSnapshot,
     },
     engine::{AkashicEngine, AkashicSessionEngine},
@@ -243,19 +243,26 @@ impl AppState {
         let session_id = format!("session-{}", Uuid::new_v4().simple());
         let created_at = now_string();
         let world_profile = request.world_profile.trim();
-        let protagonist_profile = request.protagonist_profile.trim();
+        let character_profile = request.character_profile.trim();
         let key_story_beats = request.key_story_beats.trim();
-        if world_profile.is_empty() || protagonist_profile.is_empty() {
+        let character_name = request.character_name.trim();
+        let character_name = if character_name.is_empty() {
+            "玩家角色"
+        } else {
+            character_name
+        };
+        if world_profile.is_empty() || character_profile.is_empty() {
             return Err(AppError::bad_request(
-                "`worldProfile` 与 `protagonistProfile` 不能为空。",
+                "`worldProfile` 与 `characterProfile` 不能为空。",
             ));
         }
         let engine = self
             .engine
             .create_session(
                 &session_id,
+                character_name,
                 world_profile,
-                protagonist_profile,
+                character_profile,
                 if key_story_beats.is_empty() {
                     DEFAULT_KEY_STORY_BEATS
                 } else {
@@ -272,16 +279,18 @@ impl AppState {
         self.session_archive_repo
             .save_session_created(&SessionCreated {
                 session_id: session_id.clone(),
+                character_name: character_name.to_string(),
                 world_profile: world_profile.to_string(),
-                protagonist_profile: protagonist_profile.to_string(),
+                character_profile: character_profile.to_string(),
                 key_story_beats: key_story_beats.to_string(),
             })
             .await
             .map_err(|err| AppError::internal(format!("写入会话元数据失败：{err:#}")))?;
         let fate_weaver =
-            StoryAgent::new_fate_weaver(world_profile, protagonist_profile, key_story_beats);
-        let upper_narrator = StoryAgent::new_upper_narrator(world_profile, protagonist_profile);
-        let protagonist = StoryAgent::new_protagonist(world_profile, protagonist_profile);
+            StoryAgent::new_fate_weaver(world_profile, character_profile, key_story_beats);
+        let upper_narrator = StoryAgent::new_upper_narrator(world_profile, character_profile);
+        let character_agent =
+            StoryAgent::new_character_agent(character_name, world_profile, character_profile);
         self.session_archive_repo
             .replace_agent_contexts_from_contexts(
                 &session_id,
@@ -289,7 +298,7 @@ impl AppState {
                 &[
                     ("FateWeaver", &fate_weaver.context),
                     ("UpperNarrator", &upper_narrator.context),
-                    ("Protagonist", &protagonist.context),
+                    (character_name, &character_agent.context),
                 ],
             )
             .await
@@ -494,26 +503,36 @@ impl AppState {
         session_id: &str,
         action: SessionActionInput,
     ) -> Result<ControlGameSessionData, AppError> {
-        let selected_action = action.action.trim();
-        if selected_action.is_empty() {
+        let actions = action
+            .actions
+            .into_iter()
+            .map(PlayerActionItem::normalized)
+            .filter(|action| !action.action.is_empty())
+            .collect::<Vec<_>>();
+        if actions.is_empty() {
             return Err(AppError::bad_request("提交行动不能为空。"));
         }
 
-        if action.r#type == PlayerActionType::SelectedOption {
+        if actions
+            .iter()
+            .any(|action| action.action_type == PlayerActionType::SelectedOption)
+        {
             let choices = self.latest_choices_for_session(session_id).await?;
-            let is_valid_option = choices
+            for selected_action in actions
                 .iter()
-                .any(|choice| choice.option.action == selected_action);
-            if !is_valid_option {
-                return Err(AppError::bad_request("当前所选行动不在候选列表中。"));
+                .filter(|action| action.action_type == PlayerActionType::SelectedOption)
+            {
+                let is_valid_option = choices
+                    .iter()
+                    .any(|choice| choice.option.action == selected_action.action);
+                if !is_valid_option {
+                    return Err(AppError::bad_request("当前所选行动不在候选列表中。"));
+                }
             }
         }
 
         engine
-            .submit_player_action(SessionActionInput {
-                r#type: action.r#type,
-                action: selected_action.to_string(),
-            })
+            .submit_player_action(SessionActionInput { actions })
             .map_err(AppError::bad_request)?;
         engine.start_next_turn().map_err(AppError::bad_request)?;
 
@@ -525,7 +544,7 @@ impl AppState {
     async fn latest_choices_for_session(
         &self,
         session_id: &str,
-    ) -> Result<Vec<PendingProtagonistChoice>, AppError> {
+    ) -> Result<Vec<PendingCharacterChoice>, AppError> {
         let rounds = self
             .session_archive_repo
             .load_rounds(session_id)
@@ -670,8 +689,9 @@ impl AppState {
         self.session_archive_repo
             .save_session_metadata(&StoredSessionMetadata {
                 session_id: payload.session_id.clone(),
+                character_name: payload.character_name.clone(),
                 world_profile: payload.world_profile.clone(),
-                protagonist_profile: payload.protagonist_profile.clone(),
+                character_profile: payload.character_profile.clone(),
                 key_story_beats: payload.key_story_beats.clone(),
                 phase: payload.turn_state.phase,
                 turn_index: payload.turn_state.turn_index,
@@ -696,7 +716,7 @@ impl AppState {
                 &[
                     ("FateWeaver", &payload.fate_weaver),
                     ("UpperNarrator", &payload.upper_narrator),
-                    ("Protagonist", &payload.protagonist),
+                    (payload.character_name.as_str(), &payload.character_agent),
                 ],
             )
             .await
@@ -1189,10 +1209,7 @@ fn apply_control(
 }
 
 fn persisted_phase_for_flow_turn_update(update: &FlowTurnUpdate) -> TurnPhase {
-    if update.stage == TurnPhase::Application
-        && update.output_type == AgentOutputType::Json
-        && update.entity_name == "Protagonist"
-    {
+    if update.stage == TurnPhase::Application && update.output_type == AgentOutputType::Json {
         TurnPhase::AwaitingPlayer
     } else {
         update.stage
@@ -1205,20 +1222,22 @@ fn world_state_from_database(
 ) -> GameSessionWorldStateData {
     let world_snapshot = latest_world_snapshot(rounds).unwrap_or_default();
     let latest_narration = latest_narration_from_rounds(rounds, &world_snapshot);
-    let current_outcome = latest_committed_action(rounds).unwrap_or_else(|| {
-        if metadata.phase == TurnPhase::Start {
-            "start".to_string()
-        } else {
-            "尚未做出选择".to_string()
-        }
-    });
+    let current_outcome = latest_committed_actions(rounds)
+        .map(|actions| summarize_actions(&actions))
+        .unwrap_or_else(|| {
+            if metadata.phase == TurnPhase::Start {
+                "start".to_string()
+            } else {
+                "尚未做出选择".to_string()
+            }
+        });
     let choices = latest_choices_from_rounds(rounds);
 
     GameSessionWorldStateData {
         session_id: metadata.session_id,
         generated_profiles: GeneratedProfilesData {
             world: metadata.world_profile,
-            protagonist: metadata.protagonist_profile,
+            character: metadata.character_profile,
             key_story_beats: metadata.key_story_beats,
         },
         status: status_from_phase(metadata.phase).to_string(),
@@ -1244,7 +1263,8 @@ fn archive_payload_from_database(
     requested_title: Option<&str>,
 ) -> archive::SessionArchivePayload {
     let world_snapshot = latest_world_snapshot(&rounds).unwrap_or_default();
-    let committed_action = latest_committed_action(&rounds).unwrap_or_else(|| "start".to_string());
+    let committed_actions = latest_committed_actions(&rounds)
+        .unwrap_or_else(|| vec![PlayerActionItem::character_free_text("start")]);
     let choices = latest_choices_from_rounds(&rounds);
     let round_for_title = metadata.active_turn_id.max(metadata.turn_index).max(1);
     let title = archive_title_for_round(
@@ -1253,12 +1273,14 @@ fn archive_payload_from_database(
         &world_snapshot.scene_title,
         round_for_title,
     );
+    let character_name = metadata.character_name;
 
     archive::SessionArchivePayload {
         session_id: metadata.session_id,
         title,
+        character_name: character_name.clone(),
         world_profile: metadata.world_profile,
-        protagonist_profile: metadata.protagonist_profile,
+        character_profile: metadata.character_profile,
         key_story_beats: metadata.key_story_beats,
         turn_state: archive::TurnStateArchive {
             phase: if metadata.flow_end {
@@ -1271,10 +1293,10 @@ fn archive_payload_from_database(
         },
         fate_weaver: contexts.get("FateWeaver").cloned().unwrap_or_default(),
         upper_narrator: contexts.get("UpperNarrator").cloned().unwrap_or_default(),
-        protagonist: contexts.get("Protagonist").cloned().unwrap_or_default(),
+        character_agent: contexts.get(&character_name).cloned().unwrap_or_default(),
         world_snapshot,
-        protagonist_decision: archive::ProtagonistDecisionArchive {
-            committed_action,
+        character_decision: archive::CharacterDecisionArchive {
+            committed_actions,
             choices,
         },
         history_log: SessionHistoryLog { rounds },
@@ -1302,7 +1324,7 @@ fn latest_narration_from_rounds(
         .unwrap_or_else(|| world_snapshot.description.clone())
 }
 
-fn latest_choices_from_rounds(rounds: &[RoundHistoryEntry]) -> Vec<PendingProtagonistChoice> {
+fn latest_choices_from_rounds(rounds: &[RoundHistoryEntry]) -> Vec<PendingCharacterChoice> {
     rounds
         .iter()
         .rev()
@@ -1311,14 +1333,20 @@ fn latest_choices_from_rounds(rounds: &[RoundHistoryEntry]) -> Vec<PendingProtag
         .unwrap_or_default()
 }
 
-fn latest_committed_action(rounds: &[RoundHistoryEntry]) -> Option<String> {
+fn latest_committed_actions(rounds: &[RoundHistoryEntry]) -> Option<Vec<PlayerActionItem>> {
     rounds
         .iter()
         .rev()
-        .filter_map(|round| round.committed_action.as_deref())
-        .map(str::trim)
-        .find(|action| !action.is_empty())
-        .map(str::to_string)
+        .map(|round| {
+            round
+                .committed_actions
+                .iter()
+                .cloned()
+                .map(PlayerActionItem::normalized)
+                .filter(|action| !action.action.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .find(|actions| !actions.is_empty())
 }
 
 fn rounds_with_story_edge_actions(
@@ -1326,26 +1354,43 @@ fn rounds_with_story_edge_actions(
     story_edge_actions: Vec<StoredStoryEdgeAction>,
 ) -> Vec<RoundHistoryEntry> {
     for input in story_edge_actions {
-        let action = input.action.trim();
-        if action.is_empty() {
+        let action = input.action.normalized();
+        if action.action.is_empty() {
             continue;
         }
 
-        let action = match input.action_type {
-            PlayerActionType::SelectedOption | PlayerActionType::FreeText => action.to_string(),
-        };
         if let Some(round) = rounds.iter_mut().find(|round| round.round == input.round) {
-            round.committed_action = Some(action);
+            if let Some(existing) = round
+                .committed_actions
+                .iter_mut()
+                .find(|existing| existing.character_name == action.character_name)
+            {
+                *existing = action;
+            } else {
+                round.committed_actions.push(action);
+            }
         } else {
             rounds.push(RoundHistoryEntry {
                 round: input.round,
-                committed_action: Some(action),
+                committed_actions: vec![action],
                 ..RoundHistoryEntry::default()
             });
         }
     }
     rounds.sort_by_key(|round| round.round);
     rounds
+}
+
+fn summarize_actions(actions: &[PlayerActionItem]) -> String {
+    match actions {
+        [] => "start".to_string(),
+        [single] => single.action.clone(),
+        many => many
+            .iter()
+            .map(|action| format!("{}: {}", action.character_name, action.action))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
 }
 
 fn stabilize_archive_payload_from_history(
@@ -1369,16 +1414,15 @@ fn stabilize_archive_payload_from_history(
         .world_snapshot
         .clone()
         .expect("completed dialogue rounds require a world snapshot");
-    let committed_action = payload
+    let committed_actions = payload
         .history_log
         .rounds
         .iter()
         .rev()
         .filter(|entry| entry.round < completed_round_id)
-        .filter_map(|entry| entry.committed_action.as_deref())
-        .find(|action| !action.trim().is_empty())
-        .unwrap_or("start")
-        .to_string();
+        .map(|entry| entry.committed_actions.clone())
+        .find(|actions| !actions.is_empty())
+        .unwrap_or_else(|| vec![PlayerActionItem::character_free_text("start")]);
     let mut archive_rounds = payload
         .history_log
         .rounds
@@ -1390,7 +1434,7 @@ fn stabilize_archive_payload_from_history(
         .iter_mut()
         .find(|entry| entry.round == completed_round_id)
     {
-        entry.committed_action = None;
+        entry.committed_actions.clear();
     }
 
     payload.title = archive_title_for_round(
@@ -1403,8 +1447,8 @@ fn stabilize_archive_payload_from_history(
     payload.turn_state.turn_index = completed_round_id;
     payload.turn_state.active_turn_id = completed_round_id;
     payload.world_snapshot = world_snapshot;
-    payload.protagonist_decision.committed_action = committed_action;
-    payload.protagonist_decision.choices = completed_round.choices;
+    payload.character_decision.committed_actions = committed_actions;
+    payload.character_decision.choices = completed_round.choices;
     payload.history_log = SessionHistoryLog {
         rounds: archive_rounds,
     };
@@ -1519,13 +1563,11 @@ fn env_usize(key: &str, default: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::archive::{
-        ProtagonistDecisionArchive, SessionArchivePayload, TurnStateArchive,
-    };
+    use crate::api::archive::{CharacterDecisionArchive, SessionArchivePayload, TurnStateArchive};
     use agent::agent::context::Context;
     use serde_json::Value;
     use story_engine::components::{
-        outcome::{PendingProtagonistChoice, ProtagonistOption},
+        outcome::{CharacterOption, PendingCharacterChoice},
         world_snapshot::WorldSnapshot,
     };
 
@@ -1623,13 +1665,16 @@ mod tests {
         assert_eq!(payload.turn_state.turn_index, 3);
         assert_eq!(payload.turn_state.active_turn_id, 3);
         assert_eq!(payload.world_snapshot.scene_title, "第3轮");
-        assert_eq!(payload.protagonist_decision.committed_action, "行动-2");
         assert_eq!(
-            payload.protagonist_decision.choices[0].option.action,
+            summarize_actions(&payload.character_decision.committed_actions),
+            "行动-2"
+        );
+        assert_eq!(
+            payload.character_decision.choices[0].option.action,
             "行动-3"
         );
         assert_eq!(payload.history_log.rounds.len(), 3);
-        assert_eq!(payload.history_log.rounds[2].committed_action, None);
+        assert!(payload.history_log.rounds[2].committed_actions.is_empty());
         assert_eq!(payload.title, "第3轮：第3轮");
     }
 
@@ -1637,7 +1682,7 @@ mod tests {
     fn story_edges_overlay_committed_actions() {
         let rounds = vec![RoundHistoryEntry {
             round: 2,
-            committed_action: Some("旧行动".to_string()),
+            committed_actions: vec![PlayerActionItem::character_free_text("旧行动")],
             ..RoundHistoryEntry::default()
         }];
         let merged = rounds_with_story_edge_actions(
@@ -1645,13 +1690,15 @@ mod tests {
             vec![
                 StoredStoryEdgeAction {
                     round: 1,
-                    action_type: PlayerActionType::FreeText,
-                    action: "  自定义检查密室暗门  ".to_string(),
+                    action: PlayerActionItem::character_free_text("  自定义检查密室暗门  "),
                 },
                 StoredStoryEdgeAction {
                     round: 2,
-                    action_type: PlayerActionType::SelectedOption,
-                    action: "绕到钟楼背面".to_string(),
+                    action: PlayerActionItem {
+                        action_type: PlayerActionType::SelectedOption,
+                        action: "绕到钟楼背面".to_string(),
+                        ..PlayerActionItem::default()
+                    },
                 },
             ],
         );
@@ -1659,20 +1706,23 @@ mod tests {
         assert_eq!(merged.len(), 2);
         assert_eq!(merged[0].round, 1);
         assert_eq!(
-            merged[0].committed_action.as_deref(),
-            Some("自定义检查密室暗门")
+            summarize_actions(&merged[0].committed_actions),
+            "自定义检查密室暗门"
         );
         assert_eq!(merged[1].round, 2);
-        assert_eq!(merged[1].committed_action.as_deref(), Some("绕到钟楼背面"));
+        assert_eq!(
+            summarize_actions(&merged[1].committed_actions),
+            "绕到钟楼背面"
+        );
     }
 
     #[test]
-    fn protagonist_options_mark_persisted_node_as_awaiting_player() {
-        let protagonist_update = FlowTurnUpdate {
+    fn character_options_mark_persisted_node_as_awaiting_player() {
+        let character_update = FlowTurnUpdate {
             session_id: "session-phase".to_string(),
             round: 3,
             stage: TurnPhase::Application,
-            entity_name: "Protagonist".to_string(),
+            entity_name: "洛寒".to_string(),
             output_type: AgentOutputType::Json,
             content: "{}".to_string(),
         };
@@ -1686,7 +1736,7 @@ mod tests {
         };
 
         assert_eq!(
-            persisted_phase_for_flow_turn_update(&protagonist_update),
+            persisted_phase_for_flow_turn_update(&character_update),
             TurnPhase::AwaitingPlayer
         );
         assert_eq!(
@@ -1738,8 +1788,9 @@ mod tests {
 
         let created = state
             .create_game_session(crate::api::game_sessions::CreateGameSessionRequest {
+                character_name: "归档角色".to_string(),
                 world_profile: "archive world".to_string(),
-                protagonist_profile: "archive protagonist".to_string(),
+                character_profile: "archive character".to_string(),
                 key_story_beats: "archive beats".to_string(),
             })
             .await
@@ -1765,8 +1816,9 @@ mod tests {
 
         state
             .create_game_session(crate::api::game_sessions::CreateGameSessionRequest {
+                character_name: "旧角色".to_string(),
                 world_profile: "old world".to_string(),
-                protagonist_profile: "old protagonist".to_string(),
+                character_profile: "old character".to_string(),
                 key_story_beats: "old beats".to_string(),
             })
             .await
@@ -1831,7 +1883,7 @@ mod tests {
             session_id: "session-test".to_string(),
             generated_profiles: GeneratedProfilesData {
                 world: "world".to_string(),
-                protagonist: "protagonist".to_string(),
+                character: "character".to_string(),
                 key_story_beats: "beats".to_string(),
             },
             status: "awaiting_player".to_string(),
@@ -1897,8 +1949,9 @@ mod tests {
         SessionArchivePayload {
             session_id: "session-from-slot".to_string(),
             title: "第7轮：钟楼阴影".to_string(),
+            character_name: "洛寒".to_string(),
             world_profile: "world".to_string(),
-            protagonist_profile: "protagonist".to_string(),
+            character_profile: "character".to_string(),
             key_story_beats: "beats".to_string(),
             turn_state: TurnStateArchive {
                 phase: TurnPhase::AwaitingPlayer,
@@ -1907,18 +1960,18 @@ mod tests {
             },
             fate_weaver: Context::default(),
             upper_narrator: Context::default(),
-            protagonist: Context::default(),
+            character_agent: Context::default(),
             world_snapshot: WorldSnapshot {
                 round: 7,
                 scene_title: "钟楼阴影".to_string(),
                 description: "雾气正在台阶间倒灌。".to_string(),
                 ..WorldSnapshot::default()
             },
-            protagonist_decision: ProtagonistDecisionArchive {
-                committed_action: "绕到钟楼背面".to_string(),
-                choices: vec![PendingProtagonistChoice {
+            character_decision: CharacterDecisionArchive {
+                committed_actions: vec![PlayerActionItem::character_free_text("绕到钟楼背面")],
+                choices: vec![PendingCharacterChoice {
                     id: "choice-1".to_string(),
-                    option: ProtagonistOption {
+                    option: CharacterOption {
                         title: "绕行".to_string(),
                         action: "绕到钟楼背面".to_string(),
                         motivation_and_risk: "视野更好，但会暴露脚步声".to_string(),
@@ -1935,15 +1988,15 @@ mod tests {
                         ..WorldSnapshot::default()
                     }),
                     narration_text: Some("钟声掠过雾墙。".to_string()),
-                    choices: vec![PendingProtagonistChoice {
+                    choices: vec![PendingCharacterChoice {
                         id: "choice-1".to_string(),
-                        option: ProtagonistOption {
+                        option: CharacterOption {
                             title: "绕行".to_string(),
                             action: "绕到钟楼背面".to_string(),
                             motivation_and_risk: "视野更好，但会暴露脚步声".to_string(),
                         },
                     }],
-                    committed_action: Some("绕到钟楼背面".to_string()),
+                    committed_actions: vec![PlayerActionItem::character_free_text("绕到钟楼背面")],
                 }],
             },
         }
@@ -1959,7 +2012,9 @@ mod tests {
             description: format!("第{total_rounds}轮描述"),
             ..WorldSnapshot::default()
         };
-        payload.protagonist_decision.committed_action = format!("行动-{total_rounds}");
+        payload.character_decision.committed_actions = vec![PlayerActionItem::character_free_text(
+            format!("行动-{total_rounds}"),
+        )];
         payload.history_log = SessionHistoryLog {
             rounds: (1..=total_rounds)
                 .map(|round| RoundHistoryEntry {
@@ -1971,15 +2026,17 @@ mod tests {
                         ..WorldSnapshot::default()
                     }),
                     narration_text: Some(format!("叙事-{round}")),
-                    choices: vec![PendingProtagonistChoice {
+                    choices: vec![PendingCharacterChoice {
                         id: format!("choice-{round}"),
-                        option: ProtagonistOption {
+                        option: CharacterOption {
                             title: format!("选择-{round}"),
                             action: format!("行动-{round}"),
                             motivation_and_risk: "保持测试稳定".to_string(),
                         },
                     }],
-                    committed_action: Some(format!("行动-{round}")),
+                    committed_actions: vec![PlayerActionItem::character_free_text(format!(
+                        "行动-{round}"
+                    ))],
                 })
                 .collect(),
         };

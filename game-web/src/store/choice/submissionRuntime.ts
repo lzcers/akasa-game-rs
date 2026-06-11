@@ -54,15 +54,16 @@ export async function submitGameChoice(
     await submitGameSessionControl(submissionPlan.sessionId, {
       action: submissionPlan.input,
     });
+    const primaryAction = submissionPlan.input.actions[0];
     track(
       'choice_submitted',
-      submissionPlan.input.type === 'free_text'
+      primaryAction?.action_type === 'free_text'
         ? {
-          choiceType: submissionPlan.input.type,
-          actionText: submissionPlan.input.action,
+          choiceType: primaryAction.action_type,
+          actionText: primaryAction.action,
         }
         : {
-          choiceType: submissionPlan.input.type,
+          choiceType: primaryAction?.action_type ?? 'unknown',
         },
     );
     if (useObsession) {

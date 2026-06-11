@@ -10,7 +10,7 @@ use crate::{
     components::{
         agent::{Agent, AgentOutputType, PendingReasoning, Simulator},
         flow::{FlowEnd, SimulationCompleted},
-        outcome::ProtagonistDecisionState,
+        outcome::CharacterDecisionState,
         outcome::SimulationOutcome,
         session_event_sink::SessionEventSink,
         turn_flow::{TurnFlow, TurnStage},
@@ -30,7 +30,7 @@ pub fn fate_weaver_dispatch_system(
         Entity,
         &SessionEventSink,
         &TurnFlow,
-        &ProtagonistDecisionState,
+        &CharacterDecisionState,
         &WorldSnapshot,
     )>,
     agent_tasks: Res<AgentTaskManager>,
@@ -56,9 +56,19 @@ pub fn fate_weaver_dispatch_system(
             owner.parent() == session_entity && agent_tasks.task_result(*entity).is_none()
         }) {
             let action_round = flow.active_turn_id().saturating_sub(1);
+            let actions = decision_state
+                .committed_actions()
+                .iter()
+                .map(|action| {
+                    json!({
+                        "character_name": &action.character_name,
+                        "action": &action.action,
+                    })
+                })
+                .collect::<Vec<_>>();
             let prompt = json!({
                 "round": action_round,
-                "outcome": decision_state.committed_action(),
+                "actions": actions,
             })
             .to_string();
             let message = agent.append_user_message(&prompt);

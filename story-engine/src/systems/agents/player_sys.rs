@@ -7,7 +7,7 @@ use bevy_ecs::{
 use crate::{
     components::{
         flow::PlayerInputCompleted,
-        outcome::{PlayerActionType, ProtagonistDecisionState},
+        outcome::{CharacterDecisionState, PlayerActionItem, PlayerActionType},
         session_event_sink::SessionEventSink,
         turn_flow::{TurnFlow, TurnStage},
     },
@@ -22,7 +22,7 @@ pub fn player_input_consume_system(
         Entity,
         &SessionEventSink,
         &TurnFlow,
-        &mut ProtagonistDecisionState,
+        &mut CharacterDecisionState,
         Option<&PlayerInputCompleted>,
     )>,
 ) {
@@ -45,21 +45,13 @@ pub fn player_input_consume_system(
                     if *session_entity != entity || *turn_id != flow.active_turn_id() {
                         continue;
                     }
-                    let action = input.action.trim();
-                    if action.is_empty()
-                        || (input.r#type == PlayerActionType::SelectedOption
-                            && !decision_state.has_action(action))
-                    {
+                    let Some(committed_actions) = validated_actions(&decision_state, input) else {
                         continue;
-                    }
+                    };
 
-                    let action_type = input.r#type;
-                    let committed_action = decision_state.commit_action(action);
-                    event_sink.publish_player_input(
-                        flow.active_turn_id().max(1),
-                        action_type,
-                        committed_action,
-                    );
+                    let committed_actions = decision_state.commit_actions(committed_actions);
+                    event_sink
+                        .publish_player_input(flow.active_turn_id().max(1), committed_actions);
                     commands.entity(entity).insert(PlayerInputCompleted {
                         turn_id: flow.active_turn_id(),
                     });
@@ -68,4 +60,37 @@ pub fn player_input_consume_system(
             }
         }
     }
+}
+
+fn validated_actions(
+    decision_state: &CharacterDecisionState,
+    input: &crate::components::outcome::PlayerActionInput,
+) -> Option<Vec<PlayerActionItem>> {
+    let mut actions = Vec::new();
+    for item in input
+        .actions
+        .iter()
+        .cloned()
+        .map(PlayerActionItem::normalized)
+    {
+        if item.action.is_empty() {
+            return None;
+        }
+        if let Some(choice) = decision_state.choice_for_action(&item.action) {
+            actions.push(PlayerActionItem {
+                action_type: PlayerActionType::SelectedOption,
+                title: choice.title.clone(),
+                motivation_and_risk: choice.motivation_and_risk.clone(),
+                ..item
+            });
+        } else if item.action_type == PlayerActionType::SelectedOption {
+            return None;
+        } else {
+            actions.push(PlayerActionItem {
+                action_type: PlayerActionType::FreeText,
+                ..item
+            });
+        }
+    }
+    (!actions.is_empty()).then_some(actions)
 }

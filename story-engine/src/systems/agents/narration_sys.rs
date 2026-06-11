@@ -9,8 +9,8 @@ use crate::{
     components::{
         agent::{Agent, AgentRole, Applicator, PendingReasoning},
         flow::ApplicationCompleted,
+        outcome::CharacterDecisionState,
         outcome::NarrationOutcome,
-        outcome::ProtagonistDecisionState,
         session_event_sink::SessionEventSink,
         turn_flow::{TurnFlow, TurnStage},
         world_snapshot::WorldSnapshot,
@@ -26,7 +26,7 @@ pub fn narration_dispatch_system(
         Entity,
         &SessionEventSink,
         &TurnFlow,
-        &ProtagonistDecisionState,
+        &CharacterDecisionState,
         &WorldSnapshot,
     )>,
     agent_tasks: Res<AgentTaskManager>,
@@ -39,9 +39,10 @@ pub fn narration_dispatch_system(
         .iter()
         .filter(|(_, _, flow, ..)| flow.stage == TurnStage::Application)
     {
+        let committed_action = decision_state.committed_action();
         let prompt = format!(
             "{}\n",
-            world_prompt::story_prompt(world_snapshot, Some(decision_state.committed_action())),
+            world_prompt::story_prompt(world_snapshot, Some(&committed_action)),
         );
 
         for (entity, mut agent, _, _) in
