@@ -394,7 +394,7 @@ const GameplayPage: React.FC = () => {
       try {
         rememberSubmittedChoice({
           action: choice.action,
-          text: activeObsession ? `${choice.text} [执念]` : choice.text,
+          text: activeObsession ? '[执念]' : choice.text,
         });
         const submission = submitChoice(
           {
@@ -517,7 +517,7 @@ const GameplayPage: React.FC = () => {
     try {
       rememberSubmittedChoice({
         action: actionText,
-        text: `${actionText} [执念]`,
+        text: '[执念]',
       });
       const submission = submitChoice(
         {

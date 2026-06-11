@@ -1,7 +1,7 @@
 mod event_pipeline;
 
 pub use event_pipeline::{
-    AgentContextItemAppended, AgentContextRollback, AgentContextRollbackPolicy, EngineEvent,
+    EngineEvent, EntityContextItemAppended, EntityContextRollback, EntityContextRollbackPolicy,
     FlowTurnCompleted, FlowTurnEnd, FlowTurnError, FlowTurnUpdate, PlayerInput, SessionCreated,
     TaskCompleted, TaskUpdate,
 };

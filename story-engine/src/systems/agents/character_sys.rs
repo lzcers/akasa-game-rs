@@ -16,7 +16,7 @@ use crate::{
     },
     prompts::world_prompt,
     resources::agent_task_manager::{AgentTaskManager, TaskStatus},
-    resources::session_events::AgentContextRollbackPolicy,
+    resources::session_events::EntityContextRollbackPolicy,
     utils::parse_json_response,
 };
 
@@ -77,7 +77,7 @@ pub fn character_dispatch_system(
                 })
         {
             let message = agent.append_user_message(&prompt);
-            event_sink.publish_agent_context_item_appended(
+            event_sink.publish_entity_context_item_appended(
                 flow.active_turn_id().max(1),
                 agent.name.clone(),
                 message,
@@ -132,10 +132,10 @@ pub fn character_apply_system(
                             );
                             agent_tasks.clear_task(entity);
                             if agent.revert() {
-                                event_sink.publish_agent_context_rollback(
+                                event_sink.publish_entity_context_rollback(
                                     flow.active_turn_id().max(1),
                                     agent.name.clone(),
-                                    AgentContextRollbackPolicy::LatestInput,
+                                    EntityContextRollbackPolicy::LatestInput,
                                 );
                             }
                             flow.stage = TurnStage::Failed;
@@ -149,7 +149,7 @@ pub fn character_apply_system(
                         serde_json::to_string_pretty(&options).unwrap_or_else(|_| output.clone());
                     let _ = agent_tasks.take_result(entity);
                     let message = agent.append_assistant_message(&normalized_output);
-                    event_sink.publish_agent_context_item_appended(
+                    event_sink.publish_entity_context_item_appended(
                         flow.active_turn_id().max(1),
                         agent.name.clone(),
                         message,

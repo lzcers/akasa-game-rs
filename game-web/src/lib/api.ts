@@ -258,17 +258,17 @@ export type EngineEvent =
       actions: PlayerActionItem[];
     }
   | {
-      type: 'agent_context_item_appended';
+      type: 'entity_context_item_appended';
       session_id: string;
       round: number;
-      agent_name: string;
+      entity_name: string;
       message: unknown;
     }
   | {
-      type: 'agent_context_rollback';
+      type: 'entity_context_rollback';
       session_id: string;
       round: number;
-      agent_name: string;
+      entity_name: string;
       policy: 'latest_input';
     }
   | {

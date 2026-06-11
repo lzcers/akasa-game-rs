@@ -4,7 +4,7 @@ use bevy_ecs::component::Component;
 use crate::{
     components::{agent::AgentOutputType, outcome::PlayerActionItem, turn_flow::TurnStage},
     resources::session_events::{
-        AgentContextItemAppended, AgentContextRollback, AgentContextRollbackPolicy, EngineEvent,
+        EngineEvent, EntityContextItemAppended, EntityContextRollback, EntityContextRollbackPolicy,
         EventPipeline, FlowTurnCompleted, FlowTurnEnd, FlowTurnError, FlowTurnUpdate, PlayerInput,
         SessionCreated, SessionEventHandle, TaskCompleted, TaskUpdate,
     },
@@ -86,36 +86,36 @@ impl SessionEventSink {
         self.event_pipeline.publish(EngineEvent::PlayerInput(input));
     }
 
-    pub fn publish_agent_context_item_appended(
+    pub fn publish_entity_context_item_appended(
         &self,
         round: u64,
-        agent_name: impl Into<String>,
+        entity_name: impl Into<String>,
         message: Message,
     ) {
-        let update = AgentContextItemAppended {
+        let update = EntityContextItemAppended {
             session_id: self.session_id.clone(),
             round,
-            agent_name: agent_name.into(),
+            entity_name: entity_name.into(),
             message,
         };
         self.event_pipeline
-            .publish(EngineEvent::AgentContextItemAppended(update));
+            .publish(EngineEvent::EntityContextItemAppended(update));
     }
 
-    pub fn publish_agent_context_rollback(
+    pub fn publish_entity_context_rollback(
         &self,
         round: u64,
-        agent_name: impl Into<String>,
-        policy: AgentContextRollbackPolicy,
+        entity_name: impl Into<String>,
+        policy: EntityContextRollbackPolicy,
     ) {
-        let rollback = AgentContextRollback {
+        let rollback = EntityContextRollback {
             session_id: self.session_id.clone(),
             round,
-            agent_name: agent_name.into(),
+            entity_name: entity_name.into(),
             policy,
         };
         self.event_pipeline
-            .publish(EngineEvent::AgentContextRollback(rollback));
+            .publish(EngineEvent::EntityContextRollback(rollback));
     }
 
     pub fn publish_flow_turn_update(
@@ -219,36 +219,36 @@ mod tests {
             other => panic!("expected player input, got {other:?}"),
         }
 
-        sink.publish_agent_context_item_appended(
+        sink.publish_entity_context_item_appended(
             3,
             "UpperNarrator",
             Message::user("latest context"),
         );
         match events.recv().await.unwrap() {
-            EngineEvent::AgentContextItemAppended(update) => {
+            EngineEvent::EntityContextItemAppended(update) => {
                 assert_eq!(update.session_id, "session-1");
                 assert_eq!(update.round, 3);
-                assert_eq!(update.agent_name, "UpperNarrator");
+                assert_eq!(update.entity_name, "UpperNarrator");
                 assert!(
                     matches!(update.message, Message::User { content } if content == "latest context")
                 );
             }
-            other => panic!("expected agent context item append, got {other:?}"),
+            other => panic!("expected entity context item append, got {other:?}"),
         }
 
-        sink.publish_agent_context_rollback(
+        sink.publish_entity_context_rollback(
             3,
             "UpperNarrator",
-            AgentContextRollbackPolicy::LatestInput,
+            EntityContextRollbackPolicy::LatestInput,
         );
         match events.recv().await.unwrap() {
-            EngineEvent::AgentContextRollback(rollback) => {
+            EngineEvent::EntityContextRollback(rollback) => {
                 assert_eq!(rollback.session_id, "session-1");
                 assert_eq!(rollback.round, 3);
-                assert_eq!(rollback.agent_name, "UpperNarrator");
-                assert_eq!(rollback.policy, AgentContextRollbackPolicy::LatestInput);
+                assert_eq!(rollback.entity_name, "UpperNarrator");
+                assert_eq!(rollback.policy, EntityContextRollbackPolicy::LatestInput);
             }
-            other => panic!("expected agent context rollback, got {other:?}"),
+            other => panic!("expected entity context rollback, got {other:?}"),
         }
 
         sink.publish_flow_turn_update(

@@ -11,7 +11,7 @@ function toChoiceFromStreamOption(option: StreamedCharacterOption, index: number
   const action = option.action?.trim() || '';
   return {
     id: `choice-${index + 1}`,
-    text: option.title?.trim() || action || `行动 ${index + 1}`,
+    text: option.title?.trim() || '',
     action,
     motivationAndRisk: option.motivationAndRisk?.trim() || option.motivation_and_risk?.trim(),
     disabled: false,
@@ -132,7 +132,7 @@ export function characterActionText(raw: string): string | null {
       return '前路暂时未显，请稍等记录展开。';
     }
     return options
-      .map((option, index) => option.title?.trim() || option.action?.trim() || `行动 ${index + 1}`)
+      .map((option) => option.title?.trim() || '')
       .join(' / ');
   } catch {
     return raw.trim();

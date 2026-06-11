@@ -17,7 +17,7 @@ use crate::{
         world_snapshot::WorldSnapshot,
     },
     resources::agent_task_manager::{AgentTaskManager, TaskStatus},
-    resources::session_events::AgentContextRollbackPolicy,
+    resources::session_events::EntityContextRollbackPolicy,
     utils::parse_json_response,
 };
 
@@ -72,7 +72,7 @@ pub fn fate_weaver_dispatch_system(
             })
             .to_string();
             let message = agent.append_user_message(&prompt);
-            event_sink.publish_agent_context_item_appended(
+            event_sink.publish_entity_context_item_appended(
                 flow.active_turn_id().max(1),
                 agent.name.clone(),
                 message,
@@ -125,10 +125,10 @@ pub fn fate_weaver_apply_system(
                                 );
                                 agent_tasks.clear_task(entity);
                                 if agent.revert() {
-                                    event_sink.publish_agent_context_rollback(
+                                    event_sink.publish_entity_context_rollback(
                                         flow.active_turn_id().max(1),
                                         agent.name.clone(),
-                                        AgentContextRollbackPolicy::LatestInput,
+                                        EntityContextRollbackPolicy::LatestInput,
                                     );
                                 }
                                 flow.stage = TurnStage::Failed;
@@ -143,7 +143,7 @@ pub fn fate_weaver_apply_system(
                     }
                     let _ = agent_tasks.take_result(entity);
                     let message = agent.append_assistant_message(&output);
-                    event_sink.publish_agent_context_item_appended(
+                    event_sink.publish_entity_context_item_appended(
                         flow.active_turn_id().max(1),
                         agent.name.clone(),
                         message,

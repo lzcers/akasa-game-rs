@@ -54,7 +54,7 @@ pub fn narration_dispatch_system(
             })
         {
             let message = agent.append_user_message(&prompt);
-            event_sink.publish_agent_context_item_appended(
+            event_sink.publish_entity_context_item_appended(
                 flow.active_turn_id().max(1),
                 agent.name.clone(),
                 message,
@@ -90,7 +90,7 @@ pub fn narration_apply_system(
                         continue;
                     };
                     let message = agent.append_assistant_message(&output);
-                    event_sink.publish_agent_context_item_appended(
+                    event_sink.publish_entity_context_item_appended(
                         flow.active_turn_id().max(1),
                         agent.name.clone(),
                         message,

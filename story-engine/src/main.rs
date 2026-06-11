@@ -125,18 +125,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     created.session_id, created.world_profile, created.character_profile
                 );
             }
-            EngineEvent::AgentContextItemAppended(update) => {
+            EngineEvent::EntityContextItemAppended(update) => {
                 stream_output.finish_line()?;
                 println!(
-                    "[context] round={} agent={} appended={:?}",
-                    update.round, update.agent_name, update.message
+                    "[context] round={} entity={} appended={:?}",
+                    update.round, update.entity_name, update.message
                 );
             }
-            EngineEvent::AgentContextRollback(rollback) => {
+            EngineEvent::EntityContextRollback(rollback) => {
                 stream_output.finish_line()?;
                 println!(
-                    "[context] round={} agent={} rollback={:?}",
-                    rollback.round, rollback.agent_name, rollback.policy
+                    "[context] round={} entity={} rollback={:?}",
+                    rollback.round, rollback.entity_name, rollback.policy
                 );
             }
         }

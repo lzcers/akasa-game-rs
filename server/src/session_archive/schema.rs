@@ -123,34 +123,35 @@ CREATE INDEX IF NOT EXISTS idx_flow_outputs_node
 ON flow_outputs(session_id, node_id);
 "#;
 
-const DROP_OBSOLETE_AGENT_CONTEXTS_TABLE_SQL: &str = r#"
+const DROP_OBSOLETE_CONTEXT_TABLES_SQL: &str = r#"
 DROP TABLE IF EXISTS agent_contexts;
+DROP TABLE IF EXISTS agent_context_items;
 "#;
 
-const CREATE_AGENT_CONTEXT_ITEMS_TABLE_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS agent_context_items (
+const CREATE_ENTITY_CONTEXT_ITEMS_TABLE_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS entity_context_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL,
     node_id TEXT NOT NULL,
-    agent_name TEXT NOT NULL,
+    entity_name TEXT NOT NULL,
     item_index INTEGER NOT NULL,
     item_kind TEXT NOT NULL,
     message_role TEXT,
     content TEXT,
     created_at TEXT NOT NULL,
-    UNIQUE(session_id, node_id, agent_name, item_index)
+    UNIQUE(session_id, node_id, entity_name, item_index)
 );
 
-CREATE INDEX IF NOT EXISTS idx_agent_context_items_node
-ON agent_context_items(session_id, node_id, agent_name, item_index);
+CREATE INDEX IF NOT EXISTS idx_entity_context_items_node
+ON entity_context_items(session_id, node_id, entity_name, item_index);
 "#;
 
 pub(super) fn init(conn: &Connection) -> Result<()> {
-    conn.execute_batch(DROP_OBSOLETE_AGENT_CONTEXTS_TABLE_SQL)
-        .context("failed to drop obsolete agent contexts schema")?;
+    conn.execute_batch(DROP_OBSOLETE_CONTEXT_TABLES_SQL)
+        .context("failed to drop obsolete context schema")?;
     reset_obsolete_sessions_schema(conn)?;
     reset_obsolete_story_edges_schema(conn)?;
-    reset_obsolete_agent_context_items_schema(conn)?;
+    reset_obsolete_entity_context_items_schema(conn)?;
     conn.execute_batch(CREATE_SESSIONS_TABLE_SQL)
         .context("failed to initialize sessions schema")?;
     conn.execute_batch(CREATE_SESSION_WORLDS_TABLE_SQL)
@@ -165,8 +166,8 @@ pub(super) fn init(conn: &Connection) -> Result<()> {
         .context("failed to initialize story edge actions schema")?;
     conn.execute_batch(CREATE_FLOW_OUTPUTS_TABLE_SQL)
         .context("failed to initialize flow outputs schema")?;
-    conn.execute_batch(CREATE_AGENT_CONTEXT_ITEMS_TABLE_SQL)
-        .context("failed to initialize agent context items schema")
+    conn.execute_batch(CREATE_ENTITY_CONTEXT_ITEMS_TABLE_SQL)
+        .context("failed to initialize entity context items schema")
 }
 
 fn reset_obsolete_sessions_schema(conn: &Connection) -> Result<()> {
@@ -176,6 +177,7 @@ fn reset_obsolete_sessions_schema(conn: &Connection) -> Result<()> {
     }) {
         conn.execute_batch(
             r#"
+            DROP TABLE IF EXISTS entity_context_items;
             DROP TABLE IF EXISTS agent_context_items;
             DROP TABLE IF EXISTS flow_outputs;
             DROP TABLE IF EXISTS story_edge_actions;
@@ -212,12 +214,15 @@ fn reset_obsolete_story_edges_schema(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn reset_obsolete_agent_context_items_schema(conn: &Connection) -> Result<()> {
-    let columns = table_columns(conn, "agent_context_items")
-        .context("failed to inspect agent context items schema")?;
-    if columns.iter().any(|column| column == "message_json") {
-        conn.execute_batch("DROP TABLE IF EXISTS agent_context_items;")
-            .context("failed to reset obsolete agent context items schema")?;
+fn reset_obsolete_entity_context_items_schema(conn: &Connection) -> Result<()> {
+    let columns = table_columns(conn, "entity_context_items")
+        .context("failed to inspect entity context items schema")?;
+    if columns
+        .iter()
+        .any(|column| column == "agent_name" || column == "message_json")
+    {
+        conn.execute_batch("DROP TABLE IF EXISTS entity_context_items;")
+            .context("failed to reset obsolete entity context items schema")?;
     }
     Ok(())
 }

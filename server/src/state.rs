@@ -292,7 +292,7 @@ impl AppState {
         let character_agent =
             StoryAgent::new_character_agent(character_name, world_profile, character_profile);
         self.session_archive_repo
-            .replace_agent_contexts_from_contexts(
+            .replace_entity_contexts_from_contexts(
                 &session_id,
                 0,
                 &[
@@ -302,7 +302,7 @@ impl AppState {
                 ],
             )
             .await
-            .map_err(|err| AppError::internal(format!("写入初始 Agent context 失败：{err:#}")))?;
+            .map_err(|err| AppError::internal(format!("写入初始 entity context 失败：{err:#}")))?;
         let session = build_session_record(
             session_id.clone(),
             engine,
@@ -391,14 +391,24 @@ impl AppState {
             .load_round_page(session_id, before_round, limit)
             .await
             .map_err(|err| AppError::internal(format!("读取会话历史分页失败：{err:#}")))?;
+        let page_rounds = page
+            .rounds
+            .iter()
+            .map(|entry| entry.round)
+            .collect::<HashSet<_>>();
+        let story_edge_actions = self
+            .session_archive_repo
+            .load_story_edge_actions(session_id)
+            .await
+            .map_err(|err| AppError::internal(format!("读取故事边行动失败：{err:#}")))?
+            .into_iter()
+            .filter(|action| page_rounds.contains(&action.round))
+            .collect::<Vec<_>>();
+        let rounds = rounds_with_story_edge_actions(page.rounds, story_edge_actions);
 
         Ok(SessionRoundsPageData {
             session_id: session_id.to_string(),
-            rounds: page
-                .rounds
-                .into_iter()
-                .map(RoundHistoryData::from)
-                .collect(),
+            rounds: rounds.into_iter().map(RoundHistoryData::from).collect(),
             next_before_round: page.next_before_round,
             has_more: page.has_more,
         })
@@ -687,6 +697,10 @@ impl AppState {
         payload: &archive::SessionArchivePayload,
     ) -> Result<(), AppError> {
         self.session_archive_repo
+            .clear_session_state(&payload.session_id)
+            .await
+            .map_err(|err| AppError::internal(format!("清理旧会话归档状态失败：{err:#}")))?;
+        self.session_archive_repo
             .save_session_metadata(&StoredSessionMetadata {
                 session_id: payload.session_id.clone(),
                 character_name: payload.character_name.clone(),
@@ -707,7 +721,7 @@ impl AppState {
             .await
             .map_err(|err| AppError::internal(format!("写入故事边行动失败：{err:#}")))?;
         self.session_archive_repo
-            .replace_agent_contexts_from_contexts(
+            .replace_entity_contexts_from_contexts(
                 &payload.session_id,
                 payload
                     .turn_state
@@ -720,7 +734,7 @@ impl AppState {
                 ],
             )
             .await
-            .map_err(|err| AppError::internal(format!("写入 Agent context 失败：{err:#}")))?;
+            .map_err(|err| AppError::internal(format!("写入 entity context 失败：{err:#}")))?;
         Ok(())
     }
 
@@ -740,7 +754,7 @@ impl AppState {
     ) -> Result<archive::SessionArchivePayload, AppError> {
         let metadata = self.load_session_metadata(session_id).await?;
         let rounds = self.load_session_rounds(session_id).await?;
-        let contexts = self.load_agent_context_map(session_id).await?;
+        let contexts = self.load_entity_context_map(session_id).await?;
         Ok(archive_payload_from_database(
             metadata, rounds, contexts, title,
         ))
@@ -774,18 +788,18 @@ impl AppState {
         Ok(rounds_with_story_edge_actions(rounds, story_edge_actions))
     }
 
-    async fn load_agent_context_map(
+    async fn load_entity_context_map(
         &self,
         session_id: &str,
     ) -> Result<HashMap<String, Context>, AppError> {
         let contexts = self
             .session_archive_repo
-            .load_agent_contexts(session_id)
+            .load_entity_contexts(session_id)
             .await
-            .map_err(|err| AppError::internal(format!("读取 Agent Context 失败：{err:#}")))?;
+            .map_err(|err| AppError::internal(format!("读取 entity context 失败：{err:#}")))?;
         Ok(contexts
             .into_iter()
-            .map(|context| (context.agent_name, context.context))
+            .map(|context| (context.entity_name, context.context))
             .collect())
     }
 
@@ -1058,27 +1072,27 @@ fn build_hot_session(
                                 );
                             }
                         }
-                        EngineEvent::AgentContextItemAppended(update) => {
+                        EngineEvent::EntityContextItemAppended(update) => {
                             if let Err(error) =
-                                session_archive_repo.save_agent_context_item(&update).await
+                                session_archive_repo.save_entity_context_item(&update).await
                             {
                                 tracing::warn!(
-                                    "failed to persist agent context item for {} / {}: {:?}",
+                                    "failed to persist entity context item for {} / {}: {:?}",
                                     update.session_id,
-                                    update.agent_name,
+                                    update.entity_name,
                                     error
                                 );
                             }
                         }
-                        EngineEvent::AgentContextRollback(rollback) => {
+                        EngineEvent::EntityContextRollback(rollback) => {
                             if let Err(error) = session_archive_repo
-                                .save_agent_context_rollback(&rollback)
+                                .save_entity_context_rollback(&rollback)
                                 .await
                             {
                                 tracing::warn!(
-                                    "failed to persist agent context rollback for {} / {}: {:?}",
+                                    "failed to persist entity context rollback for {} / {}: {:?}",
                                     rollback.session_id,
-                                    rollback.agent_name,
+                                    rollback.entity_name,
                                     error
                                 );
                             }
@@ -1565,6 +1579,7 @@ mod tests {
     use super::*;
     use crate::api::archive::{CharacterDecisionArchive, SessionArchivePayload, TurnStateArchive};
     use agent::agent::context::Context;
+    use rusqlite::{Connection, params};
     use serde_json::Value;
     use story_engine::components::{
         outcome::{CharacterOption, PendingCharacterChoice},
@@ -1643,6 +1658,40 @@ mod tests {
             Some(total_rounds)
         );
         assert!(!full_history.has_more);
+    }
+
+    #[tokio::test]
+    async fn load_archive_restores_selected_choice_for_each_history_round() {
+        let state = test_state();
+        let total_rounds = 3;
+        let compressed =
+            archive::compress_archive_payload(&sample_payload_with_rounds(total_rounds))
+                .expect("archive compresses");
+
+        state
+            .load_game_session_from_archive(compressed)
+            .await
+            .expect("archive should restore");
+
+        let history = state
+            .get_game_session_rounds("session-from-slot", None, 100)
+            .await
+            .expect("history page should load");
+
+        assert_eq!(history.rounds.len(), total_rounds as usize);
+        for round in 1..=total_rounds {
+            let entry = history
+                .rounds
+                .iter()
+                .find(|entry| entry.round == round)
+                .expect("round should be present");
+            assert_eq!(entry.committed_actions.len(), 1);
+            assert_eq!(entry.committed_actions[0].action, format!("行动-{round}"));
+            assert_eq!(
+                entry.selected_choice_text.as_deref(),
+                Some(format!("选择-{round}").as_str())
+            );
+        }
     }
 
     #[test]
@@ -1840,6 +1889,90 @@ mod tests {
             .await
             .expect("restored session should be queryable");
         assert_eq!(loaded_again.current_outcome, "绕到钟楼背面");
+    }
+
+    #[tokio::test]
+    async fn load_game_session_from_archive_clears_stale_future_rows() {
+        let db_path = std::env::temp_dir().join(format!(
+            "akasa-archive-overwrite-{}.sqlite3",
+            Uuid::new_v4().simple()
+        ));
+        let state = AppState::with_lifecycle_config(
+            db_path.clone(),
+            SessionLifecycleConfig {
+                idle_ttl: Duration::from_secs(30 * 60),
+                ended_ttl: Duration::from_secs(5 * 60),
+                max_hot_sessions: 200,
+                reaper_interval: Duration::from_secs(60),
+                live_event_history_capacity: DEFAULT_EVENT_HISTORY_CAPACITY,
+            },
+            false,
+        );
+
+        let first_archive = archive::compress_archive_payload(&sample_payload_with_rounds(5))
+            .expect("larger archive should compress");
+        state
+            .load_game_session_from_archive(first_archive)
+            .await
+            .expect("larger archive should restore");
+
+        let mut smaller_payload = sample_payload_with_rounds(3);
+        smaller_payload.history_log.rounds[2]
+            .committed_actions
+            .clear();
+        smaller_payload.character_decision.committed_actions =
+            vec![PlayerActionItem::character_free_text("行动-2")];
+        let second_archive = archive::compress_archive_payload(&smaller_payload)
+            .expect("smaller archive should compress");
+        state
+            .load_game_session_from_archive(second_archive)
+            .await
+            .expect("smaller archive should replace existing session");
+
+        let conn = Connection::open(db_path).expect("sqlite db should open");
+        let max_node_depth: i64 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(node_depth), 0) FROM story_nodes WHERE session_id = ?1",
+                params!["session-from-slot"],
+                |row| row.get(0),
+            )
+            .expect("story nodes should be queryable");
+        let future_output_count: i64 = conn
+            .query_row(
+                r#"
+                SELECT COUNT(*)
+                FROM flow_outputs
+                WHERE session_id = ?1
+                    AND node_id IN ('node-4', 'node-5')
+                "#,
+                params!["session-from-slot"],
+                |row| row.get(0),
+            )
+            .expect("flow outputs should be queryable");
+        let future_node_count: i64 = conn
+            .query_row(
+                r#"
+                SELECT COUNT(*)
+                FROM story_nodes
+                WHERE session_id = ?1
+                    AND node_depth > 3
+                "#,
+                params!["session-from-slot"],
+                |row| row.get(0),
+            )
+            .expect("story nodes should be queryable");
+        let total_node_count: i64 = conn
+            .query_row(
+                "SELECT total_node_count FROM sessions WHERE session_id = ?1",
+                params!["session-from-slot"],
+                |row| row.get(0),
+            )
+            .expect("session metadata should be queryable");
+
+        assert_eq!(max_node_depth, 3);
+        assert_eq!(future_output_count, 0);
+        assert_eq!(future_node_count, 0);
+        assert_eq!(total_node_count, 3);
     }
 
     #[tokio::test]

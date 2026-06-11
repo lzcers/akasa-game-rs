@@ -10,8 +10,8 @@ pub enum EngineEvent {
     TaskUpdate(TaskUpdate),
     TaskCompleted(TaskCompleted),
     PlayerInput(PlayerInput),
-    AgentContextItemAppended(AgentContextItemAppended),
-    AgentContextRollback(AgentContextRollback),
+    EntityContextItemAppended(EntityContextItemAppended),
+    EntityContextRollback(EntityContextRollback),
     FlowTurnUpdate(FlowTurnUpdate),
     FlowTurnCompleted(FlowTurnCompleted),
     FlowTurnEnd(FlowTurnEnd),
@@ -56,25 +56,25 @@ pub struct PlayerInput {
 
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentContextItemAppended {
+pub struct EntityContextItemAppended {
     pub session_id: String,
     pub round: u64,
-    pub agent_name: String,
+    pub entity_name: String,
     pub message: Message,
 }
 
 #[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentContextRollback {
+pub struct EntityContextRollback {
     pub session_id: String,
     pub round: u64,
-    pub agent_name: String,
-    pub policy: AgentContextRollbackPolicy,
+    pub entity_name: String,
+    pub policy: EntityContextRollbackPolicy,
 }
 
 #[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum AgentContextRollbackPolicy {
+pub enum EntityContextRollbackPolicy {
     LatestInput,
 }
 

@@ -8,8 +8,8 @@ use story_engine::{
         world_snapshot::WorldSnapshot,
     },
     resources::session_events::{
-        AgentContextItemAppended, AgentContextRollback, AgentContextRollbackPolicy, FlowTurnError,
-        FlowTurnUpdate, PlayerInput, SessionCreated,
+        EntityContextItemAppended, EntityContextRollback, EntityContextRollbackPolicy,
+        FlowTurnError, FlowTurnUpdate, PlayerInput, SessionCreated,
     },
 };
 
@@ -38,8 +38,8 @@ pub struct StoredSessionMetadata {
 }
 
 #[derive(Debug, Clone)]
-pub struct StoredAgentContext {
-    pub agent_name: String,
+pub struct StoredEntityContext {
+    pub entity_name: String,
     pub context: AgentContext,
 }
 
@@ -74,9 +74,80 @@ fn normalized_character_name(character_name: &str) -> String {
     }
 }
 
+fn normalize_action_character_name(
+    action: PlayerActionItem,
+    session_character_name: &str,
+) -> PlayerActionItem {
+    let session_character_name = normalized_character_name(session_character_name);
+    if action.character_name.trim().is_empty()
+        || action.character_name == DEFAULT_PLAYER_CHARACTER_NAME
+    {
+        PlayerActionItem {
+            character_name: session_character_name,
+            ..action
+        }
+    } else {
+        action
+    }
+}
+
+fn session_character_name(conn: &Connection, session_id: &str) -> Result<String> {
+    let character_name = conn
+        .query_row(
+            r#"
+            SELECT character_name
+            FROM session_characters
+            WHERE session_id = ?1
+                AND is_playable = 1
+            ORDER BY created_at ASC, character_name ASC
+            LIMIT 1
+            "#,
+            params![session_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .context("failed to load session character name")?;
+    Ok(normalized_character_name(
+        character_name.as_deref().unwrap_or_default(),
+    ))
+}
+
 impl SessionArchiveRepository {
     pub fn new(db: AppDatabase) -> Self {
         Self { db }
+    }
+
+    pub async fn clear_session_state(&self, session_id: &str) -> Result<()> {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return Ok(());
+        }
+
+        let _guard = self.db.lock().await;
+        let mut conn = self.db.open_connection("session replacement")?;
+        schema::init(&conn)?;
+        let tx = conn
+            .transaction()
+            .context("failed to start session state clearing transaction")?;
+        for table_name in [
+            "entity_context_items",
+            "flow_outputs",
+            "story_edge_actions",
+            "story_edges",
+            "story_nodes",
+            "session_characters",
+            "session_worlds",
+            "sessions",
+        ] {
+            tx.execute(
+                &format!("DELETE FROM {table_name} WHERE session_id = ?1"),
+                params![session_id],
+            )
+            .with_context(|| format!("failed to clear {table_name} for session"))?;
+        }
+        tx.commit()
+            .context("failed to commit session state clearing transaction")?;
+        Ok(())
     }
 
     pub async fn save_session_created(&self, event: &SessionCreated) -> Result<()> {
@@ -250,52 +321,55 @@ impl SessionArchiveRepository {
         .context("failed to load session metadata")
     }
 
-    pub async fn save_agent_context_item(&self, update: &AgentContextItemAppended) -> Result<()> {
+    pub async fn save_entity_context_item(&self, update: &EntityContextItemAppended) -> Result<()> {
         let session_id = update.session_id.trim();
-        let agent_name = update.agent_name.trim();
-        if session_id.is_empty() || agent_name.is_empty() {
+        let entity_name = update.entity_name.trim();
+        if session_id.is_empty() || entity_name.is_empty() {
             return Ok(());
         }
 
         let node_id = linear_node_id_for_depth(update.round);
         let _guard = self.db.lock().await;
-        let conn = self.db.open_connection("agent context items")?;
+        let conn = self.db.open_connection("entity context items")?;
         schema::init(&conn)?;
         let now = chrono::Utc::now().to_rfc3339();
         ensure_linear_story_path(&conn, session_id, update.round, &now)?;
-        insert_agent_context_message(
+        insert_entity_context_message(
             &conn,
             session_id,
             &node_id,
-            agent_name,
+            entity_name,
             &update.message,
             &now,
         )?;
         Ok(())
     }
 
-    pub async fn save_agent_context_rollback(&self, rollback: &AgentContextRollback) -> Result<()> {
+    pub async fn save_entity_context_rollback(
+        &self,
+        rollback: &EntityContextRollback,
+    ) -> Result<()> {
         let session_id = rollback.session_id.trim();
-        let agent_name = rollback.agent_name.trim();
-        if session_id.is_empty() || agent_name.is_empty() {
+        let entity_name = rollback.entity_name.trim();
+        if session_id.is_empty() || entity_name.is_empty() {
             return Ok(());
         }
 
         let node_id = linear_node_id_for_depth(rollback.round);
         let _guard = self.db.lock().await;
-        let conn = self.db.open_connection("agent context rollbacks")?;
+        let conn = self.db.open_connection("entity context rollbacks")?;
         schema::init(&conn)?;
         let now = chrono::Utc::now().to_rfc3339();
         ensure_linear_story_path(&conn, session_id, rollback.round, &now)?;
         match rollback.policy {
-            AgentContextRollbackPolicy::LatestInput => {
-                insert_agent_context_rollback(&conn, session_id, &node_id, agent_name, &now)?;
+            EntityContextRollbackPolicy::LatestInput => {
+                insert_entity_context_rollback(&conn, session_id, &node_id, entity_name, &now)?;
             }
         }
         Ok(())
     }
 
-    pub async fn replace_agent_contexts_from_contexts(
+    pub async fn replace_entity_contexts_from_contexts(
         &self,
         session_id: &str,
         round: u64,
@@ -308,33 +382,38 @@ impl SessionArchiveRepository {
 
         let node_id = linear_node_id_for_depth(round);
         let _guard = self.db.lock().await;
-        let mut conn = self.db.open_connection("agent context replacement")?;
+        let mut conn = self.db.open_connection("entity context replacement")?;
         schema::init(&conn)?;
         let tx = conn
             .transaction()
-            .context("failed to start agent context replacement transaction")?;
+            .context("failed to start entity context replacement transaction")?;
         let now = chrono::Utc::now().to_rfc3339();
         ensure_linear_story_path(&tx, session_id, round, &now)?;
         tx.execute(
-            "DELETE FROM agent_context_items WHERE session_id = ?1",
+            "DELETE FROM entity_context_items WHERE session_id = ?1",
             params![session_id],
         )
-        .context("failed to clear existing agent context items")?;
-        for (agent_name, context) in contexts {
+        .context("failed to clear existing entity context items")?;
+        for (entity_name, context) in contexts {
             for message in context_messages_for_storage(context) {
-                insert_agent_context_message(
-                    &tx, session_id, &node_id, agent_name, &message, &now,
+                insert_entity_context_message(
+                    &tx,
+                    session_id,
+                    &node_id,
+                    entity_name,
+                    &message,
+                    &now,
                 )?;
             }
         }
         tx.commit()
-            .context("failed to commit agent context replacement")?;
+            .context("failed to commit entity context replacement")?;
         Ok(())
     }
 
-    pub async fn load_agent_contexts(&self, session_id: &str) -> Result<Vec<StoredAgentContext>> {
+    pub async fn load_entity_contexts(&self, session_id: &str) -> Result<Vec<StoredEntityContext>> {
         let _guard = self.db.lock().await;
-        let conn = self.db.open_connection("agent context items")?;
+        let conn = self.db.open_connection("entity context items")?;
         schema::init(&conn)?;
         let mut stmt = conn
             .prepare(
@@ -354,33 +433,33 @@ impl SessionArchiveRepository {
                     WHERE parent.session_id = ?1
                 )
                 SELECT
-                    item.agent_name,
+                    item.entity_name,
                     item.item_kind,
                     item.message_role,
                     item.content
-                FROM agent_context_items item
+                FROM entity_context_items item
                 JOIN active_path
                     ON active_path.node_id = item.node_id
                 WHERE item.session_id = ?1
                 ORDER BY
-                    item.agent_name ASC,
+                    item.entity_name ASC,
                     active_path.node_depth ASC,
                     item.item_index ASC,
                     item.id ASC
                 "#,
             )
-            .context("failed to prepare agent context load")?;
+            .context("failed to prepare entity context load")?;
         let mut rows = stmt
             .query(params![session_id])
-            .context("failed to query agent context items")?;
+            .context("failed to query entity context items")?;
         let mut contexts = std::collections::BTreeMap::<String, AgentContext>::new();
         while let Some(row) = rows
             .next()
-            .context("failed to read agent context item row")?
+            .context("failed to read entity context item row")?
         {
-            let agent_name: String = row.get(0)?;
+            let entity_name: String = row.get(0)?;
             let item_kind: String = row.get(1)?;
-            let context = contexts.entry(agent_name).or_default();
+            let context = contexts.entry(entity_name).or_default();
             match item_kind.as_str() {
                 "message" => {
                     let message_role: String =
@@ -417,8 +496,8 @@ impl SessionArchiveRepository {
 
         Ok(contexts
             .into_iter()
-            .map(|(agent_name, context)| StoredAgentContext {
-                agent_name,
+            .map(|(entity_name, context)| StoredEntityContext {
+                entity_name,
                 context,
             })
             .collect())
@@ -442,6 +521,11 @@ impl SessionArchiveRepository {
         let _guard = self.db.lock().await;
         let conn = self.db.open_connection("story edges")?;
         schema::init(&conn)?;
+        let session_character_name = session_character_name(&conn, session_id)?;
+        let actions = actions
+            .into_iter()
+            .map(|action| normalize_action_character_name(action, &session_character_name))
+            .collect::<Vec<_>>();
         let now = chrono::Utc::now().to_rfc3339();
         ensure_linear_story_path(&conn, session_id, input.round + 1, &now)?;
         conn.execute(
@@ -569,6 +653,7 @@ impl SessionArchiveRepository {
         let tx = conn
             .transaction()
             .context("failed to start story edges replacement transaction")?;
+        let session_character_name = session_character_name(&tx, session_id)?;
         tx.execute(
             "DELETE FROM story_edge_actions WHERE session_id = ?1",
             params![session_id],
@@ -587,6 +672,7 @@ impl SessionArchiveRepository {
                 .iter()
                 .cloned()
                 .map(PlayerActionItem::normalized)
+                .map(|action| normalize_action_character_name(action, &session_character_name))
                 .filter(|action| !action.action.is_empty())
                 .collect::<Vec<_>>();
             if actions.is_empty() {
@@ -1434,21 +1520,21 @@ fn apply_flow_turn_output(
     Ok(())
 }
 
-fn insert_agent_context_message(
+fn insert_entity_context_message(
     conn: &Connection,
     session_id: &str,
     node_id: &str,
-    agent_name: &str,
+    entity_name: &str,
     message: &Message,
     now: &str,
 ) -> Result<()> {
-    let item_index = next_agent_context_item_index(conn, session_id, node_id, agent_name)?;
+    let item_index = next_entity_context_item_index(conn, session_id, node_id, entity_name)?;
     conn.execute(
         r#"
-        INSERT INTO agent_context_items (
+        INSERT INTO entity_context_items (
             session_id,
             node_id,
-            agent_name,
+            entity_name,
             item_index,
             item_kind,
             message_role,
@@ -1459,60 +1545,60 @@ fn insert_agent_context_message(
         params![
             session_id,
             node_id,
-            agent_name,
+            entity_name,
             item_index,
             message_role(message),
             message.content(),
             now,
         ],
     )
-    .context("failed to insert agent context message")?;
+    .context("failed to insert entity context message")?;
     Ok(())
 }
 
-fn insert_agent_context_rollback(
+fn insert_entity_context_rollback(
     conn: &Connection,
     session_id: &str,
     node_id: &str,
-    agent_name: &str,
+    entity_name: &str,
     now: &str,
 ) -> Result<()> {
-    let item_index = next_agent_context_item_index(conn, session_id, node_id, agent_name)?;
+    let item_index = next_entity_context_item_index(conn, session_id, node_id, entity_name)?;
     conn.execute(
         r#"
-        INSERT INTO agent_context_items (
+        INSERT INTO entity_context_items (
             session_id,
             node_id,
-            agent_name,
+            entity_name,
             item_index,
             item_kind,
             created_at
         ) VALUES (?1, ?2, ?3, ?4, 'rollback_latest_input', ?5)
         "#,
-        params![session_id, node_id, agent_name, item_index, now],
+        params![session_id, node_id, entity_name, item_index, now],
     )
-    .context("failed to insert agent context rollback")?;
+    .context("failed to insert entity context rollback")?;
     Ok(())
 }
 
-fn next_agent_context_item_index(
+fn next_entity_context_item_index(
     conn: &Connection,
     session_id: &str,
     node_id: &str,
-    agent_name: &str,
+    entity_name: &str,
 ) -> Result<i64> {
     conn.query_row(
         r#"
         SELECT COALESCE(MAX(item_index), 0) + 1
-        FROM agent_context_items
+        FROM entity_context_items
         WHERE session_id = ?1
             AND node_id = ?2
-            AND agent_name = ?3
+            AND entity_name = ?3
         "#,
-        params![session_id, node_id, agent_name],
+        params![session_id, node_id, entity_name],
         |row| row.get(0),
     )
-    .context("failed to compute next agent context item index")
+    .context("failed to compute next entity context item index")
 }
 
 fn context_messages_for_storage(context: &AgentContext) -> Vec<Message> {
@@ -1545,7 +1631,7 @@ fn message_from_role_and_content(
             "tool messages require tool_call_id and cannot be restored from role/content"
                 .to_string(),
         ),
-        other => Err(format!("unknown agent context message role: {other}")),
+        other => Err(format!("unknown entity context message role: {other}")),
     }
 }
 
@@ -1676,7 +1762,8 @@ mod tests {
                         'game_session_archives',
                         'flow_turns',
                         'player_inputs',
-                        'agent_contexts'
+                        'agent_contexts',
+                        'agent_context_items'
                     )
                 "#,
                 [],
@@ -1697,7 +1784,7 @@ mod tests {
                         'story_edges',
                         'story_edge_actions',
                         'flow_outputs',
-                        'agent_context_items'
+                        'entity_context_items'
                     )
                 "#,
                 [],
@@ -1739,13 +1826,13 @@ mod tests {
             .expect("story_edge_actions columns should query")
             .collect::<std::result::Result<Vec<_>, _>>()
             .expect("story_edge_actions columns should read");
-        let agent_context_item_columns = conn
-            .prepare("PRAGMA table_info(agent_context_items)")
-            .expect("agent_context_items columns should be inspectable")
+        let entity_context_item_columns = conn
+            .prepare("PRAGMA table_info(entity_context_items)")
+            .expect("entity_context_items columns should be inspectable")
             .query_map([], |row| row.get::<_, String>(1))
-            .expect("agent_context_items columns should query")
+            .expect("entity_context_items columns should query")
             .collect::<std::result::Result<Vec<_>, _>>()
-            .expect("agent_context_items columns should read");
+            .expect("entity_context_items columns should read");
 
         assert_eq!(summary.totals.events, 1);
         assert_eq!(metadata.world_profile, "world");
@@ -1765,13 +1852,15 @@ mod tests {
         assert!(!story_edge_columns.contains(&"action_type".to_string()));
         assert!(story_edge_action_columns.contains(&"character_name".to_string()));
         assert!(story_edge_action_columns.contains(&"player_id".to_string()));
+        assert!(entity_context_item_columns.contains(&"entity_name".to_string()));
+        assert!(entity_context_item_columns.contains(&"message_role".to_string()));
+        assert!(entity_context_item_columns.contains(&"content".to_string()));
+        assert!(!entity_context_item_columns.contains(&"agent_name".to_string()));
+        assert!(!entity_context_item_columns.contains(&"message_json".to_string()));
         assert!(story_edge_action_columns.contains(&"action_type".to_string()));
         assert!(story_edge_action_columns.contains(&"title".to_string()));
         assert!(story_edge_action_columns.contains(&"action".to_string()));
         assert!(story_edge_action_columns.contains(&"motivation_and_risk".to_string()));
-        assert!(agent_context_item_columns.contains(&"message_role".to_string()));
-        assert!(agent_context_item_columns.contains(&"content".to_string()));
-        assert!(!agent_context_item_columns.contains(&"message_json".to_string()));
     }
 
     #[tokio::test]
@@ -1950,7 +2039,7 @@ mod tests {
             .expect("story edge actions should load");
 
         assert_eq!(edge_count, 1);
-        assert_eq!(stored_action.0, DEFAULT_PLAYER_CHARACTER_NAME);
+        assert_eq!(stored_action.0, "hero");
         assert_eq!(stored_action.1, None);
         assert_eq!(stored_action.2, "selected_option");
         assert_eq!(stored_action.3, choice.option.title);
@@ -1989,25 +2078,26 @@ mod tests {
         .expect("story edge should save");
 
         let conn = Connection::open(db_path).expect("sqlite db should open");
-        let stored_action: (String, String, String) = conn
+        let stored_action: (String, String, String, String) = conn
             .query_row(
                 r#"
-                SELECT action_type, title, action
+                SELECT character_name, action_type, title, action
                 FROM story_edge_actions
                 WHERE session_id = ?1
                 "#,
                 params!["session-free-text-edge"],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .expect("story edge action should be stored");
 
-        assert_eq!(stored_action.0, "free_text");
-        assert_eq!(stored_action.1, "");
-        assert_eq!(stored_action.2, "检查密室暗门");
+        assert_eq!(stored_action.0, "hero");
+        assert_eq!(stored_action.1, "free_text");
+        assert_eq!(stored_action.2, "");
+        assert_eq!(stored_action.3, "检查密室暗门");
     }
 
     #[tokio::test]
-    async fn session_flow_turn_and_agent_context_tables_round_trip() {
+    async fn session_flow_turn_and_entity_context_tables_round_trip() {
         let repo = test_repo();
         repo.save_session_created(&SessionCreated {
             session_id: "session-db".to_string(),
@@ -2055,36 +2145,36 @@ mod tests {
         assert_eq!(metadata.phase, TurnPhase::Ended);
         assert!(metadata.flow_end);
 
-        repo.save_agent_context_item(&AgentContextItemAppended {
+        repo.save_entity_context_item(&EntityContextItemAppended {
             session_id: "session-db".to_string(),
             round: 1,
-            agent_name: "UpperNarrator".to_string(),
+            entity_name: "UpperNarrator".to_string(),
             message: Message::user("latest context"),
         })
         .await
-        .expect("agent context item should save");
-        repo.save_agent_context_item(&AgentContextItemAppended {
+        .expect("entity context item should save");
+        repo.save_entity_context_item(&EntityContextItemAppended {
             session_id: "session-db".to_string(),
             round: 1,
-            agent_name: "UpperNarrator".to_string(),
+            entity_name: "UpperNarrator".to_string(),
             message: Message::assistant("discarded response"),
         })
         .await
-        .expect("assistant context item should save");
-        repo.save_agent_context_rollback(&AgentContextRollback {
+        .expect("assistant entity context item should save");
+        repo.save_entity_context_rollback(&EntityContextRollback {
             session_id: "session-db".to_string(),
             round: 1,
-            agent_name: "UpperNarrator".to_string(),
-            policy: AgentContextRollbackPolicy::LatestInput,
+            entity_name: "UpperNarrator".to_string(),
+            policy: EntityContextRollbackPolicy::LatestInput,
         })
         .await
-        .expect("agent context rollback should save");
+        .expect("entity context rollback should save");
         let contexts = repo
-            .load_agent_contexts("session-db")
+            .load_entity_contexts("session-db")
             .await
-            .expect("agent contexts should load");
+            .expect("entity contexts should load");
         assert_eq!(contexts.len(), 1);
-        assert_eq!(contexts[0].agent_name, "UpperNarrator");
+        assert_eq!(contexts[0].entity_name, "UpperNarrator");
         assert!(contexts[0].context.conversation().is_empty());
 
         repo.save_player_input(&PlayerInput {

@@ -45,7 +45,7 @@ export function planChoiceSubmission({
           ...action,
           character_name: action.character_name?.trim() || '玩家角色',
           player_id: action.player_id?.trim() || undefined,
-          title: action.title?.trim() || undefined,
+          title: useObsession ? undefined : action.title?.trim() || undefined,
           action: action.action.trim(),
           motivation_and_risk: action.motivation_and_risk?.trim() || undefined,
         };
@@ -76,9 +76,7 @@ export function planChoiceSubmission({
     input,
     activeRound,
     nextRound,
-    selectedChoiceText: useObsession
-      ? `${submission.displayText} [执念]`
-      : submission.displayText,
+    selectedChoiceText: useObsession ? '[执念]' : submission.displayText,
     previousRoundState: roundStates[activeRound],
     previousNextRoundState: roundStates[nextRound],
   };
