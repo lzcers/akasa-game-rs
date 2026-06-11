@@ -106,8 +106,8 @@ CREATE INDEX IF NOT EXISTS idx_story_edge_actions_character_name
 ON story_edge_actions(session_id, character_name);
 "#;
 
-const CREATE_FLOW_OUTPUTS_TABLE_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS flow_outputs (
+const CREATE_ENTITY_FLOW_OUTPUTS_TABLE_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS entity_flow_outputs (
     session_id TEXT NOT NULL,
     node_id TEXT NOT NULL,
     stage TEXT NOT NULL,
@@ -119,13 +119,14 @@ CREATE TABLE IF NOT EXISTS flow_outputs (
     PRIMARY KEY (session_id, node_id, stage, entity_name, output_type)
 );
 
-CREATE INDEX IF NOT EXISTS idx_flow_outputs_node
-ON flow_outputs(session_id, node_id);
+CREATE INDEX IF NOT EXISTS idx_entity_flow_outputs_node
+ON entity_flow_outputs(session_id, node_id);
 "#;
 
 const DROP_OBSOLETE_CONTEXT_TABLES_SQL: &str = r#"
 DROP TABLE IF EXISTS agent_contexts;
 DROP TABLE IF EXISTS agent_context_items;
+DROP TABLE IF EXISTS flow_outputs;
 "#;
 
 const CREATE_ENTITY_CONTEXT_ITEMS_TABLE_SQL: &str = r#"
@@ -164,8 +165,8 @@ pub(super) fn init(conn: &Connection) -> Result<()> {
         .context("failed to initialize story edges schema")?;
     conn.execute_batch(CREATE_STORY_EDGE_ACTIONS_TABLE_SQL)
         .context("failed to initialize story edge actions schema")?;
-    conn.execute_batch(CREATE_FLOW_OUTPUTS_TABLE_SQL)
-        .context("failed to initialize flow outputs schema")?;
+    conn.execute_batch(CREATE_ENTITY_FLOW_OUTPUTS_TABLE_SQL)
+        .context("failed to initialize entity flow outputs schema")?;
     conn.execute_batch(CREATE_ENTITY_CONTEXT_ITEMS_TABLE_SQL)
         .context("failed to initialize entity context items schema")
 }
@@ -179,6 +180,7 @@ fn reset_obsolete_sessions_schema(conn: &Connection) -> Result<()> {
             r#"
             DROP TABLE IF EXISTS entity_context_items;
             DROP TABLE IF EXISTS agent_context_items;
+            DROP TABLE IF EXISTS entity_flow_outputs;
             DROP TABLE IF EXISTS flow_outputs;
             DROP TABLE IF EXISTS story_edge_actions;
             DROP TABLE IF EXISTS story_edges;

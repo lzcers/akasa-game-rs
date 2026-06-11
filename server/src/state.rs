@@ -39,12 +39,17 @@ use crate::{
 
 #[derive(Clone)]
 pub struct AppState {
+    // `engine` 是创建/恢复运行时会话的入口；`sessions` 只保存内存中的
+    // 热/冷状态，持久化真相以 `session_archive_repo` 为准。
+    engine: AkashicEngine,
     sessions: Arc<Mutex<HashMap<String, SessionRecord>>>,
+    session_archive_repo: SessionArchiveRepository,
+    // 冷会话恢复会读库并重建 engine，不能长时间占用 `sessions` 锁；
+    // 这把锁只用来串行化 Cold -> Hot 的恢复过程。
     restore_lock: Arc<Mutex<()>>,
     analytics_repo: AnalyticsRepository,
-    session_archive_repo: SessionArchiveRepository,
+    // 从环境变量/.env 配置的反馈邮件发送器；未配置时提交反馈会直接失败。
     feedback_mailer: FeedbackMailer,
-    engine: AkashicEngine,
     lifecycle_config: SessionLifecycleConfig,
 }
 
@@ -58,10 +63,15 @@ struct SessionRecord {
 }
 
 enum SessionSlot {
+    // engine 仍在内存中，可以接受控制命令并推送实时事件。
     Hot(HotSession),
+    // reaper 正在给热会话做快照并关闭 engine。读取方会短暂等待，
+    // 避免撞上半关闭状态。
     Cooling {
         _started_at: DateTime<Utc>,
     },
+    // runtime 已被驱逐；世界状态/历史仍可从数据库读取，控制或流式请求
+    // 会通过 `ensure_hot_session` 恢复成 Hot。
     Cold {
         _saved_at: DateTime<Utc>,
         _summary: Option<String>,
@@ -350,6 +360,8 @@ impl AppState {
         archive::validate_archive_payload(&payload).map_err(AppError::bad_request)?;
         let session_id = payload.session_id.clone();
         let payload_for_storage = payload.clone();
+        // 导入存档会先替换该 session 的全部持久化状态，避免旧的未来轮次
+        // 或旧 context 残留到新 runtime。
         self.persist_payload_database_state(&payload_for_storage)
             .await?;
         let engine = archive::load_archive_payload(&self.engine, payload)
@@ -427,6 +439,8 @@ impl AppState {
         let mut payload = self
             .archive_payload_for_session(source_session_id, None)
             .await?;
+        // 克隆会话本质是改写 archive 身份，再用改写后的 payload 同时重建
+        // 持久化状态和新的热 runtime。
         payload.session_id = clone_session_id.clone();
         payload.title = format!("{}（分支）", payload.title.trim());
         let payload_for_storage = payload.clone();
@@ -489,6 +503,7 @@ impl AppState {
         let hot = self.ensure_hot_session(session_id, true).await?;
         let live_events = hot.live_events.lock().await;
         let event_rx = hot.events_tx.subscribe();
+        // 先回放内存中的短历史，再订阅新事件；短暂断线时无需重新拉全量历史。
         let replayed_events = live_events
             .history
             .iter()
@@ -574,6 +589,8 @@ impl AppState {
         register_stream: bool,
     ) -> Result<HotSessionAccess, AppError> {
         loop {
+            // 先在 registry 锁内快速判定状态；真正的恢复会 await 读库和建
+            // engine，所以必须在释放 `sessions` 锁之后做。
             let cold_session_id = {
                 let mut sessions = self.sessions.lock().await;
                 let record = sessions
@@ -601,11 +618,15 @@ impl AppState {
             };
 
             let Some(cold_session_id) = cold_session_id else {
+                // reaper 正在 Cooling。等它回到 Hot（冷却失败）或落到 Cold
+                //（冷却成功）后再继续。
                 tokio::time::sleep(Duration::from_millis(25)).await;
                 continue;
             };
 
             let _restore_guard = self.restore_lock.lock().await;
+            // 等恢复锁期间，可能已有别的请求把同一个会话恢复好了；这里做
+            // 二次检查，避免重复构造 engine 或重复增加 stream 计数。
             if let Some(access) = self
                 .hot_session_access_if_available(session_id, register_stream)
                 .await?
@@ -687,6 +708,8 @@ impl AppState {
         let mut payload = self
             .archive_payload_from_database(session_id, title)
             .await?;
+        // 数据库可能记录了生成中的中间阶段；导出/克隆需要稳定可玩的状态，
+        // 所以从完整历史里回退到最近完成的轮次。
         stabilize_archive_payload_from_history(&mut payload, title)
             .map_err(AppError::bad_request)?;
         Ok(payload)
@@ -851,6 +874,8 @@ impl AppState {
             let SessionSlot::Hot(_) = record.slot else {
                 continue;
             };
+            // 活跃 SSE 流会把会话钉在内存里；非稳定阶段也不驱逐，避免下次
+            // 控制请求从不可恢复的中间态继续。
             if record.active_streams > 0 || !is_evictable_phase(record.last_phase) {
                 continue;
             }
@@ -902,6 +927,8 @@ impl AppState {
             }
         };
 
+        // 快照和关闭 engine 都在 registry 锁外执行。任何一步失败，都把原来的
+        // hot runtime 放回去，保证调用方仍能继续使用当前会话。
         let payload = match self.archive_payload_for_session(session_id, None).await {
             Ok(payload) => payload,
             Err(error) => {
@@ -987,6 +1014,8 @@ impl Drop for LiveSessionLease {
     fn drop(&mut self) {
         let session_id = self.session_id.clone();
         let sessions = Arc::clone(&self.sessions);
+        // Drop 里不能 await，因此异步释放 stream pin；用 saturating_sub 防止
+        // 重复释放或竞态导致计数下溢。
         tokio::spawn(async move {
             let mut sessions = sessions.lock().await;
             if let Some(record) = sessions.get_mut(&session_id) {
@@ -1038,6 +1067,8 @@ fn build_hot_session(
     let events_tx_for_task = events_tx.clone();
     let live_events_for_task = Arc::clone(&live_events);
     let session_id_for_event_task = session_id.to_string();
+    // 这个后台任务把 engine 事件同时桥接到实时订阅者和归档数据库，避免请求
+    // 路径手动维护每一种 turn 事件的持久化细节。
     tokio::spawn(async move {
         loop {
             match event_rx.recv().await {
@@ -1099,6 +1130,8 @@ fn build_hot_session(
                         }
                         EngineEvent::FlowTurnUpdate(update) => {
                             let persisted_phase = persisted_phase_for_flow_turn_update(&update);
+                            // 生成中阶段对外仍展示上一轮已提交状态；只有等待玩家或
+                            // 轮次完成时，当前 round 才算可见/可恢复。
                             if let Err(error) = session_archive_repo
                                 .update_session_turn_state(
                                     &update.session_id,
@@ -1125,7 +1158,7 @@ fn build_hot_session(
                                 session_archive_repo.save_flow_turn_update(&update).await
                             {
                                 tracing::warn!(
-                                    "failed to persist flow turn output for {}: {:?}",
+                                    "failed to persist entity flow output for {}: {:?}",
                                     session_id_for_event_task,
                                     error
                                 );
@@ -1941,14 +1974,14 @@ mod tests {
             .query_row(
                 r#"
                 SELECT COUNT(*)
-                FROM flow_outputs
+                FROM entity_flow_outputs
                 WHERE session_id = ?1
                     AND node_id IN ('node-4', 'node-5')
                 "#,
                 params!["session-from-slot"],
                 |row| row.get(0),
             )
-            .expect("flow outputs should be queryable");
+            .expect("entity flow outputs should be queryable");
         let future_node_count: i64 = conn
             .query_row(
                 r#"
