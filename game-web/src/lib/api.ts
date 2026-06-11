@@ -48,6 +48,7 @@ export interface Choice {
 export interface RuntimeStateView {
   gameState: string;
   phase: RuntimePhase;
+  flowEnd: boolean;
   turnIndex: number;
   activeTurnId: number;
   currentLocation: string;
@@ -184,6 +185,7 @@ export interface GameSessionWorldStateData {
   generatedProfiles: GeneratedProfiles;
   status: string;
   phase: TurnPhase;
+  flowEnd: boolean;
   turnIndex: number;
   activeTurnId: number;
   worldState: SessionWorldState;

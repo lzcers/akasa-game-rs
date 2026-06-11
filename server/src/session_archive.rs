@@ -2,39 +2,19 @@ use agent::agent::Context as AgentContext;
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use story_engine::{
-    components::outcome::PlayerActionType,
-    resources::session_events::{AgentContextUpdate, FlowTurnError, PlayerInput, SessionCreated},
+    components::{
+        agent::AgentOutputType,
+        outcome::{PlayerActionType, ProtagonistOptions},
+        world_snapshot::WorldSnapshot,
+    },
+    resources::session_events::{
+        AgentContextUpdate, FlowTurnError, FlowTurnUpdate, PlayerInput, SessionCreated,
+    },
 };
 
 use crate::session_history::{RoundHistoryEntry, TurnPhase};
 
 use crate::database::AppDatabase;
-
-const CREATE_GAME_SESSION_ARCHIVES_TABLE_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS game_session_archives (
-    session_id TEXT PRIMARY KEY,
-    compressed_archive TEXT NOT NULL,
-    title TEXT,
-    phase TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    last_accessed_at TEXT NOT NULL
-);
-"#;
-
-const CREATE_SESSION_ROUNDS_TABLE_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS session_rounds (
-    session_id TEXT NOT NULL,
-    round INTEGER NOT NULL,
-    history_json TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (session_id, round)
-);
-
-CREATE INDEX IF NOT EXISTS idx_session_rounds_session_round
-ON session_rounds(session_id, round);
-"#;
 
 const CREATE_SESSIONS_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS sessions (
@@ -45,6 +25,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     phase TEXT NOT NULL,
     turn_index INTEGER NOT NULL,
     active_turn_id INTEGER NOT NULL,
+    flow_end INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     last_accessed_at TEXT NOT NULL
@@ -55,13 +36,11 @@ const CREATE_FLOW_TURNS_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS flow_turns (
     session_id TEXT NOT NULL,
     round INTEGER NOT NULL,
-    history_json TEXT NOT NULL,
-    completed_at TEXT,
-    ended_at TEXT,
-    error_json TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (session_id, round)
+    stage TEXT NOT NULL,
+    entity_name TEXT NOT NULL,
+    output_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    PRIMARY KEY (session_id, round, stage, entity_name, output_type)
 );
 
 CREATE INDEX IF NOT EXISTS idx_flow_turns_session_round
@@ -103,17 +82,6 @@ pub struct SessionArchiveRepository {
 }
 
 #[derive(Debug, Clone)]
-pub struct StoredSessionArchive {
-    pub session_id: String,
-    pub compressed_archive: String,
-    pub title: Option<String>,
-    pub phase: String,
-    pub created_at: String,
-    pub updated_at: String,
-    pub last_accessed_at: String,
-}
-
-#[derive(Debug, Clone)]
 pub struct StoredSessionMetadata {
     pub session_id: String,
     pub world_profile: String,
@@ -122,6 +90,7 @@ pub struct StoredSessionMetadata {
     pub phase: TurnPhase,
     pub turn_index: u64,
     pub active_turn_id: u64,
+    pub flow_end: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -169,14 +138,19 @@ impl SessionArchiveRepository {
                 phase,
                 turn_index,
                 active_turn_id,
+                flow_end,
                 created_at,
                 updated_at,
                 last_accessed_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, ?6, ?6, ?6)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, 0, ?6, ?6, ?6)
             ON CONFLICT(session_id) DO UPDATE SET
                 world_profile = excluded.world_profile,
                 protagonist_profile = excluded.protagonist_profile,
                 key_story_beats = excluded.key_story_beats,
+                phase = excluded.phase,
+                turn_index = excluded.turn_index,
+                active_turn_id = excluded.active_turn_id,
+                flow_end = excluded.flow_end,
                 updated_at = excluded.updated_at,
                 last_accessed_at = excluded.last_accessed_at
             "#,
@@ -217,10 +191,11 @@ impl SessionArchiveRepository {
                 phase,
                 turn_index,
                 active_turn_id,
+                flow_end,
                 created_at,
                 updated_at,
                 last_accessed_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?8)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?9)
             ON CONFLICT(session_id) DO UPDATE SET
                 world_profile = excluded.world_profile,
                 protagonist_profile = excluded.protagonist_profile,
@@ -228,6 +203,7 @@ impl SessionArchiveRepository {
                 phase = excluded.phase,
                 turn_index = excluded.turn_index,
                 active_turn_id = excluded.active_turn_id,
+                flow_end = excluded.flow_end,
                 updated_at = excluded.updated_at,
                 last_accessed_at = excluded.last_accessed_at
             "#,
@@ -239,6 +215,7 @@ impl SessionArchiveRepository {
                 serialize_phase(metadata.phase)?,
                 turn_index,
                 active_turn_id,
+                metadata.flow_end,
                 now,
             ],
         )
@@ -302,7 +279,8 @@ impl SessionArchiveRepository {
                 key_story_beats,
                 phase,
                 turn_index,
-                active_turn_id
+                active_turn_id,
+                flow_end
             FROM sessions
             WHERE session_id = ?1
             "#,
@@ -323,6 +301,7 @@ impl SessionArchiveRepository {
                     })?,
                     turn_index: row.get::<_, i64>(5)?.try_into().unwrap_or_default(),
                     active_turn_id: row.get::<_, i64>(6)?.try_into().unwrap_or_default(),
+                    flow_end: row.get(7)?,
                 })
             },
         )
@@ -475,18 +454,83 @@ impl SessionArchiveRepository {
             .context("failed to read player inputs")
     }
 
+    pub async fn replace_player_inputs_from_rounds(
+        &self,
+        session_id: &str,
+        rounds: &[RoundHistoryEntry],
+    ) -> Result<()> {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return Ok(());
+        }
+
+        let _guard = self.db.lock().await;
+        let mut conn = self.db.open_connection("player inputs")?;
+        init_schema(&conn)?;
+        let tx = conn
+            .transaction()
+            .context("failed to start player inputs replacement transaction")?;
+        tx.execute(
+            "DELETE FROM player_inputs WHERE session_id = ?1",
+            params![session_id],
+        )
+        .context("failed to clear existing player inputs")?;
+
+        for round in rounds {
+            let Some(action) = round
+                .committed_action
+                .as_deref()
+                .map(str::trim)
+                .filter(|action| !action.is_empty())
+            else {
+                continue;
+            };
+            let round_index =
+                i64::try_from(round.round).context("player input round exceeds SQLite range")?;
+            let action_type = if round
+                .choices
+                .iter()
+                .any(|choice| choice.option.action == action)
+            {
+                PlayerActionType::SelectedOption
+            } else {
+                PlayerActionType::FreeText
+            };
+            tx.execute(
+                r#"
+                INSERT INTO player_inputs (
+                    session_id,
+                    round,
+                    action_type,
+                    action,
+                    created_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5)
+                "#,
+                params![
+                    session_id,
+                    round_index,
+                    serialize_player_action_type(action_type)?,
+                    action,
+                    chrono::Utc::now().to_rfc3339(),
+                ],
+            )
+            .context("failed to insert archived player input")?;
+        }
+
+        tx.commit()
+            .context("failed to commit player inputs replacement")?;
+        Ok(())
+    }
+
     pub async fn record_flow_turn_completed(&self, session_id: &str, round: u64) -> Result<()> {
         self.update_session_turn_state(session_id, TurnPhase::TurnCompleted, round, round)
-            .await?;
-        self.set_flow_turn_timestamp(session_id, round, "completed_at")
             .await
     }
 
     pub async fn record_flow_turn_end(&self, session_id: &str, round: u64) -> Result<()> {
         self.update_session_turn_state(session_id, TurnPhase::Ended, round, round)
             .await?;
-        self.set_flow_turn_timestamp(session_id, round, "ended_at")
-            .await
+        self.mark_session_flow_end(session_id).await
     }
 
     pub async fn record_flow_turn_error(&self, error: &FlowTurnError) -> Result<()> {
@@ -496,8 +540,42 @@ impl SessionArchiveRepository {
             error.round,
             error.round,
         )
-        .await?;
-        let error_json = serde_json::to_string(error).context("failed to serialize flow error")?;
+        .await
+    }
+
+    async fn mark_session_flow_end(&self, session_id: &str) -> Result<()> {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return Ok(());
+        }
+
+        let _guard = self.db.lock().await;
+        let conn = self.db.open_connection("sessions")?;
+        init_schema(&conn)?;
+        conn.execute(
+            r#"
+            UPDATE sessions
+            SET flow_end = 1,
+                updated_at = ?2,
+                last_accessed_at = ?2
+            WHERE session_id = ?1
+            "#,
+            params![session_id, chrono::Utc::now().to_rfc3339()],
+        )
+        .context("failed to mark session flow end")?;
+        Ok(())
+    }
+
+    pub async fn save_flow_turn_update(&self, update: &FlowTurnUpdate) -> Result<()> {
+        let session_id = update.session_id.trim();
+        let entity_name = update.entity_name.trim();
+        if session_id.is_empty() || entity_name.is_empty() {
+            return Ok(());
+        }
+
+        let round = i64::try_from(update.round).context("flow turn round exceeds SQLite range")?;
+        let stage = serialize_phase(update.stage)?;
+        let output_type = serialize_agent_output_type(update.output_type)?;
         let _guard = self.db.lock().await;
         let conn = self.db.open_connection("flow turns")?;
         init_schema(&conn)?;
@@ -506,155 +584,28 @@ impl SessionArchiveRepository {
             INSERT INTO flow_turns (
                 session_id,
                 round,
-                history_json,
-                error_json,
-                created_at,
-                updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?5)
-            ON CONFLICT(session_id, round) DO UPDATE SET
-                error_json = excluded.error_json,
-                updated_at = excluded.updated_at
+                stage,
+                entity_name,
+                output_type,
+                content
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(session_id, round, stage, entity_name, output_type) DO UPDATE SET
+                content = excluded.content
             "#,
             params![
-                error.session_id,
-                i64::try_from(error.round).context("flow turn round exceeds SQLite range")?,
-                serde_json::to_string(&RoundHistoryEntry {
-                    round: error.round,
-                    ..RoundHistoryEntry::default()
-                })
-                .context("failed to serialize empty flow turn history")?,
-                error_json,
-                chrono::Utc::now().to_rfc3339(),
+                session_id,
+                round,
+                stage,
+                entity_name,
+                output_type,
+                update.content
             ],
         )
-        .context("failed to record flow turn error")?;
+        .context("failed to upsert flow turn output")?;
         Ok(())
-    }
-
-    async fn set_flow_turn_timestamp(
-        &self,
-        session_id: &str,
-        round: u64,
-        column: &str,
-    ) -> Result<()> {
-        let column = match column {
-            "completed_at" => "completed_at",
-            "ended_at" => "ended_at",
-            _ => return Ok(()),
-        };
-        let session_id = session_id.trim();
-        if session_id.is_empty() {
-            return Ok(());
-        }
-
-        let round = i64::try_from(round).context("flow turn round exceeds SQLite range")?;
-        let now = chrono::Utc::now().to_rfc3339();
-        let empty_history = serde_json::to_string(&RoundHistoryEntry {
-            round: round.try_into().unwrap_or_default(),
-            ..RoundHistoryEntry::default()
-        })
-        .context("failed to serialize empty flow turn history")?;
-        let _guard = self.db.lock().await;
-        let conn = self.db.open_connection("flow turns")?;
-        init_schema(&conn)?;
-        conn.execute(
-            &format!(
-                r#"
-                INSERT INTO flow_turns (
-                    session_id,
-                    round,
-                    history_json,
-                    {column},
-                    created_at,
-                    updated_at
-                ) VALUES (?1, ?2, ?3, ?4, ?4, ?4)
-                ON CONFLICT(session_id, round) DO UPDATE SET
-                    {column} = excluded.{column},
-                    updated_at = excluded.updated_at
-                "#
-            ),
-            params![session_id, round, empty_history, now],
-        )
-        .context("failed to set flow turn timestamp")?;
-        Ok(())
-    }
-
-    pub async fn save_archive(&self, archive: StoredSessionArchive) -> Result<()> {
-        let _guard = self.db.lock().await;
-        let conn = self.db.open_connection("session archive")?;
-        init_schema(&conn)?;
-        conn.execute(
-            r#"
-            INSERT INTO game_session_archives (
-                session_id,
-                compressed_archive,
-                title,
-                phase,
-                created_at,
-                updated_at,
-                last_accessed_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            ON CONFLICT(session_id) DO UPDATE SET
-                compressed_archive = excluded.compressed_archive,
-                title = excluded.title,
-                phase = excluded.phase,
-                updated_at = excluded.updated_at,
-                last_accessed_at = excluded.last_accessed_at
-            "#,
-            params![
-                archive.session_id,
-                archive.compressed_archive,
-                archive.title,
-                archive.phase,
-                archive.created_at,
-                archive.updated_at,
-                archive.last_accessed_at,
-            ],
-        )
-        .context("failed to upsert game session archive")?;
-
-        Ok(())
-    }
-
-    pub async fn load_archive(&self, session_id: &str) -> Result<Option<StoredSessionArchive>> {
-        let _guard = self.db.lock().await;
-        let conn = self.db.open_connection("session archive")?;
-        init_schema(&conn)?;
-        conn.query_row(
-            r#"
-            SELECT
-                session_id,
-                compressed_archive,
-                title,
-                phase,
-                created_at,
-                updated_at,
-                last_accessed_at
-            FROM game_session_archives
-            WHERE session_id = ?1
-            "#,
-            params![session_id],
-            |row| {
-                Ok(StoredSessionArchive {
-                    session_id: row.get(0)?,
-                    compressed_archive: row.get(1)?,
-                    title: row.get(2)?,
-                    phase: row.get(3)?,
-                    created_at: row.get(4)?,
-                    updated_at: row.get(5)?,
-                    last_accessed_at: row.get(6)?,
-                })
-            },
-        )
-        .optional()
-        .context("failed to load game session archive")
     }
 
     pub async fn save_rounds(&self, session_id: &str, rounds: &[RoundHistoryEntry]) -> Result<()> {
-        if rounds.is_empty() {
-            return Ok(());
-        }
-
         let session_id = session_id.trim();
         if session_id.is_empty() {
             return Ok(());
@@ -666,49 +617,38 @@ impl SessionArchiveRepository {
         let tx = conn
             .transaction()
             .context("failed to start session rounds transaction")?;
-        let now = chrono::Utc::now().to_rfc3339();
 
         for round in rounds {
             let round_index =
                 i64::try_from(round.round).context("session round exceeds SQLite INTEGER range")?;
-            let round = load_flow_turn_in_transaction(&tx, session_id, round_index)?
-                .or(load_round_in_transaction(&tx, session_id, round_index)?)
-                .map(|existing| merge_round_history(existing, round.clone()))
-                .unwrap_or_else(|| round.clone());
-            let history_json =
-                serde_json::to_string(&round).context("failed to serialize session round")?;
             tx.execute(
-                r#"
-                INSERT INTO flow_turns (
-                    session_id,
-                    round,
-                    history_json,
-                    created_at,
-                    updated_at
-                ) VALUES (?1, ?2, ?3, ?4, ?4)
-                ON CONFLICT(session_id, round) DO UPDATE SET
-                    history_json = excluded.history_json,
-                    updated_at = excluded.updated_at
-                "#,
-                params![session_id, round_index, history_json, now],
+                "DELETE FROM flow_turns WHERE session_id = ?1 AND round = ?2",
+                params![session_id, round_index],
             )
-            .context("failed to upsert flow turn")?;
-            tx.execute(
-                r#"
-                INSERT INTO session_rounds (
-                    session_id,
-                    round,
-                    history_json,
-                    created_at,
-                    updated_at
-                ) VALUES (?1, ?2, ?3, ?4, ?4)
-                ON CONFLICT(session_id, round) DO UPDATE SET
-                    history_json = excluded.history_json,
-                    updated_at = excluded.updated_at
-                "#,
-                params![session_id, round_index, history_json, now],
-            )
-            .context("failed to upsert session round")?;
+            .context("failed to clear existing flow turn outputs for round")?;
+            for output in flow_outputs_from_round(session_id, round)? {
+                tx.execute(
+                    r#"
+                    INSERT INTO flow_turns (
+                        session_id,
+                        round,
+                        stage,
+                        entity_name,
+                        output_type,
+                        content
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                    "#,
+                    params![
+                        output.session_id,
+                        output.round,
+                        output.stage,
+                        output.entity_name,
+                        output.output_type,
+                        output.content
+                    ],
+                )
+                .context("failed to insert archived flow turn output")?;
+            }
         }
 
         tx.commit()
@@ -720,11 +660,7 @@ impl SessionArchiveRepository {
         let _guard = self.db.lock().await;
         let conn = self.db.open_connection("session rounds")?;
         init_schema(&conn)?;
-        let flow_turns = load_rounds_from_table(&conn, "flow_turns", session_id)?;
-        if !flow_turns.is_empty() {
-            return Ok(flow_turns);
-        }
-        load_rounds_from_table(&conn, "session_rounds", session_id)
+        load_rounds_from_outputs(&conn, session_id)
     }
 
     pub async fn load_round_page(
@@ -736,101 +672,99 @@ impl SessionArchiveRepository {
         let _guard = self.db.lock().await;
         let conn = self.db.open_connection("session rounds")?;
         init_schema(&conn)?;
-        let page =
-            load_round_page_from_table(&conn, "flow_turns", session_id, before_round, limit)?;
-        if !page.rounds.is_empty() || !has_legacy_rounds(&conn, session_id)? {
-            return Ok(page);
-        }
-        load_round_page_from_table(&conn, "session_rounds", session_id, before_round, limit)
+        load_round_page_from_outputs(&conn, session_id, before_round, limit)
     }
 }
 
-fn load_rounds_from_table(
-    conn: &Connection,
-    table_name: &str,
-    session_id: &str,
-) -> Result<Vec<RoundHistoryEntry>> {
-    let mut stmt = conn
-        .prepare(&format!(
-            r#"
-                SELECT history_json
-                FROM {table_name}
-                WHERE session_id = ?1
-                ORDER BY round ASC
-                "#
-        ))
-        .context("failed to prepare session rounds load")?;
-    let rows = stmt
-        .query_map(params![session_id], |row| row.get::<_, String>(0))
-        .context("failed to query session rounds")?;
-
-    rows.map(|row| parse_round_json(&row?))
-        .collect::<Result<Vec<_>>>()
+#[derive(Debug)]
+struct FlowOutputRow {
+    session_id: String,
+    round: i64,
+    stage: String,
+    entity_name: String,
+    output_type: String,
+    content: String,
 }
 
-fn load_round_page_from_table(
+fn flow_outputs_from_round(
+    session_id: &str,
+    round: &RoundHistoryEntry,
+) -> Result<Vec<FlowOutputRow>> {
+    let round_index =
+        i64::try_from(round.round).context("session round exceeds SQLite INTEGER range")?;
+    let mut outputs = Vec::new();
+
+    if let Some(world_snapshot) = &round.world_snapshot {
+        outputs.push(FlowOutputRow {
+            session_id: session_id.to_string(),
+            round: round_index,
+            stage: serialize_phase(TurnPhase::Simulation)?,
+            entity_name: "FateWeaver".to_string(),
+            output_type: serialize_agent_output_type(AgentOutputType::Json)?,
+            content: serde_json::to_string(world_snapshot)
+                .context("failed to serialize world snapshot output")?,
+        });
+    }
+
+    if let Some(narration) = round
+        .narration_text
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        outputs.push(FlowOutputRow {
+            session_id: session_id.to_string(),
+            round: round_index,
+            stage: serialize_phase(TurnPhase::Application)?,
+            entity_name: "UpperNarrator".to_string(),
+            output_type: serialize_agent_output_type(AgentOutputType::Text)?,
+            content: narration.to_string(),
+        });
+    }
+
+    if !round.choices.is_empty() {
+        let options = ProtagonistOptions {
+            options: round
+                .choices
+                .iter()
+                .map(|choice| choice.option.clone())
+                .collect(),
+        };
+        outputs.push(FlowOutputRow {
+            session_id: session_id.to_string(),
+            round: round_index,
+            stage: serialize_phase(TurnPhase::Application)?,
+            entity_name: "Protagonist".to_string(),
+            output_type: serialize_agent_output_type(AgentOutputType::Json)?,
+            content: serde_json::to_string(&options)
+                .context("failed to serialize protagonist options output")?,
+        });
+    }
+
+    Ok(outputs)
+}
+
+fn load_rounds_from_outputs(conn: &Connection, session_id: &str) -> Result<Vec<RoundHistoryEntry>> {
+    let round_numbers = select_round_numbers(conn, session_id, None, None)?;
+    load_rounds_by_numbers(conn, session_id, &round_numbers)
+}
+
+fn load_round_page_from_outputs(
     conn: &Connection,
-    table_name: &str,
     session_id: &str,
     before_round: Option<u64>,
     limit: usize,
 ) -> Result<StoredSessionRoundPage> {
     let limit = limit.max(1);
-    let fetch_limit = i64::try_from(limit + 1).context("session round page limit too large")?;
-    let before_round = before_round
-        .map(i64::try_from)
-        .transpose()
-        .context("before round exceeds SQLite INTEGER range")?;
-    let mut round_json = match before_round {
-        Some(before_round) => {
-            let mut stmt = conn
-                .prepare(&format!(
-                    r#"
-                        SELECT history_json
-                        FROM {table_name}
-                        WHERE session_id = ?1 AND round < ?2
-                        ORDER BY round DESC
-                        LIMIT ?3
-                        "#
-                ))
-                .context("failed to prepare older session rounds page")?;
-            stmt.query_map(params![session_id, before_round, fetch_limit], |row| {
-                row.get::<_, String>(0)
-            })
-            .context("failed to query older session rounds page")?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .context("failed to read older session rounds page")?
-        }
-        None => {
-            let mut stmt = conn
-                .prepare(&format!(
-                    r#"
-                        SELECT history_json
-                        FROM {table_name}
-                        WHERE session_id = ?1
-                        ORDER BY round DESC
-                        LIMIT ?2
-                        "#
-                ))
-                .context("failed to prepare latest session rounds page")?;
-            stmt.query_map(params![session_id, fetch_limit], |row| {
-                row.get::<_, String>(0)
-            })
-            .context("failed to query latest session rounds page")?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .context("failed to read latest session rounds page")?
-        }
-    };
-
-    let has_more = round_json.len() > limit;
+    let fetch_limit = limit + 1;
+    let mut round_numbers =
+        select_round_numbers(conn, session_id, before_round, Some(fetch_limit))?;
+    let has_more = round_numbers.len() > limit;
     if has_more {
-        round_json.truncate(limit);
+        round_numbers.truncate(limit);
     }
-    let mut rounds = round_json
-        .into_iter()
-        .map(|json| parse_round_json(&json))
-        .collect::<Result<Vec<_>>>()?;
-    rounds.reverse();
+    round_numbers.reverse();
+    let rounds = load_rounds_by_numbers(conn, session_id, &round_numbers)?;
     let next_before_round = has_more.then(|| {
         rounds
             .first()
@@ -845,11 +779,191 @@ fn load_round_page_from_table(
     })
 }
 
+fn select_round_numbers(
+    conn: &Connection,
+    session_id: &str,
+    before_round: Option<u64>,
+    limit: Option<usize>,
+) -> Result<Vec<u64>> {
+    let before_round = before_round
+        .map(i64::try_from)
+        .transpose()
+        .context("before round exceeds SQLite INTEGER range")?;
+    let limit = limit
+        .map(i64::try_from)
+        .transpose()
+        .context("session round page limit too large")?;
+
+    let mut rounds = match (before_round, limit) {
+        (Some(before_round), Some(limit)) => {
+            let mut stmt = conn
+                .prepare(
+                    r#"
+                    SELECT DISTINCT round
+                    FROM flow_turns
+                    WHERE session_id = ?1 AND round < ?2
+                    ORDER BY round DESC
+                    LIMIT ?3
+                    "#,
+                )
+                .context("failed to prepare older flow turn round query")?;
+            stmt.query_map(params![session_id, before_round, limit], |row| {
+                row.get::<_, i64>(0)
+            })
+            .context("failed to query older flow turn rounds")?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .context("failed to read older flow turn rounds")?
+        }
+        (Some(before_round), None) => {
+            let mut stmt = conn
+                .prepare(
+                    r#"
+                    SELECT DISTINCT round
+                    FROM flow_turns
+                    WHERE session_id = ?1 AND round < ?2
+                    ORDER BY round DESC
+                    "#,
+                )
+                .context("failed to prepare bounded flow turn round query")?;
+            stmt.query_map(params![session_id, before_round], |row| {
+                row.get::<_, i64>(0)
+            })
+            .context("failed to query bounded flow turn rounds")?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .context("failed to read bounded flow turn rounds")?
+        }
+        (None, Some(limit)) => {
+            let mut stmt = conn
+                .prepare(
+                    r#"
+                    SELECT DISTINCT round
+                    FROM flow_turns
+                    WHERE session_id = ?1
+                    ORDER BY round DESC
+                    LIMIT ?2
+                    "#,
+                )
+                .context("failed to prepare latest flow turn round query")?;
+            stmt.query_map(params![session_id, limit], |row| row.get::<_, i64>(0))
+                .context("failed to query latest flow turn rounds")?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .context("failed to read latest flow turn rounds")?
+        }
+        (None, None) => {
+            let mut stmt = conn
+                .prepare(
+                    r#"
+                    SELECT DISTINCT round
+                    FROM flow_turns
+                    WHERE session_id = ?1
+                    ORDER BY round ASC
+                    "#,
+                )
+                .context("failed to prepare flow turn round query")?;
+            stmt.query_map(params![session_id], |row| row.get::<_, i64>(0))
+                .context("failed to query flow turn rounds")?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .context("failed to read flow turn rounds")?
+        }
+    };
+
+    if before_round.is_some() || limit.is_some() {
+        rounds.retain(|round| *round >= 0);
+    }
+
+    rounds
+        .into_iter()
+        .map(|round| round.try_into().context("flow turn round is negative"))
+        .collect()
+}
+
+fn load_rounds_by_numbers(
+    conn: &Connection,
+    session_id: &str,
+    round_numbers: &[u64],
+) -> Result<Vec<RoundHistoryEntry>> {
+    round_numbers
+        .iter()
+        .map(|round| load_round_by_number(conn, session_id, *round))
+        .collect()
+}
+
+fn load_round_by_number(
+    conn: &Connection,
+    session_id: &str,
+    round: u64,
+) -> Result<RoundHistoryEntry> {
+    let round_index = i64::try_from(round).context("flow turn round exceeds SQLite range")?;
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT stage, entity_name, output_type, content
+            FROM flow_turns
+            WHERE session_id = ?1 AND round = ?2
+            ORDER BY
+                CASE stage
+                    WHEN 'simulation' THEN 0
+                    WHEN 'application' THEN 1
+                    ELSE 2
+                END,
+                entity_name ASC,
+                output_type ASC
+            "#,
+        )
+        .context("failed to prepare flow turn output query")?;
+    let rows = stmt
+        .query_map(params![session_id, round_index], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .context("failed to query flow turn outputs")?;
+    let mut entry = RoundHistoryEntry {
+        round,
+        ..RoundHistoryEntry::default()
+    };
+    for row in rows {
+        let (stage, _entity_name, output_type, content) =
+            row.context("failed to read flow turn output")?;
+        let stage = deserialize_phase(&stage).map_err(invalid_flow_turn_value)?;
+        let output_type =
+            deserialize_agent_output_type(&output_type).map_err(invalid_flow_turn_value)?;
+        apply_flow_turn_output(&mut entry, stage, output_type, &content)?;
+    }
+
+    Ok(entry)
+}
+
+fn apply_flow_turn_output(
+    entry: &mut RoundHistoryEntry,
+    stage: TurnPhase,
+    output_type: AgentOutputType,
+    content: &str,
+) -> Result<()> {
+    match (stage, output_type) {
+        (TurnPhase::Simulation, AgentOutputType::Json) => {
+            entry.world_snapshot = Some(
+                serde_json::from_str::<WorldSnapshot>(content)
+                    .context("failed to deserialize world snapshot flow output")?,
+            );
+        }
+        (TurnPhase::Application, AgentOutputType::Text) => {
+            entry.narration_text = Some(content.to_string());
+        }
+        (TurnPhase::Application, AgentOutputType::Json) => {
+            let options = serde_json::from_str::<ProtagonistOptions>(content)
+                .context("failed to deserialize protagonist options flow output")?;
+            entry.choices = pending_choices_from_options(options);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn init_schema(conn: &Connection) -> Result<()> {
-    conn.execute_batch(CREATE_GAME_SESSION_ARCHIVES_TABLE_SQL)
-        .context("failed to initialize game session archive schema")?;
-    conn.execute_batch(CREATE_SESSION_ROUNDS_TABLE_SQL)
-        .context("failed to initialize session rounds schema")?;
     conn.execute_batch(CREATE_SESSIONS_TABLE_SQL)
         .context("failed to initialize sessions schema")?;
     conn.execute_batch(CREATE_FLOW_TURNS_TABLE_SQL)
@@ -860,67 +974,6 @@ fn init_schema(conn: &Connection) -> Result<()> {
         .context("failed to initialize player inputs schema")
 }
 
-fn parse_round_json(json: &str) -> Result<RoundHistoryEntry> {
-    serde_json::from_str(json).context("failed to deserialize session round")
-}
-
-fn load_round_in_transaction(
-    tx: &rusqlite::Transaction<'_>,
-    session_id: &str,
-    round: i64,
-) -> Result<Option<RoundHistoryEntry>> {
-    let json = tx
-        .query_row(
-            r#"
-            SELECT history_json
-            FROM session_rounds
-            WHERE session_id = ?1 AND round = ?2
-            "#,
-            params![session_id, round],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .context("failed to load existing session round")?;
-
-    json.as_deref().map(parse_round_json).transpose()
-}
-
-fn load_flow_turn_in_transaction(
-    tx: &rusqlite::Transaction<'_>,
-    session_id: &str,
-    round: i64,
-) -> Result<Option<RoundHistoryEntry>> {
-    let json = tx
-        .query_row(
-            r#"
-            SELECT history_json
-            FROM flow_turns
-            WHERE session_id = ?1 AND round = ?2
-            "#,
-            params![session_id, round],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .context("failed to load existing flow turn")?;
-
-    json.as_deref().map(parse_round_json).transpose()
-}
-
-fn has_legacy_rounds(conn: &Connection, session_id: &str) -> Result<bool> {
-    let count: i64 = conn
-        .query_row(
-            r#"
-            SELECT COUNT(*)
-            FROM session_rounds
-            WHERE session_id = ?1
-            "#,
-            params![session_id],
-            |row| row.get(0),
-        )
-        .context("failed to count legacy session rounds")?;
-    Ok(count > 0)
-}
-
 fn serialize_phase(phase: TurnPhase) -> Result<String> {
     serde_json::to_string(&phase)
         .map(|value| value.trim_matches('"').to_string())
@@ -928,6 +981,16 @@ fn serialize_phase(phase: TurnPhase) -> Result<String> {
 }
 
 fn deserialize_phase(value: &str) -> std::result::Result<TurnPhase, String> {
+    serde_json::from_str(&format!("{value:?}")).map_err(|err| err.to_string())
+}
+
+fn serialize_agent_output_type(output_type: AgentOutputType) -> Result<String> {
+    serde_json::to_string(&output_type)
+        .map(|value| value.trim_matches('"').to_string())
+        .context("failed to serialize agent output type")
+}
+
+fn deserialize_agent_output_type(value: &str) -> std::result::Result<AgentOutputType, String> {
     serde_json::from_str(&format!("{value:?}")).map_err(|err| err.to_string())
 }
 
@@ -941,31 +1004,24 @@ fn deserialize_player_action_type(value: &str) -> std::result::Result<PlayerActi
     serde_json::from_str(&format!("{value:?}")).map_err(|err| err.to_string())
 }
 
-fn merge_round_history(
-    existing: RoundHistoryEntry,
-    incoming: RoundHistoryEntry,
-) -> RoundHistoryEntry {
-    let narration_text = incoming
-        .narration_text
-        .filter(|text| !text.trim().is_empty())
-        .or(existing.narration_text);
-    let committed_action = incoming
-        .committed_action
-        .filter(|action| !action.trim().is_empty())
-        .or(existing.committed_action);
-    let choices = if incoming.choices.is_empty() {
-        existing.choices
-    } else {
-        incoming.choices
-    };
+fn pending_choices_from_options(
+    options: ProtagonistOptions,
+) -> Vec<story_engine::components::outcome::PendingProtagonistChoice> {
+    options
+        .options
+        .into_iter()
+        .enumerate()
+        .map(
+            |(index, option)| story_engine::components::outcome::PendingProtagonistChoice {
+                id: format!("choice-{}", index + 1),
+                option,
+            },
+        )
+        .collect()
+}
 
-    RoundHistoryEntry {
-        round: incoming.round,
-        world_snapshot: incoming.world_snapshot.or(existing.world_snapshot),
-        narration_text,
-        choices,
-        committed_action,
-    }
+fn invalid_flow_turn_value(error: String) -> anyhow::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, error).into()
 }
 
 #[cfg(test)]
@@ -978,48 +1034,14 @@ mod tests {
     use uuid::Uuid;
 
     #[tokio::test]
-    async fn save_archive_upserts_and_loads_by_session_id() {
-        let repo = test_repo();
-        let archive = StoredSessionArchive {
-            session_id: "session-one".to_string(),
-            compressed_archive: "first".to_string(),
-            title: Some("First".to_string()),
-            phase: "awaiting_player".to_string(),
-            created_at: "2026-06-10T00:00:00Z".to_string(),
-            updated_at: "2026-06-10T00:00:00Z".to_string(),
-            last_accessed_at: "2026-06-10T00:00:00Z".to_string(),
-        };
-
-        repo.save_archive(archive.clone())
-            .await
-            .expect("archive should save");
-        repo.save_archive(StoredSessionArchive {
-            compressed_archive: "second".to_string(),
-            updated_at: "2026-06-10T00:01:00Z".to_string(),
-            ..archive
-        })
-        .await
-        .expect("archive should update");
-
-        let loaded = repo
-            .load_archive("session-one")
-            .await
-            .expect("archive should load")
-            .expect("archive should exist");
-
-        assert_eq!(loaded.compressed_archive, "second");
-        assert_eq!(loaded.title.as_deref(), Some("First"));
-        assert_eq!(loaded.updated_at, "2026-06-10T00:01:00Z");
-    }
-
-    #[tokio::test]
-    async fn shared_database_stores_analytics_and_session_archives() {
-        let db = AppDatabase::new(std::env::temp_dir().join(format!(
+    async fn shared_database_stores_analytics_and_session_metadata() {
+        let db_path = std::env::temp_dir().join(format!(
             "akasa-shared-db-{}.sqlite3",
             Uuid::new_v4().simple()
-        )));
+        ));
+        let db = AppDatabase::new(db_path.clone());
         let analytics = AnalyticsRepository::new(db.clone());
-        let archives = SessionArchiveRepository::new(db);
+        let sessions = SessionArchiveRepository::new(db);
 
         analytics
             .append_events(&[AnalyticsEventInput {
@@ -1043,35 +1065,46 @@ mod tests {
             }])
             .await
             .expect("analytics event should save");
-        archives
-            .save_archive(StoredSessionArchive {
+        sessions
+            .save_session_created(&SessionCreated {
                 session_id: "session-shared".to_string(),
-                compressed_archive: "archive".to_string(),
-                title: Some("Shared".to_string()),
-                phase: "awaiting_player".to_string(),
-                created_at: "2026-06-10T00:00:00Z".to_string(),
-                updated_at: "2026-06-10T00:00:00Z".to_string(),
-                last_accessed_at: "2026-06-10T00:00:00Z".to_string(),
+                world_profile: "world".to_string(),
+                protagonist_profile: "hero".to_string(),
+                key_story_beats: "beats".to_string(),
             })
             .await
-            .expect("archive should save");
+            .expect("session metadata should save");
 
         let summary = analytics
             .summary(24 * 30)
             .await
             .expect("summary should read");
-        let archive = archives
-            .load_archive("session-shared")
+        let metadata = sessions
+            .load_session_metadata("session-shared")
             .await
-            .expect("archive should load")
-            .expect("archive should exist");
+            .expect("session metadata should load")
+            .expect("session metadata should exist");
+        let conn = Connection::open(db_path).expect("sqlite db should open");
+        let deleted_table_count: i64 = conn
+            .query_row(
+                r#"
+                SELECT COUNT(*)
+                FROM sqlite_master
+                WHERE type = 'table'
+                    AND name IN ('session_rounds', 'game_session_archives')
+                "#,
+                [],
+                |row| row.get(0),
+            )
+            .expect("schema should be queryable");
 
         assert_eq!(summary.totals.events, 1);
-        assert_eq!(archive.compressed_archive, "archive");
+        assert_eq!(metadata.world_profile, "world");
+        assert_eq!(deleted_table_count, 0);
     }
 
     #[tokio::test]
-    async fn session_rounds_upsert_and_page_with_before_cursor() {
+    async fn flow_turns_upsert_and_page_with_before_cursor() {
         let repo = test_repo();
         let rounds = (1..=5)
             .map(|round| round_entry(round, &format!("round-{round}")))
@@ -1120,6 +1153,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn flow_turn_updates_store_entity_outputs() {
+        let repo = test_repo();
+        let snapshot = WorldSnapshot {
+            round: 7,
+            scene_title: "钟楼阴影".to_string(),
+            ..WorldSnapshot::default()
+        };
+
+        repo.save_flow_turn_update(&FlowTurnUpdate {
+            session_id: "session-flow-rows".to_string(),
+            round: 7,
+            stage: TurnPhase::Simulation,
+            entity_name: "FateWeaver".to_string(),
+            output_type: AgentOutputType::Json,
+            content: serde_json::to_string(&snapshot).expect("snapshot should serialize"),
+        })
+        .await
+        .expect("world output should save");
+        repo.save_flow_turn_update(&FlowTurnUpdate {
+            session_id: "session-flow-rows".to_string(),
+            round: 7,
+            stage: TurnPhase::Application,
+            entity_name: "UpperNarrator".to_string(),
+            output_type: AgentOutputType::Text,
+            content: "钟声掠过雾墙。".to_string(),
+        })
+        .await
+        .expect("narration output should save");
+
+        let rounds = repo
+            .load_rounds("session-flow-rows")
+            .await
+            .expect("flow outputs should load");
+
+        assert_eq!(rounds.len(), 1);
+        assert_eq!(rounds[0].round, 7);
+        assert_eq!(
+            rounds[0]
+                .world_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.scene_title.as_str()),
+            Some("钟楼阴影")
+        );
+        assert_eq!(rounds[0].narration_text.as_deref(), Some("钟声掠过雾墙。"));
+    }
+
+    #[tokio::test]
     async fn session_flow_turn_and_agent_context_tables_round_trip() {
         let repo = test_repo();
         repo.save_session_created(&SessionCreated {
@@ -1138,6 +1218,7 @@ mod tests {
             .expect("metadata should exist");
         assert_eq!(metadata.world_profile, "world");
         assert_eq!(metadata.phase, TurnPhase::Idle);
+        assert!(!metadata.flow_end);
 
         repo.save_rounds("session-db", &[round_entry(1, "round-1")])
             .await
@@ -1153,6 +1234,18 @@ mod tests {
         assert_eq!(metadata.phase, TurnPhase::TurnCompleted);
         assert_eq!(metadata.turn_index, 1);
         assert_eq!(metadata.active_turn_id, 1);
+        assert!(!metadata.flow_end);
+
+        repo.record_flow_turn_end("session-db", 1)
+            .await
+            .expect("flow end should save");
+        let metadata = repo
+            .load_session_metadata("session-db")
+            .await
+            .expect("metadata should load")
+            .expect("metadata should exist");
+        assert_eq!(metadata.phase, TurnPhase::Ended);
+        assert!(metadata.flow_end);
 
         let mut context = AgentContext::new();
         context.add_message(Message::user("latest context"));

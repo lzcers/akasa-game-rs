@@ -35,6 +35,7 @@ export function createOpeningStateView(
   return {
     gameState: 'playing',
     phase: 'booting',
+    flowEnd: false,
     turnIndex: 0,
     activeTurnId: 0,
     currentLocation: '记录现场',

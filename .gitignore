@@ -15,3 +15,4 @@ node_modules
 fate_weaver_context.md
 protagonist_context.md
 upper_narrator_context.md
+db-data/*

@@ -133,6 +133,18 @@ export function reduceStreamEvent({
   }
 
   if (event.type === 'flow_turn_completed' || event.type === 'flow_turn_end') {
+    if (event.type === 'flow_turn_end' && uiState.stateView) {
+      uiStatePatch = {
+        ...(uiStatePatch ?? {}),
+        stateView: {
+          ...uiState.stateView,
+          phase: 'ended',
+          flowEnd: true,
+          activeTurnId: event.round,
+          turnIndex: Math.max(uiState.stateView.turnIndex, event.round),
+        },
+      };
+    }
     shouldSyncSnapshot = true;
   }
 

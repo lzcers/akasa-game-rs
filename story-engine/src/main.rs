@@ -40,6 +40,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "AKASHIC_STORY_ENGINE_TYPEWRITER_MS",
         1,
     )));
+    let mut auto_choices = HashMap::<u64, AutoChoiceGate>::new();
 
     loop {
         match events.recv().await? {
@@ -63,10 +64,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     "[turn] round={} stage={:?} entity={} output={:?}",
                     update.round, update.stage, update.entity_name, update.output_type
                 );
-                if update.entity_name == "Protagonist"
-                    && update.output_type == AgentOutputType::Json
-                {
-                    submit_first_choice_or_continue(&session, &update.content)?;
+                let choice_to_submit = {
+                    let gate = auto_choices.entry(update.round).or_default();
+                    gate.record_update(&update.entity_name, update.output_type, &update.content);
+                    gate.take_ready_choice()
+                };
+                if let Some(content) = choice_to_submit {
+                    submit_first_choice_or_continue(&session, &content)?;
                 }
             }
             EngineEvent::PlayerInput(input) => {
@@ -91,6 +95,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     println!("[api] reached max turns, exiting");
                     return Ok(());
                 }
+                auto_choices.remove(&completed.round);
                 session.start_next_turn()?;
             }
             EngineEvent::FlowTurnEnd(end) => {
@@ -123,6 +128,35 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 );
             }
         }
+    }
+}
+
+#[derive(Default)]
+struct AutoChoiceGate {
+    protagonist_options: Option<String>,
+    protagonist_updated: bool,
+    narrator_updated: bool,
+    submitted: bool,
+}
+
+impl AutoChoiceGate {
+    fn record_update(&mut self, entity_name: &str, output_type: AgentOutputType, content: &str) {
+        if entity_name == "Protagonist" && output_type == AgentOutputType::Json {
+            self.protagonist_options = Some(content.to_string());
+            self.protagonist_updated = true;
+        }
+
+        if entity_name == "UpperNarrator" && output_type == AgentOutputType::Text {
+            self.narrator_updated = true;
+        }
+    }
+
+    fn take_ready_choice(&mut self) -> Option<String> {
+        if self.submitted || !self.protagonist_updated || !self.narrator_updated {
+            return None;
+        }
+        self.submitted = true;
+        self.protagonist_options.clone()
     }
 }
 

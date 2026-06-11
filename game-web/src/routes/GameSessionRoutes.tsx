@@ -127,11 +127,20 @@ function SessionRouteGuard({
     return <Navigate to={routeWithSession(route, sessionId)} replace />;
   }
 
-  if (route === appRoutes.gameplay && stateView.phase === 'ended' && !shouldReviewEndedStory) {
+  if (
+    route === appRoutes.gameplay
+    && (stateView.phase === 'ended' || stateView.flowEnd)
+    && !shouldReviewEndedStory
+  ) {
     return <Navigate to={routeWithSession(appRoutes.ending, sessionId)} replace />;
   }
 
-  if (route === appRoutes.ending && stateView.phase !== 'ended' && !stateView.isEnding) {
+  if (
+    route === appRoutes.ending
+    && stateView.phase !== 'ended'
+    && !stateView.flowEnd
+    && !stateView.isEnding
+  ) {
     return <Navigate to={routeWithSession(appRoutes.gameplay, sessionId)} replace />;
   }
 

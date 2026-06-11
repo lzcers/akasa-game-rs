@@ -49,6 +49,7 @@ export function stateViewFromSession(session: GameSessionWorldStateData): Runtim
   return {
     gameState: 'playing',
     phase: session.phase,
+    flowEnd: session.flowEnd,
     turnIndex: session.turnIndex,
     activeTurnId: session.activeTurnId,
     currentLocation: session.worldState.locationName || '记录现场',

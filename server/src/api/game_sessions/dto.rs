@@ -85,6 +85,7 @@ pub struct GameSessionWorldStateData {
     pub generated_profiles: GeneratedProfilesData,
     pub status: String,
     pub phase: TurnPhase,
+    pub flow_end: bool,
     pub turn_index: u64,
     pub active_turn_id: u64,
     pub world_state: WorldStateData,
