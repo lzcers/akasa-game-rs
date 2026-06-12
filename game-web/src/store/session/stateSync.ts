@@ -13,6 +13,7 @@ import {
 
 interface ApplySessionSnapshotOptions {
   resetValues?: boolean;
+  replaceTimeline?: boolean;
 }
 
 function mergeRoundSnapshot(
@@ -60,7 +61,9 @@ export function applySessionSnapshotToStores(
   const stateView = stateViewFromSession(session);
   const nextInternalState = internalStateFromSession(session);
   const currentInternalState = useGameInternalStore.getState();
-  const shouldMergeRounds = currentInternalState.sessionId === session.sessionId;
+  const shouldMergeRounds =
+    currentInternalState.sessionId === session.sessionId &&
+    !options.replaceTimeline;
   useGameInternalStore.setState(
     shouldMergeRounds
       ? mergeInternalSessionState(currentInternalState, nextInternalState)

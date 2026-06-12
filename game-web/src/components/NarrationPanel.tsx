@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { Clock3, Sparkles } from "lucide-react";
 import Typewriter from "./Typewriter";
 import SelectedChoiceDisplay from "./SelectedChoiceDisplay";
@@ -37,7 +43,7 @@ const NarrationHistoryItem: React.FC<NarrationHistoryItemProps> = React.memo(
     onBacktrack,
   }) => {
     return (
-      <div className="space-y-2">
+      <div className="space-y-2" data-narration-round={entry.round}>
         <p className="text-sm font-medium text-[#d8c7aa]">
           第 {entry.round} 章：{entry.title || ""}
         </p>
@@ -86,6 +92,11 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
   const scrollbarDragRef = useRef<{
     pointerId: number;
     clientY: number;
+    scrollTop: number;
+  } | null>(null);
+  const scrollAnchorRef = useRef<{
+    round: number;
+    offsetTop: number;
     scrollTop: number;
   } | null>(null);
   const [scrollThumb, setScrollThumb] = useState({
@@ -195,6 +206,54 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
       }
     };
   }, [updateNarrationScrollbar]);
+
+  const captureNarrationScrollAnchor = useCallback((round: number) => {
+    const scrollElement = scrollContainerRef.current;
+    if (!scrollElement) {
+      return;
+    }
+
+    const anchorElement = scrollElement.querySelector<HTMLElement>(
+      `[data-narration-round="${round}"]`,
+    );
+    scrollAnchorRef.current = {
+      round,
+      offsetTop: anchorElement
+        ? anchorElement.offsetTop - scrollElement.scrollTop
+        : 0,
+      scrollTop: scrollElement.scrollTop,
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    const scrollElement = scrollContainerRef.current;
+    const anchor = scrollAnchorRef.current;
+    if (!scrollElement || !anchor) {
+      return;
+    }
+
+    const anchorElement = scrollElement.querySelector<HTMLElement>(
+      `[data-narration-round="${anchor.round}"]`,
+    );
+    if (anchorElement) {
+      scrollElement.scrollTop = Math.max(
+        0,
+        anchorElement.offsetTop - anchor.offsetTop,
+      );
+    } else {
+      scrollElement.scrollTop = anchor.scrollTop;
+    }
+
+    updateNarrationScrollbar();
+    if (activeBacktrackRound === null) {
+      scrollAnchorRef.current = null;
+    }
+  }, [
+    activeBacktrackRound,
+    currentRound,
+    narrationHistory,
+    updateNarrationScrollbar,
+  ]);
 
   const scrollByThumbDelta = useCallback(
     (deltaY: number) => {
@@ -310,6 +369,14 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
       updateNarrationScrollbar();
     },
     [scrollThumb.height, updateNarrationScrollbar],
+  );
+
+  const handleBacktrackRound = useCallback(
+    (round: number) => {
+      captureNarrationScrollAnchor(round);
+      onBacktrackRound?.(round);
+    },
+    [captureNarrationScrollAnchor, onBacktrackRound],
   );
 
   const moveBroadcastIndex = useCallback(
@@ -474,7 +541,7 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
                     }
                     activeBacktrackRound={activeBacktrackRound}
                     onComplete={onTypewriterComplete}
-                    onBacktrack={onBacktrackRound}
+                    onBacktrack={handleBacktrackRound}
                   />
                 );
               })}

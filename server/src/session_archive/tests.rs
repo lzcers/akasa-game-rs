@@ -359,6 +359,10 @@ async fn story_edge_actions_store_choice_option_fields() {
         .load_story_edge_actions("session-choice-edge")
         .await
         .expect("story edge actions should load");
+    let choice_explorations = repo
+        .load_choice_explorations("session-choice-edge")
+        .await
+        .expect("choice explorations should load");
     let has_round_one_action = repo
         .has_story_edge_action_for_round("session-choice-edge", 1)
         .await
@@ -379,6 +383,9 @@ async fn story_edge_actions_store_choice_option_fields() {
     assert_eq!(stored_action.5, choice.option.motivation_and_risk);
     assert_eq!(loaded_actions.len(), 1);
     assert_eq!(loaded_actions[0].action.action, "绕到钟楼背面");
+    assert_eq!(choice_explorations.len(), 1);
+    assert_eq!(choice_explorations[0].round, 1);
+    assert_eq!(choice_explorations[0].action, "绕到钟楼背面");
 }
 
 #[tokio::test]
@@ -502,7 +509,7 @@ async fn session_flow_turn_and_entity_context_tables_round_trip() {
     .await
     .expect("entity context rollback should save");
     let contexts = repo
-        .load_entity_contexts("session-db")
+        .load_entity_contexts_through_round("session-db", None)
         .await
         .expect("entity contexts should load");
     assert_eq!(contexts.len(), 1);
@@ -547,6 +554,262 @@ async fn session_flow_turn_and_entity_context_tables_round_trip() {
         .expect("metadata should load")
         .expect("metadata should exist");
     assert_eq!(metadata.phase, TurnPhase::Failed);
+}
+
+#[tokio::test]
+async fn backtrack_branch_preserves_old_future_and_switches_active_path() {
+    let db_path = std::env::temp_dir().join(format!(
+        "akasa-backtrack-branch-{}.sqlite3",
+        Uuid::new_v4().simple()
+    ));
+    let repo = SessionArchiveRepository::new(AppDatabase::new(db_path.clone()));
+    let old_choice = CharacterOption {
+        title: "走正门".to_string(),
+        action: "走正门进入钟楼".to_string(),
+        motivation_and_risk: "更快，但更容易被看见".to_string(),
+    };
+    let branch_choice = CharacterOption {
+        title: "绕行".to_string(),
+        action: "绕到钟楼背面".to_string(),
+        motivation_and_risk: "视野更好，但会暴露脚步声".to_string(),
+    };
+
+    repo.save_session_created(&SessionCreated {
+        session_id: "session-backtrack".to_string(),
+        character_name: "hero".to_string(),
+        world_profile: "world".to_string(),
+        character_profile: "hero".to_string(),
+        key_story_beats: "beats".to_string(),
+    })
+    .await
+    .expect("session metadata should save");
+    repo.save_rounds(
+        "session-backtrack",
+        &[
+            RoundHistoryEntry {
+                round: 1,
+                narration_text: Some("钟楼门前雾气翻涌。".to_string()),
+                choices: vec![
+                    PendingCharacterChoice {
+                        id: "choice-1".to_string(),
+                        option: old_choice.clone(),
+                    },
+                    PendingCharacterChoice {
+                        id: "choice-2".to_string(),
+                        option: branch_choice.clone(),
+                    },
+                ],
+                ..RoundHistoryEntry::default()
+            },
+            RoundHistoryEntry {
+                round: 2,
+                narration_text: Some("你推开正门，木轴发出长声。".to_string()),
+                ..RoundHistoryEntry::default()
+            },
+        ],
+    )
+    .await
+    .expect("rounds should save");
+    repo.update_session_turn_state("session-backtrack", TurnPhase::AwaitingPlayer, 1, 1)
+        .await
+        .expect("source node should become active");
+    repo.save_player_input(&PlayerInput {
+        session_id: "session-backtrack".to_string(),
+        round: 1,
+        actions: vec![PlayerActionItem::character_selected_option(&old_choice)],
+    })
+    .await
+    .expect("old story edge should save");
+    repo.update_session_turn_state("session-backtrack", TurnPhase::AwaitingPlayer, 2, 2)
+        .await
+        .expect("old future should become active");
+
+    let branch = repo
+        .prepare_backtrack_branch(
+            "session-backtrack",
+            1,
+            &[PlayerActionItem::character_selected_option(&branch_choice)],
+        )
+        .await
+        .expect("backtrack branch should prepare");
+    assert!(!branch.reused_existing_branch);
+    assert_eq!(branch.branch_round, 2);
+
+    repo.save_flow_turn_update(&FlowTurnUpdate {
+        session_id: "session-backtrack".to_string(),
+        round: 2,
+        stage: TurnPhase::Application,
+        entity_name: "UpperNarrator".to_string(),
+        output_type: AgentOutputType::Text,
+        content: "你绕到钟楼背面，潮湿砖缝里透出微光。".to_string(),
+    })
+    .await
+    .expect("branch narration should save");
+
+    let active_rounds = repo
+        .load_rounds("session-backtrack")
+        .await
+        .expect("active path rounds should load");
+    assert_eq!(active_rounds.len(), 2);
+    assert_eq!(
+        active_rounds[1].narration_text.as_deref(),
+        Some("你绕到钟楼背面，潮湿砖缝里透出微光。")
+    );
+
+    let conn = Connection::open(db_path).expect("sqlite db should open");
+    let old_linear_narration: String = conn
+        .query_row(
+            r#"
+            SELECT content
+            FROM entity_flow_outputs
+            WHERE session_id = ?1
+                AND node_id = 'node-2'
+                AND output_type = 'text'
+            "#,
+            params!["session-backtrack"],
+            |row| row.get(0),
+        )
+        .expect("old linear future output should remain");
+    let depth_two_node_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM story_nodes WHERE session_id = ?1 AND node_depth = 2",
+            params!["session-backtrack"],
+            |row| row.get(0),
+        )
+        .expect("story nodes should be countable");
+    assert_eq!(old_linear_narration, "你推开正门，木轴发出长声。");
+    assert_eq!(depth_two_node_count, 2);
+
+    let reused = repo
+        .prepare_backtrack_branch(
+            "session-backtrack",
+            1,
+            &[PlayerActionItem::character_selected_option(&branch_choice)],
+        )
+        .await
+        .expect("existing branch should activate");
+    assert!(reused.reused_existing_branch);
+    let depth_two_node_count_after_reuse: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM story_nodes WHERE session_id = ?1 AND node_depth = 2",
+            params!["session-backtrack"],
+            |row| row.get(0),
+        )
+        .expect("story nodes should be countable");
+    assert_eq!(depth_two_node_count_after_reuse, 2);
+
+    let downstream_choice = CharacterOption {
+        title: "推开后门".to_string(),
+        action: "从钟楼背面的窄门潜入".to_string(),
+        motivation_and_risk: "可以避开正门视线，但里面可能有机关".to_string(),
+    };
+    let downstream = repo
+        .prepare_backtrack_branch(
+            "session-backtrack",
+            2,
+            &[PlayerActionItem::character_selected_option(
+                &downstream_choice,
+            )],
+        )
+        .await
+        .expect("downstream branch should prepare");
+    assert_eq!(downstream.branch_round, 3);
+    repo.save_flow_turn_update(&FlowTurnUpdate {
+        session_id: "session-backtrack".to_string(),
+        round: 3,
+        stage: TurnPhase::Application,
+        entity_name: "UpperNarrator".to_string(),
+        output_type: AgentOutputType::Text,
+        content: "窄门后传来齿轮咬合的细声。".to_string(),
+    })
+    .await
+    .expect("downstream narration should save");
+
+    repo.prepare_backtrack_branch(
+        "session-backtrack",
+        1,
+        &[PlayerActionItem::character_selected_option(&branch_choice)],
+    )
+    .await
+    .expect("parent branch should reactivate");
+    let reactivated_actions = repo
+        .load_story_edge_actions("session-backtrack")
+        .await
+        .expect("reactivated branch actions should load");
+    assert_eq!(reactivated_actions.len(), 1);
+    assert_eq!(reactivated_actions[0].round, 1);
+    assert_eq!(reactivated_actions[0].action.action, branch_choice.action);
+}
+
+#[tokio::test]
+async fn backtrack_existing_empty_branch_requires_generation() {
+    let db_path = std::env::temp_dir().join(format!(
+        "akasa-backtrack-empty-branch-{}.sqlite3",
+        Uuid::new_v4().simple()
+    ));
+    let repo = SessionArchiveRepository::new(AppDatabase::new(db_path.clone()));
+    let branch_choice = CharacterOption {
+        title: "绕行".to_string(),
+        action: "绕到钟楼背面".to_string(),
+        motivation_and_risk: "视野更好，但会暴露脚步声".to_string(),
+    };
+
+    repo.save_session_created(&SessionCreated {
+        session_id: "session-empty-branch".to_string(),
+        character_name: "hero".to_string(),
+        world_profile: "world".to_string(),
+        character_profile: "hero".to_string(),
+        key_story_beats: "beats".to_string(),
+    })
+    .await
+    .expect("session metadata should save");
+    repo.save_rounds(
+        "session-empty-branch",
+        &[RoundHistoryEntry {
+            round: 1,
+            narration_text: Some("钟楼门前雾气翻涌。".to_string()),
+            choices: vec![PendingCharacterChoice {
+                id: "choice-1".to_string(),
+                option: branch_choice.clone(),
+            }],
+            ..RoundHistoryEntry::default()
+        }],
+    )
+    .await
+    .expect("rounds should save");
+    repo.update_session_turn_state("session-empty-branch", TurnPhase::AwaitingPlayer, 1, 1)
+        .await
+        .expect("source node should become active");
+    repo.save_player_input(&PlayerInput {
+        session_id: "session-empty-branch".to_string(),
+        round: 1,
+        actions: vec![PlayerActionItem::character_selected_option(&branch_choice)],
+    })
+    .await
+    .expect("empty branch edge should save");
+
+    let branch = repo
+        .prepare_backtrack_branch(
+            "session-empty-branch",
+            1,
+            &[PlayerActionItem::character_selected_option(&branch_choice)],
+        )
+        .await
+        .expect("existing empty branch should activate");
+
+    assert_eq!(branch.branch_round, 2);
+    assert!(!branch.reused_existing_branch);
+    assert!(branch.requires_generation);
+
+    let conn = Connection::open(db_path).expect("sqlite db should open");
+    let depth_two_node_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM story_nodes WHERE session_id = ?1 AND node_depth = 2",
+            params!["session-empty-branch"],
+            |row| row.get(0),
+        )
+        .expect("story nodes should be countable");
+    assert_eq!(depth_two_node_count, 1);
 }
 
 fn test_repo() -> SessionArchiveRepository {

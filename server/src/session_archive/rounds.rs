@@ -13,7 +13,8 @@ use super::codec::{
     deserialize_agent_output_type, deserialize_phase, serialize_agent_output_type, serialize_phase,
 };
 use super::story_path::{
-    StoryPathNode, ensure_linear_story_path, linear_node_id_for_depth, select_story_path_nodes,
+    StoryPathNode, active_or_linear_node_id_for_depth, ensure_linear_story_path,
+    linear_node_id_for_depth, select_story_path_nodes,
 };
 use super::{
     DEFAULT_PLAYER_CHARACTER_NAME, SessionArchiveRepository, StoredSessionRoundPage, schema,
@@ -27,14 +28,13 @@ impl SessionArchiveRepository {
             return Ok(());
         }
 
-        let node_id = linear_node_id_for_depth(update.round);
         let stage = serialize_phase(update.stage)?;
         let output_type = serialize_agent_output_type(update.output_type)?;
         let _guard = self.db.lock().await;
         let conn = self.db.open_connection("entity flow outputs")?;
         schema::init(&conn)?;
         let now = chrono::Utc::now().to_rfc3339();
-        ensure_linear_story_path(&conn, session_id, update.round, &now)?;
+        let node_id = active_or_linear_node_id_for_depth(&conn, session_id, update.round, &now)?;
         conn.execute(
             r#"
             INSERT INTO entity_flow_outputs (

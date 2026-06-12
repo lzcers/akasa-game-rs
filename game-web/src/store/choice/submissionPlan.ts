@@ -86,6 +86,14 @@ export function applyChoiceSubmissionOptimisticUpdate(
   state: GameInternalState,
   plan: ChoiceSubmissionPlan,
 ): Partial<GameInternalState> {
+  const selectedChoiceAction = plan.input.actions[0]?.action ?? null;
+  const activeRoundChoices = (state.roundStates[plan.activeRound]?.choices ?? [])
+    .map((choice) => (
+      selectedChoiceAction && choice.action === selectedChoiceAction
+        ? { ...choice, visited: true }
+        : choice
+    ));
+
   return {
     displayRound: plan.nextRound,
     roundStates: {
@@ -94,8 +102,8 @@ export function applyChoiceSubmissionOptimisticUpdate(
         ...(state.roundStates[plan.activeRound] ?? {}),
         round: plan.activeRound,
         selectedChoiceText: plan.selectedChoiceText,
-        selectedChoiceAction: plan.input.actions[0]?.action ?? null,
-        choices: state.roundStates[plan.activeRound]?.choices ?? [],
+        selectedChoiceAction,
+        choices: activeRoundChoices,
         choicesStatus: state.roundStates[plan.activeRound]?.choicesStatus ?? 'idle',
         isAwaitingNarration: false,
       }),

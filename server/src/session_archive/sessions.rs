@@ -6,8 +6,9 @@ use crate::{database::AppDatabase, session_history::TurnPhase};
 
 use super::codec::deserialize_phase;
 use super::story_path::{
-    SessionBaseRecord, ensure_linear_story_path, linear_node_id_for_depth,
-    turn_state_from_active_node, update_story_node_state, upsert_session_base,
+    SessionBaseRecord, active_or_linear_node_id_for_depth, ensure_linear_story_path,
+    linear_node_id_for_depth, turn_state_from_active_node, update_story_node_state,
+    upsert_session_base,
 };
 use super::{ROOT_NODE_ID, SessionArchiveRepository, StoredSessionMetadata, schema};
 
@@ -132,14 +133,14 @@ impl SessionArchiveRepository {
         }
 
         let active_node_depth = active_turn_id.max(turn_index);
-        let active_node_id = linear_node_id_for_depth(active_node_depth);
         let total_node_count =
             i64::try_from(active_node_depth).context("total node count exceeds SQLite range")?;
         let _guard = self.db.lock().await;
         let conn = self.db.open_connection("sessions")?;
         schema::init(&conn)?;
         let now = chrono::Utc::now().to_rfc3339();
-        ensure_linear_story_path(&conn, session_id, active_node_depth, &now)?;
+        let active_node_id =
+            active_or_linear_node_id_for_depth(&conn, session_id, active_node_depth, &now)?;
         update_story_node_state(&conn, session_id, &active_node_id, phase, None, &now)?;
         conn.execute(
             r#"

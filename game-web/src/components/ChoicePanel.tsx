@@ -242,10 +242,13 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
                     <button
                       onClick={() => void onChoiceClick(choice)}
                       disabled={isChoiceInteractionDisabled || choice.disabled}
-                      className="akashic-choice h-10 text-[#f3ead8] disabled:cursor-not-allowed disabled:opacity-50"
+                      className={[
+                        "akashic-choice h-10 text-[#f3ead8] disabled:cursor-not-allowed disabled:opacity-50",
+                        choice.visited ? "akashic-choice-visited" : "",
+                      ].filter(Boolean).join(" ")}
                     >
                       <div className="flex min-h-7 items-center text-left">
-                        <div className="w-full text-sm font-semibold leading-5 sm:text-[0.95rem]">
+                        <div className="w-full truncate text-sm font-semibold leading-5 sm:text-[0.95rem]">
                           {choice.text}
                         </div>
                       </div>

@@ -83,7 +83,9 @@ export function internalStateFromSession(session: GameSessionWorldStateData): Ga
 export function roundStateFromPersistedHistoryEntry(
   entry: SessionRoundHistoryData,
 ): RoundState {
-  const choices = entry.choices.map(toChoiceFromSession);
+  const choices = entry.choices.map((choice) => (
+    toChoiceFromSession(choice, entry.choiceExplorations?.[choice.id])
+  ));
   const selectedChoiceText = entry.selectedChoiceText?.trim()
     || deriveSelectedChoiceText(entry)
     || null;
@@ -120,7 +122,9 @@ function currentRoundStateFromSession(
       title: titleFromWorldState(session.worldState),
       narrationText: latestHistoryFromSession(session),
       narrationStatus: session.latestNarration.trim() ? 'done' : null,
-      choices: session.choices.map(toChoiceFromSession),
+      choices: session.choices.map((choice) => (
+        toChoiceFromSession(choice, session.choiceExplorations?.[choice.id])
+      )),
       choicesStatus: session.choices.length > 0 || session.phase === 'awaiting_player' ? 'ready' : 'idle',
       selectedChoiceText: null,
       selectedChoiceAction: null,

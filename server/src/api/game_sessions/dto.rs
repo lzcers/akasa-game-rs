@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use story_engine::components::{
     outcome::{PendingCharacterChoice, PlayerActionInput, PlayerActionItem},
@@ -83,6 +85,22 @@ pub struct ControlGameSessionRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BacktrackGameSessionRequest {
+    pub source_round: u64,
+    pub action: SessionActionInput,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BacktrackGameSessionData {
+    pub session: GameSessionWorldStateData,
+    pub source_round: u64,
+    pub branch_round: u64,
+    pub reused_existing_branch: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CloneGameSessionQuery {
     pub round: Option<u64>,
 }
@@ -101,6 +119,15 @@ pub struct GameSessionWorldStateData {
     pub latest_narration: String,
     pub current_outcome: String,
     pub choices: Vec<PendingCharacterChoice>,
+    pub choice_explorations: ChoiceExplorationsData,
+}
+
+pub type ChoiceExplorationsData = BTreeMap<String, ChoiceExplorationData>;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChoiceExplorationData {
+    pub visited: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -118,6 +145,7 @@ pub struct RoundHistoryData {
     pub world_state: Option<WorldStateData>,
     pub narration_text: String,
     pub choices: Vec<PendingCharacterChoice>,
+    pub choice_explorations: ChoiceExplorationsData,
     pub committed_actions: Vec<PlayerActionItem>,
     pub selected_choice_text: Option<String>,
 }
@@ -227,12 +255,18 @@ impl From<WorldSnapshot> for WorldStateData {
 impl From<RoundHistoryEntry> for RoundHistoryData {
     fn from(value: RoundHistoryEntry) -> Self {
         let selected_choice_text = selected_choice_text(&value);
+        let choice_explorations = value
+            .choices
+            .iter()
+            .map(|choice| (choice.id.clone(), ChoiceExplorationData { visited: false }))
+            .collect();
 
         Self {
             round: value.round,
             world_state: value.world_snapshot.map(Into::into),
             narration_text: value.narration_text.unwrap_or_default(),
             choices: value.choices,
+            choice_explorations,
             committed_actions: value.committed_actions,
             selected_choice_text,
         }

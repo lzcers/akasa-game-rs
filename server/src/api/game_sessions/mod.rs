@@ -216,6 +216,17 @@ pub async fn control_game_session(
     Ok(Json(ApiResponse::ok(result)))
 }
 
+pub async fn backtrack_game_session(
+    State(state): State<AppState>,
+    Path(path): Path<SessionPath>,
+    Json(request): Json<BacktrackGameSessionRequest>,
+) -> ApiResult<BacktrackGameSessionData> {
+    let result = state
+        .backtrack_game_session(&path.session_id, request)
+        .await?;
+    Ok(Json(ApiResponse::ok(result)))
+}
+
 pub async fn stream_game_session(
     State(state): State<AppState>,
     Path(path): Path<SessionPath>,

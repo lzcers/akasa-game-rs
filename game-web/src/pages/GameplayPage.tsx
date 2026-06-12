@@ -20,7 +20,6 @@ import {
   appRoutes,
   isStoryReviewSearch,
   routeWithClonedSession,
-  routeWithSession,
 } from "../lib/appRoutes";
 import { track } from "../lib/analytics";
 import { suppressSessionRestore } from "../lib/sessionRestore";
@@ -68,11 +67,11 @@ const GameplayPage: React.FC = () => {
       skipRestoredNarrationAnimation: state.skipRestoredNarrationAnimation,
     })),
   );
-  const { bootstrapSession, cloneSharedSession, createSave, submitChoice, resetGame } =
+  const { bootstrapSession, backtrackChoice, createSave, submitChoice, resetGame } =
     useGameUIStore(
       useShallow((state) => ({
         bootstrapSession: state.bootstrapSession,
-        cloneSharedSession: state.cloneSharedSession,
+        backtrackChoice: state.backtrackChoice,
         createSave: state.createSave,
         submitChoice: state.submitChoice,
         resetGame: state.resetGame,
@@ -199,7 +198,7 @@ const GameplayPage: React.FC = () => {
   const isChoicePanelInteractionDisabled =
     isEndingReviewMode ||
     isLoading ||
-    (!isBacktrackChoicePanel && isNarrationOutputPending);
+    isNarrationOutputPending;
   const canContinueWithoutChoice =
     phase === "awaiting_player" &&
     activeRoundState?.choicesStatus === "ready" &&
@@ -483,21 +482,14 @@ const GameplayPage: React.FC = () => {
         setFeedback("当前还没有可回溯的记录。");
         return;
       }
+      if (isNarrationOutputPending || isLoading) {
+        setFeedback("记录正在共鸣中，请稍后再回溯。");
+        return;
+      }
 
       try {
         setFeedback(`正在从第 ${sourceRound} 章回溯...`);
-        const cloned = await cloneSharedSession(sourceSessionId, sourceRound);
-        navigate(routeWithSession(appRoutes.gameplay, cloned.sessionId), {
-          replace: true,
-        });
-        setExpandedChoicePanelRound(null);
-        setRoundControls({
-          round: sourceRound,
-          activeObsession: false,
-          obsessionInput: "",
-          previews: {},
-        });
-        await submitChoice({
+        await backtrackChoice(sourceRound, {
           input: {
             actions: [{
               character_name: playableCharacterName,
@@ -509,19 +501,26 @@ const GameplayPage: React.FC = () => {
           },
           displayText: choice.text,
         });
+        setExpandedChoicePanelRound(null);
+        setRoundControls({
+          round: sourceRound + 1,
+          activeObsession: false,
+          obsessionInput: "",
+          previews: {},
+        });
         setFeedback(null);
       } catch (backtrackError) {
         setFeedback(readErrorMessage(backtrackError, "回溯展开失败。"));
       }
     },
     [
+      backtrackChoice,
       choicePanelRound,
-      cloneSharedSession,
-      navigate,
+      isLoading,
+      isNarrationOutputPending,
       playableCharacterName,
       readErrorMessage,
       sessionId,
-      submitChoice,
     ],
   );
 

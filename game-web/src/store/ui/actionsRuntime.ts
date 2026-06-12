@@ -9,6 +9,7 @@ import {
   bootstrapOpeningSession,
 } from '../session/bootstrapRuntime';
 import { resetGameRuntime } from './resetRuntime';
+import { backtrackGameChoice } from '../choice/backtrackRuntime';
 import { submitGameChoice } from '../choice/submissionRuntime';
 import {
   clearGameError,
@@ -45,6 +46,9 @@ export function createGameUIActions(
     bootstrapSession: () => bootstrapOpeningSession(createSessionBootstrapRuntime(set, get)),
     submitChoice: (submission, useObsession = false) => (
       submitGameChoice(set, submission, useObsession)
+    ),
+    backtrackChoice: (sourceRound, submission) => (
+      backtrackGameChoice(set, sourceRound, submission)
     ),
     createSave: (title) => createGameSave(set, title),
     loadSave: (saveId) => loadStoredGameSave(createSessionRestoreRuntime(set, get), saveId),

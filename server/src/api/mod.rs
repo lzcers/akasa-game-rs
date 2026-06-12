@@ -61,6 +61,10 @@ pub fn build_router(state: AppState) -> Router {
             post(game_sessions::control_game_session),
         )
         .route(
+            "/api/game-sessions/{session_id}/backtrack",
+            post(game_sessions::backtrack_game_session),
+        )
+        .route(
             "/api/game-sessions/{session_id}/stream",
             get(game_sessions::stream_game_session),
         )

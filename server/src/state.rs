@@ -24,16 +24,20 @@ use crate::{
     analytics::{AnalyticsRepository, AnalyticsSummary},
     api::archive,
     api::game_sessions::{
-        ControlGameSessionData, ControlGameSessionRequest, CreateGameSessionData,
-        CreateGameSessionRequest, GameSessionControlCommand, GameSessionWorldStateData,
-        GeneratedProfilesData, RoundHistoryData, SaveExportData, SessionActionInput,
-        SessionRoundsPageData, WorldStateData,
+        BacktrackGameSessionData, BacktrackGameSessionRequest, ChoiceExplorationData,
+        ChoiceExplorationsData, ControlGameSessionData, ControlGameSessionRequest,
+        CreateGameSessionData, CreateGameSessionRequest, GameSessionControlCommand,
+        GameSessionWorldStateData, GeneratedProfilesData, RoundHistoryData, SaveExportData,
+        SessionActionInput, SessionRoundsPageData, WorldStateData,
     },
     api::site::{AnalyticsBatchRequest, SubmitFeedbackData, ValidatedFeedbackRequest},
     database::AppDatabase,
     email::{FeedbackEmail, FeedbackMailer},
     error::AppError,
-    session_archive::{SessionArchiveRepository, StoredSessionMetadata, StoredStoryEdgeAction},
+    session_archive::{
+        SessionArchiveRepository, StoredChoiceExploration, StoredSessionMetadata,
+        StoredStoryEdgeAction,
+    },
     session_history::{RoundHistoryEntry, SessionHistoryLog, TurnPhase},
 };
 
@@ -420,11 +424,22 @@ impl AppState {
             .into_iter()
             .filter(|action| page_rounds.contains(&action.round))
             .collect::<Vec<_>>();
+        let choice_explorations = self
+            .session_archive_repo
+            .load_choice_explorations(session_id)
+            .await
+            .map_err(|err| AppError::internal(format!("读取选项探索状态失败：{err:#}")))?
+            .into_iter()
+            .filter(|exploration| page_rounds.contains(&exploration.round))
+            .collect::<Vec<_>>();
         let rounds = rounds_with_story_edge_actions(page.rounds, story_edge_actions);
 
         Ok(SessionRoundsPageData {
             session_id: session_id.to_string(),
-            rounds: rounds.into_iter().map(RoundHistoryData::from).collect(),
+            rounds: rounds
+                .into_iter()
+                .map(|round| round_history_data_from_entry(round, &choice_explorations))
+                .collect(),
             next_before_round: page.next_before_round,
             has_more: page.has_more,
         })
@@ -468,6 +483,58 @@ impl AppState {
 
         self.get_game_session_world(&payload_for_storage.session_id)
             .await
+    }
+
+    pub async fn backtrack_game_session(
+        &self,
+        session_id: &str,
+        request: BacktrackGameSessionRequest,
+    ) -> Result<BacktrackGameSessionData, AppError> {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return Err(AppError::bad_request("`sessionId` 不能为空。"));
+        }
+        let source_round = request.source_round;
+        if source_round == 0 {
+            return Err(AppError::bad_request("回溯章节必须大于 0。"));
+        }
+
+        let source_payload = self
+            .archive_payload_for_session(session_id, None, Some(source_round))
+            .await?;
+        let actions = normalized_action_items(request.action)?;
+        validate_selected_actions_against_choices(
+            &actions,
+            &source_payload.character_decision.choices,
+        )?;
+
+        self.ensure_hot_session(session_id, false).await?;
+        let branch = self
+            .session_archive_repo
+            .prepare_backtrack_branch(session_id, source_round, &actions)
+            .await
+            .map_err(|err| AppError::internal(format!("创建回溯分支失败：{err:#}")))?;
+
+        if !branch.requires_generation {
+            let active_payload = self
+                .archive_payload_for_session(session_id, None, None)
+                .await?;
+            self.replace_hot_session_from_payload(session_id, active_payload)
+                .await?;
+        } else {
+            self.replace_hot_session_from_payload(session_id, source_payload)
+                .await?;
+            let hot = self.ensure_hot_session(session_id, false).await?;
+            submit_prepared_action(&hot, source_round, actions).await?;
+        }
+
+        let session = self.game_session_world_from_database(session_id).await?;
+        Ok(BacktrackGameSessionData {
+            session,
+            source_round: branch.source_round,
+            branch_round: branch.branch_round,
+            reused_existing_branch: branch.reused_existing_branch,
+        })
     }
 
     pub async fn get_game_session_narrations(
@@ -539,32 +606,14 @@ impl AppState {
         let expected_round = expected_round
             .filter(|round| *round > 0)
             .ok_or_else(|| AppError::bad_request("提交行动必须提供 expectedRound。"))?;
-        let actions = action
-            .actions
-            .into_iter()
-            .map(PlayerActionItem::normalized)
-            .filter(|action| !action.action.is_empty())
-            .collect::<Vec<_>>();
-        if actions.is_empty() {
-            return Err(AppError::bad_request("提交行动不能为空。"));
-        }
+        let actions = normalized_action_items(action)?;
 
         if actions
             .iter()
             .any(|action| action.action_type == PlayerActionType::SelectedOption)
         {
             let choices = self.latest_choices_for_session(session_id).await?;
-            for selected_action in actions
-                .iter()
-                .filter(|action| action.action_type == PlayerActionType::SelectedOption)
-            {
-                let is_valid_option = choices
-                    .iter()
-                    .any(|choice| choice.option.action == selected_action.action);
-                if !is_valid_option {
-                    return Err(AppError::bad_request("当前所选行动不在候选列表中。"));
-                }
-            }
+            validate_selected_actions_against_choices(&actions, &choices)?;
         }
 
         if self
@@ -576,24 +625,7 @@ impl AppState {
             return Err(AppError::bad_request("这一轮行动已经提交过。"));
         }
 
-        {
-            let mut submitted_rounds = hot.submitted_action_rounds.lock().await;
-            if !submitted_rounds.insert(expected_round) {
-                return Err(AppError::bad_request("这一轮行动正在提交，请勿重复选择。"));
-            }
-        }
-
-        if let Err(error) = hot
-            .engine
-            .submit_player_action_for_turn(expected_round, SessionActionInput { actions })
-            .await
-        {
-            hot.submitted_action_rounds
-                .lock()
-                .await
-                .remove(&expected_round);
-            return Err(AppError::bad_request(error));
-        }
+        submit_prepared_action(hot, expected_round, actions).await?;
 
         Ok(ControlGameSessionData {
             action: "submit_action".to_string(),
@@ -729,6 +761,57 @@ impl AppState {
         }
     }
 
+    async fn replace_hot_session_from_payload(
+        &self,
+        session_id: &str,
+        payload: archive::SessionArchivePayload,
+    ) -> Result<(), AppError> {
+        archive::validate_archive_payload(&payload).map_err(AppError::internal)?;
+        let restored_phase = payload.turn_state.phase;
+        let engine = archive::load_archive_payload(&self.engine, payload)
+            .await
+            .map_err(AppError::internal)?;
+
+        let mut sessions = self.sessions.lock().await;
+        let record = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| AppError::not_found(format!("未找到会话 `{session_id}`")))?;
+        record.touch(Utc::now());
+        record.last_phase = restored_phase;
+
+        match &mut record.slot {
+            SessionSlot::Hot(hot) => {
+                let events_tx = hot.events_tx.clone();
+                let live_events = Arc::clone(&hot.live_events);
+                let submitted_action_rounds = Arc::new(Mutex::new(HashSet::new()));
+                spawn_engine_event_bridge(
+                    session_id,
+                    &engine,
+                    events_tx.clone(),
+                    Arc::clone(&live_events),
+                    self.session_archive_repo.clone(),
+                );
+                *hot = HotSession {
+                    engine,
+                    events_tx,
+                    live_events,
+                    submitted_action_rounds,
+                };
+            }
+            SessionSlot::Cooling { .. } | SessionSlot::Cold { .. } => {
+                record.slot = SessionSlot::Hot(build_hot_session(
+                    session_id,
+                    engine,
+                    self.lifecycle_config.live_event_history_capacity,
+                    self.session_archive_repo.clone(),
+                    restored_phase,
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
     async fn register_cold_session_from_database(
         &self,
         session_id: &str,
@@ -744,17 +827,19 @@ impl AppState {
 
         let now = Utc::now();
         let mut sessions = self.sessions.lock().await;
-        sessions.entry(metadata.session_id.clone()).or_insert(SessionRecord {
-            session_id: metadata.session_id,
-            _created_at: now,
-            last_accessed_at: now,
-            active_streams: 0,
-            last_phase: metadata.phase,
-            slot: SessionSlot::Cold {
-                _saved_at: now,
-                _summary: None,
-            },
-        });
+        sessions
+            .entry(metadata.session_id.clone())
+            .or_insert(SessionRecord {
+                session_id: metadata.session_id,
+                _created_at: now,
+                last_accessed_at: now,
+                active_streams: 0,
+                last_phase: metadata.phase,
+                slot: SessionSlot::Cold {
+                    _saved_at: now,
+                    _summary: None,
+                },
+            });
         Ok(true)
     }
 
@@ -795,7 +880,7 @@ impl AppState {
     ) -> Result<archive::SessionArchivePayload, AppError> {
         self.touch_session(session_id).await?;
         let mut payload = self
-            .archive_payload_from_database(session_id, title)
+            .archive_payload_from_database(session_id, title, completed_round)
             .await?;
         // 数据库可能记录了生成中的中间阶段；导出/克隆需要稳定可玩的状态，
         // 所以从完整历史里回退到最近完成的轮次。
@@ -856,17 +941,29 @@ impl AppState {
     ) -> Result<GameSessionWorldStateData, AppError> {
         let metadata = self.load_session_metadata(session_id).await?;
         let rounds = self.load_session_rounds(session_id).await?;
-        Ok(world_state_from_database(metadata, &rounds))
+        let choice_explorations = self
+            .session_archive_repo
+            .load_choice_explorations(session_id)
+            .await
+            .map_err(|err| AppError::internal(format!("读取选项探索状态失败：{err:#}")))?;
+        Ok(world_state_from_database(
+            metadata,
+            &rounds,
+            &choice_explorations,
+        ))
     }
 
     async fn archive_payload_from_database(
         &self,
         session_id: &str,
         title: Option<&str>,
+        context_through_round: Option<u64>,
     ) -> Result<archive::SessionArchivePayload, AppError> {
         let metadata = self.load_session_metadata(session_id).await?;
         let rounds = self.load_session_rounds(session_id).await?;
-        let contexts = self.load_entity_context_map(session_id).await?;
+        let contexts = self
+            .load_entity_context_map(session_id, context_through_round)
+            .await?;
         Ok(archive_payload_from_database(
             metadata, rounds, contexts, title,
         ))
@@ -903,10 +1000,11 @@ impl AppState {
     async fn load_entity_context_map(
         &self,
         session_id: &str,
+        through_round: Option<u64>,
     ) -> Result<HashMap<String, Context>, AppError> {
         let contexts = self
             .session_archive_repo
-            .load_entity_contexts(session_id)
+            .load_entity_contexts_through_round(session_id, through_round)
             .await
             .map_err(|err| AppError::internal(format!("读取 entity context 失败：{err:#}")))?;
         Ok(contexts
@@ -1151,26 +1249,47 @@ fn build_hot_session(
     session_archive_repo: SessionArchiveRepository,
     _initial_phase: TurnPhase,
 ) -> HotSession {
-    let mut event_rx = engine.subscribe_session_events();
     let (events_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let live_events = Arc::new(Mutex::new(LiveEventLog::with_capacity(
         live_event_history_capacity,
     )));
     let submitted_action_rounds = Arc::new(Mutex::new(HashSet::new()));
-    let events_tx_for_task = events_tx.clone();
-    let live_events_for_task = Arc::clone(&live_events);
-    let session_id_for_event_task = session_id.to_string();
     // 这个后台任务把 engine 事件同时桥接到实时订阅者和归档数据库，避免请求
     // 路径手动维护每一种 turn 事件的持久化细节。
+    spawn_engine_event_bridge(
+        session_id,
+        &engine,
+        events_tx.clone(),
+        Arc::clone(&live_events),
+        session_archive_repo,
+    );
+
+    HotSession {
+        engine,
+        events_tx,
+        live_events,
+        submitted_action_rounds,
+    }
+}
+
+fn spawn_engine_event_bridge(
+    session_id: &str,
+    engine: &AkashicSessionEngine,
+    events_tx: broadcast::Sender<LiveEngineEvent>,
+    live_events: Arc<Mutex<LiveEventLog>>,
+    session_archive_repo: SessionArchiveRepository,
+) {
+    let mut event_rx = engine.subscribe_session_events();
+    let session_id_for_event_task = session_id.to_string();
     tokio::spawn(async move {
         loop {
             match event_rx.recv().await {
                 Ok(event) => {
                     let live_event = {
-                        let mut live_events = live_events_for_task.lock().await;
+                        let mut live_events = live_events.lock().await;
                         live_events.push(event.clone())
                     };
-                    let _ = events_tx_for_task.send(live_event);
+                    let _ = events_tx.send(live_event);
 
                     match event {
                         EngineEvent::SessionCreated(created) => {
@@ -1223,8 +1342,6 @@ fn build_hot_session(
                         }
                         EngineEvent::FlowTurnUpdate(update) => {
                             let persisted_phase = persisted_phase_for_flow_turn_update(&update);
-                            // 生成中阶段对外仍展示上一轮已提交状态；只有等待玩家或
-                            // 轮次完成时，当前 round 才算可见/可恢复。
                             if let Err(error) = session_archive_repo
                                 .update_session_turn_state(
                                     &update.session_id,
@@ -1287,37 +1404,25 @@ fn build_hot_session(
                                     error
                                 );
                             }
-                            tracing::debug!(
-                                session_id = %end.session_id,
-                                round = end.round,
-                                "flow turn ended"
-                            );
                         }
-                        EngineEvent::FlowTurnError(error) => {
-                            if let Err(persist_error) =
-                                session_archive_repo.record_flow_turn_error(&error).await
+                        EngineEvent::FlowTurnError(error_event) => {
+                            if let Err(error) = session_archive_repo
+                                .record_flow_turn_error(&error_event)
+                                .await
                             {
                                 tracing::warn!(
-                                    "failed to persist flow turn error for {} / {}: {:?}",
-                                    error.session_id,
-                                    error.round,
-                                    persist_error
+                                    "failed to persist errored flow turn for {} / {}: {:?}",
+                                    error_event.session_id,
+                                    error_event.round,
+                                    error
                                 );
                             }
-                            tracing::warn!(
-                                session_id = %error.session_id,
-                                round = error.round,
-                                stage = ?error.stage,
-                                entity_name = %error.entity_name,
-                                msg = %error.msg,
-                                "flow turn error"
-                            );
                         }
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
                     tracing::warn!(
-                        "session event pipeline for {} lagged by {} events",
+                        "session event persistence lagged for {} and skipped {} events",
                         session_id_for_event_task,
                         skipped
                     );
@@ -1326,13 +1431,64 @@ fn build_hot_session(
             }
         }
     });
+}
 
-    HotSession {
-        engine,
-        events_tx,
-        live_events,
-        submitted_action_rounds,
+fn normalized_action_items(action: SessionActionInput) -> Result<Vec<PlayerActionItem>, AppError> {
+    let actions = action
+        .actions
+        .into_iter()
+        .map(PlayerActionItem::normalized)
+        .filter(|action| !action.action.is_empty())
+        .collect::<Vec<_>>();
+    if actions.is_empty() {
+        return Err(AppError::bad_request("提交行动不能为空。"));
     }
+    Ok(actions)
+}
+
+fn validate_selected_actions_against_choices(
+    actions: &[PlayerActionItem],
+    choices: &[PendingCharacterChoice],
+) -> Result<(), AppError> {
+    for selected_action in actions
+        .iter()
+        .filter(|action| action.action_type == PlayerActionType::SelectedOption)
+    {
+        let is_valid_option = choices
+            .iter()
+            .any(|choice| choice.option.action == selected_action.action);
+        if !is_valid_option {
+            return Err(AppError::bad_request("当前所选行动不在候选列表中。"));
+        }
+    }
+    Ok(())
+}
+
+async fn submit_prepared_action(
+    hot: &HotSessionAccess,
+    expected_round: u64,
+    actions: Vec<PlayerActionItem>,
+) -> Result<(), AppError> {
+    {
+        let mut submitted_rounds = hot.submitted_action_rounds.lock().await;
+        if !submitted_rounds.insert(expected_round) {
+            return Err(AppError::bad_request("这一轮行动正在提交，请勿重复选择。"));
+        }
+    }
+
+    if let Err(error) = hot
+        .engine
+        .submit_player_action_for_turn(expected_round, SessionActionInput { actions })
+        .await
+    {
+        hot.submitted_action_rounds
+            .lock()
+            .await
+            .remove(&expected_round);
+        return Err(AppError::bad_request(error));
+    }
+
+    Ok(())
 }
 
 fn apply_control(
@@ -1360,6 +1516,7 @@ fn persisted_phase_for_flow_turn_update(update: &FlowTurnUpdate) -> TurnPhase {
 fn world_state_from_database(
     metadata: StoredSessionMetadata,
     rounds: &[RoundHistoryEntry],
+    choice_explorations: &[StoredChoiceExploration],
 ) -> GameSessionWorldStateData {
     let world_snapshot = latest_world_snapshot(rounds).unwrap_or_default();
     let latest_narration = latest_narration_from_rounds(rounds, &world_snapshot);
@@ -1372,7 +1529,14 @@ fn world_state_from_database(
                 "尚未做出选择".to_string()
             }
         });
-    let choices = latest_choices_from_rounds(rounds);
+    let (choices, choice_explorations) = latest_choices_round_from_rounds(rounds)
+        .map(|round| {
+            (
+                round.choices.clone(),
+                choice_explorations_for_round(round, choice_explorations),
+            )
+        })
+        .unwrap_or_default();
 
     GameSessionWorldStateData {
         session_id: metadata.session_id,
@@ -1394,6 +1558,7 @@ fn world_state_from_database(
         latest_narration,
         current_outcome,
         choices,
+        choice_explorations,
     }
 }
 
@@ -1466,12 +1631,46 @@ fn latest_narration_from_rounds(
 }
 
 fn latest_choices_from_rounds(rounds: &[RoundHistoryEntry]) -> Vec<PendingCharacterChoice> {
-    rounds
-        .iter()
-        .rev()
-        .find(|round| !round.choices.is_empty())
+    latest_choices_round_from_rounds(rounds)
         .map(|round| round.choices.clone())
         .unwrap_or_default()
+}
+
+fn latest_choices_round_from_rounds(rounds: &[RoundHistoryEntry]) -> Option<&RoundHistoryEntry> {
+    rounds.iter().rev().find(|round| !round.choices.is_empty())
+}
+
+fn round_history_data_from_entry(
+    entry: RoundHistoryEntry,
+    choice_explorations: &[StoredChoiceExploration],
+) -> RoundHistoryData {
+    let mut data = RoundHistoryData::from(entry.clone());
+    data.choice_explorations = choice_explorations_for_round(&entry, choice_explorations);
+    data
+}
+
+fn choice_explorations_for_round(
+    round: &RoundHistoryEntry,
+    choice_explorations: &[StoredChoiceExploration],
+) -> ChoiceExplorationsData {
+    let visited_actions = choice_explorations
+        .iter()
+        .filter(|exploration| exploration.round == round.round)
+        .map(|exploration| exploration.action.as_str())
+        .collect::<HashSet<_>>();
+
+    round
+        .choices
+        .iter()
+        .map(|choice| {
+            (
+                choice.id.clone(),
+                ChoiceExplorationData {
+                    visited: visited_actions.contains(choice.option.action.as_str()),
+                },
+            )
+        })
+        .collect()
 }
 
 fn latest_committed_actions(rounds: &[RoundHistoryEntry]) -> Option<Vec<PlayerActionItem>> {
@@ -2241,6 +2440,7 @@ mod tests {
             latest_narration: "narration".to_string(),
             current_outcome: "action".to_string(),
             choices: vec![],
+            choice_explorations: ChoiceExplorationsData::new(),
         };
 
         let value = serde_json::to_value(dto).expect("dto should serialize");

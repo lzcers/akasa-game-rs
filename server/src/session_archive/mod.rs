@@ -48,6 +48,20 @@ pub struct StoredStoryEdgeAction {
 }
 
 #[derive(Debug, Clone)]
+pub struct StoredChoiceExploration {
+    pub round: u64,
+    pub action: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedBacktrackBranch {
+    pub source_round: u64,
+    pub branch_round: u64,
+    pub reused_existing_branch: bool,
+    pub requires_generation: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct StoredSessionRoundPage {
     pub rounds: Vec<RoundHistoryEntry>,
     pub next_before_round: Option<u64>,

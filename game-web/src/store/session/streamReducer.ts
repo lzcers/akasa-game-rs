@@ -41,6 +41,7 @@ function areChoicesEqual(left: RoundState['choices'], right: RoundState['choices
       && choice.text === nextChoice.text
       && choice.action === nextChoice.action
       && choice.motivationAndRisk === nextChoice.motivationAndRisk
+      && choice.visited === nextChoice.visited
       && choice.disabled === nextChoice.disabled;
   });
 }
@@ -195,12 +196,15 @@ function reducePlayerInput(
     ?? previousRoundState?.choices.find((choice) => choice.action === actionText)?.text
     ?? action.title
     ?? actionText;
+  const choices = (previousRoundState?.choices ?? []).map((choice) => (
+    choice.action === actionText ? { ...choice, visited: true } : choice
+  ));
   const nextRoundState = createRoundState(round, {
     ...(previousRoundState ?? {}),
     round,
     selectedChoiceText,
     selectedChoiceAction: actionText,
-    choices: previousRoundState?.choices ?? [],
+    choices,
     choicesStatus: previousRoundState?.choicesStatus ?? 'idle',
     isAwaitingNarration: false,
   });

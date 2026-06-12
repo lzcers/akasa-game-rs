@@ -21,7 +21,7 @@ const SelectedChoiceDisplay: React.FC<SelectedChoiceDisplayProps> = ({
   return (
     <div
       className={[
-        "inline-flex max-w-full flex-col rounded-[0.85rem] border border-amber-300/25 bg-amber-100/8 px-2.5 py-1.5 text-[0.82rem] font-medium leading-5 text-amber-100/90 sm:text-[0.92rem]",
+        "inline-flex w-full flex-col rounded-[0.85rem] border border-amber-300/25 bg-amber-100/8 px-2.5 py-1.5 text-[0.82rem] font-medium leading-5 text-amber-100/90 sm:text-[0.92rem]",
         onBacktrack ? "min-w-52" : "",
       ].join(" ")}
     >

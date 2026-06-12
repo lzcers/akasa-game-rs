@@ -65,6 +65,11 @@ export interface GameUIActions {
     submission: { input: PlayerActionInput; displayText: string },
     useObsession?: boolean,
   ) => Promise<void>;
+  // 操作：从历史节点创建/切换回溯分支并提交所选行动。
+  backtrackChoice: (
+    sourceRound: number,
+    submission: { input: PlayerActionInput; displayText: string },
+  ) => Promise<void>;
   // 操作：创建当前进度的存档。
   createSave: (title?: string) => Promise<string>;
   // 操作：加载指定存档。

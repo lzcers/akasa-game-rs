@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::session_history::TurnPhase;
 
@@ -210,6 +210,170 @@ pub(super) fn linear_node_id_for_depth(depth: u64) -> String {
     } else {
         format!("node-{depth}")
     }
+}
+
+pub(super) fn active_or_linear_node_id_for_depth(
+    conn: &Connection,
+    session_id: &str,
+    depth: u64,
+    now: &str,
+) -> Result<String> {
+    if let Some(node_id) = story_node_id_for_active_path_depth(conn, session_id, depth)? {
+        return Ok(node_id);
+    }
+
+    ensure_linear_story_path(conn, session_id, depth, now)?;
+    Ok(linear_node_id_for_depth(depth))
+}
+
+pub(super) fn story_node_id_for_active_path_depth(
+    conn: &Connection,
+    session_id: &str,
+    depth: u64,
+) -> Result<Option<String>> {
+    let depth = i64::try_from(depth).context("story node depth exceeds SQLite INTEGER range")?;
+    conn.query_row(
+        r#"
+        WITH RECURSIVE active_path(node_id, parent_node_id, node_depth) AS (
+            SELECT n.node_id, n.parent_node_id, n.node_depth
+            FROM story_nodes n
+            JOIN sessions s
+                ON s.session_id = n.session_id
+                AND s.active_node_id = n.node_id
+            WHERE n.session_id = ?1
+            UNION ALL
+            SELECT parent.node_id, parent.parent_node_id, parent.node_depth
+            FROM story_nodes parent
+            JOIN active_path child
+                ON child.parent_node_id = parent.node_id
+            WHERE parent.session_id = ?1
+        )
+        SELECT node_id
+        FROM active_path
+        WHERE node_depth = ?2
+        LIMIT 1
+        "#,
+        params![session_id, depth],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .context("failed to find active story path node")
+}
+
+pub(super) fn story_node_depth(
+    conn: &Connection,
+    session_id: &str,
+    node_id: &str,
+) -> Result<Option<u64>> {
+    conn.query_row(
+        r#"
+        SELECT node_depth
+        FROM story_nodes
+        WHERE session_id = ?1
+            AND node_id = ?2
+        "#,
+        params![session_id, node_id],
+        |row| row.get::<_, i64>(0),
+    )
+    .optional()
+    .context("failed to load story node depth")?
+    .map(|depth| depth.try_into().context("story node depth is negative"))
+    .transpose()
+}
+
+pub(super) fn activate_story_node(
+    conn: &Connection,
+    session_id: &str,
+    node_id: &str,
+    now: &str,
+) -> Result<u64> {
+    let depth = story_node_depth(conn, session_id, node_id)?
+        .ok_or_else(|| anyhow::anyhow!("story node `{node_id}` does not exist"))?;
+    conn.execute(
+        r#"
+        UPDATE sessions
+        SET active_node_id = ?2,
+            updated_at = ?3,
+            last_accessed_at = ?3
+        WHERE session_id = ?1
+        "#,
+        params![session_id, node_id, now],
+    )
+    .context("failed to activate story node")?;
+    Ok(depth)
+}
+
+pub(super) fn create_branch_story_node(
+    conn: &Connection,
+    session_id: &str,
+    parent_node_id: &str,
+    node_depth: u64,
+    phase: TurnPhase,
+    now: &str,
+) -> Result<String> {
+    let sequence_index = next_story_node_sequence(conn, session_id)?;
+    let node_id = format!("node-{node_depth}-branch-{sequence_index}");
+    let node_depth =
+        i64::try_from(node_depth).context("story node depth exceeds SQLite INTEGER range")?;
+    conn.execute(
+        r#"
+        INSERT INTO story_nodes (
+            session_id,
+            node_id,
+            parent_node_id,
+            node_depth,
+            sequence_index,
+            phase,
+            flow_end,
+            created_at,
+            updated_at,
+            last_accessed_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?7, ?7)
+        "#,
+        params![
+            session_id,
+            node_id,
+            parent_node_id,
+            node_depth,
+            sequence_index,
+            serialize_phase(phase)?,
+            now,
+        ],
+    )
+    .context("failed to create branch story node")?;
+    conn.execute(
+        r#"
+        UPDATE sessions
+        SET active_node_id = ?2,
+            total_node_count = MAX(total_node_count, ?3),
+            updated_at = ?4,
+            last_accessed_at = ?4
+        WHERE session_id = ?1
+        "#,
+        params![session_id, node_id, sequence_index, now],
+    )
+    .context("failed to activate branch story node")?;
+    Ok(node_id)
+}
+
+fn next_story_node_sequence(conn: &Connection, session_id: &str) -> Result<i64> {
+    conn.query_row(
+        r#"
+        SELECT MAX(
+            COALESCE(s.total_node_count, 0),
+            COALESCE((
+                SELECT MAX(node.sequence_index)
+                FROM story_nodes node
+                WHERE node.session_id = s.session_id
+            ), 0)
+        ) + 1
+        FROM sessions s
+        WHERE s.session_id = ?1
+        "#,
+        params![session_id],
+        |row| row.get::<_, i64>(0),
+    )
+    .context("failed to compute next story node sequence")
 }
 pub(super) fn turn_state_from_active_node(phase: TurnPhase, node_depth: u64) -> (u64, u64) {
     match phase {

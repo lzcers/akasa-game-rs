@@ -5,7 +5,9 @@ use story_engine::resources::session_events::{
     EntityContextItemAppended, EntityContextRollback, EntityContextRollbackPolicy,
 };
 
-use super::story_path::{ensure_linear_story_path, linear_node_id_for_depth};
+use super::story_path::{
+    active_or_linear_node_id_for_depth, ensure_linear_story_path, linear_node_id_for_depth,
+};
 use super::{SessionArchiveRepository, StoredEntityContext, schema};
 
 impl SessionArchiveRepository {
@@ -16,12 +18,11 @@ impl SessionArchiveRepository {
             return Ok(());
         }
 
-        let node_id = linear_node_id_for_depth(update.round);
         let _guard = self.db.lock().await;
         let conn = self.db.open_connection("entity context items")?;
         schema::init(&conn)?;
         let now = chrono::Utc::now().to_rfc3339();
-        ensure_linear_story_path(&conn, session_id, update.round, &now)?;
+        let node_id = active_or_linear_node_id_for_depth(&conn, session_id, update.round, &now)?;
         insert_entity_context_message(
             &conn,
             session_id,
@@ -42,12 +43,11 @@ impl SessionArchiveRepository {
             return Ok(());
         }
 
-        let node_id = linear_node_id_for_depth(rollback.round);
         let _guard = self.db.lock().await;
         let conn = self.db.open_connection("entity context rollbacks")?;
         schema::init(&conn)?;
         let now = chrono::Utc::now().to_rfc3339();
-        ensure_linear_story_path(&conn, session_id, rollback.round, &now)?;
+        let node_id = active_or_linear_node_id_for_depth(&conn, session_id, rollback.round, &now)?;
         match rollback.policy {
             EntityContextRollbackPolicy::LatestInput => {
                 insert_entity_context_rollback(&conn, session_id, &node_id, entity_name, &now)?;
@@ -96,13 +96,30 @@ impl SessionArchiveRepository {
             .context("failed to commit entity context replacement")?;
         Ok(())
     }
-    pub async fn load_entity_contexts(&self, session_id: &str) -> Result<Vec<StoredEntityContext>> {
+    pub async fn load_entity_contexts_through_round(
+        &self,
+        session_id: &str,
+        max_round: Option<u64>,
+    ) -> Result<Vec<StoredEntityContext>> {
         let _guard = self.db.lock().await;
         let conn = self.db.open_connection("entity context items")?;
         schema::init(&conn)?;
-        let mut stmt = conn
-            .prepare(
-                r#"
+        load_entity_contexts_from_active_path(&conn, session_id, max_round)
+    }
+}
+
+fn load_entity_contexts_from_active_path(
+    conn: &Connection,
+    session_id: &str,
+    max_round: Option<u64>,
+) -> Result<Vec<StoredEntityContext>> {
+    let max_round = max_round
+        .map(i64::try_from)
+        .transpose()
+        .context("max round exceeds SQLite INTEGER range")?;
+    let mut stmt = conn
+        .prepare(
+            r#"
                 WITH RECURSIVE active_path(node_id, parent_node_id, node_depth) AS (
                     SELECT n.node_id, n.parent_node_id, n.node_depth
                     FROM story_nodes n
@@ -126,67 +143,66 @@ impl SessionArchiveRepository {
                 JOIN active_path
                     ON active_path.node_id = item.node_id
                 WHERE item.session_id = ?1
+                    AND (?2 IS NULL OR active_path.node_depth <= ?2)
                 ORDER BY
                     item.entity_name ASC,
                     active_path.node_depth ASC,
                     item.item_index ASC,
                     item.id ASC
                 "#,
-            )
-            .context("failed to prepare entity context load")?;
-        let mut rows = stmt
-            .query(params![session_id])
-            .context("failed to query entity context items")?;
-        let mut contexts = std::collections::BTreeMap::<String, AgentContext>::new();
-        while let Some(row) = rows
-            .next()
-            .context("failed to read entity context item row")?
-        {
-            let entity_name: String = row.get(0)?;
-            let item_kind: String = row.get(1)?;
-            let context = contexts.entry(entity_name).or_default();
-            match item_kind.as_str() {
-                "message" => {
-                    let message_role: String =
-                        row.get::<_, Option<String>>(2)?.ok_or_else(|| {
-                            rusqlite::Error::InvalidColumnType(
-                                2,
-                                "message_role".to_string(),
-                                rusqlite::types::Type::Null,
-                            )
-                        })?;
-                    let content: String = row.get::<_, Option<String>>(3)?.ok_or_else(|| {
-                        rusqlite::Error::InvalidColumnType(
-                            3,
-                            "content".to_string(),
-                            rusqlite::types::Type::Null,
+        )
+        .context("failed to prepare entity context load")?;
+    let mut rows = stmt
+        .query(params![session_id, max_round])
+        .context("failed to query entity context items")?;
+    let mut contexts = std::collections::BTreeMap::<String, AgentContext>::new();
+    while let Some(row) = rows
+        .next()
+        .context("failed to read entity context item row")?
+    {
+        let entity_name: String = row.get(0)?;
+        let item_kind: String = row.get(1)?;
+        let context = contexts.entry(entity_name).or_default();
+        match item_kind.as_str() {
+            "message" => {
+                let message_role: String = row.get::<_, Option<String>>(2)?.ok_or_else(|| {
+                    rusqlite::Error::InvalidColumnType(
+                        2,
+                        "message_role".to_string(),
+                        rusqlite::types::Type::Null,
+                    )
+                })?;
+                let content: String = row.get::<_, Option<String>>(3)?.ok_or_else(|| {
+                    rusqlite::Error::InvalidColumnType(
+                        3,
+                        "content".to_string(),
+                        rusqlite::types::Type::Null,
+                    )
+                })?;
+                let message =
+                    message_from_role_and_content(&message_role, content).map_err(|err| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            2,
+                            rusqlite::types::Type::Text,
+                            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
                         )
                     })?;
-                    let message =
-                        message_from_role_and_content(&message_role, content).map_err(|err| {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                2,
-                                rusqlite::types::Type::Text,
-                                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
-                            )
-                        })?;
-                    context.add_message(message);
-                }
-                "rollback_latest_input" => {
-                    context.rollback_latest_input();
-                }
-                _ => {}
+                context.add_message(message);
             }
+            "rollback_latest_input" => {
+                context.rollback_latest_input();
+            }
+            _ => {}
         }
-
-        Ok(contexts
-            .into_iter()
-            .map(|(entity_name, context)| StoredEntityContext {
-                entity_name,
-                context,
-            })
-            .collect())
     }
+
+    Ok(contexts
+        .into_iter()
+        .map(|(entity_name, context)| StoredEntityContext {
+            entity_name,
+            context,
+        })
+        .collect())
 }
 
 fn insert_entity_context_message(

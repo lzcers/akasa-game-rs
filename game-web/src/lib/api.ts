@@ -42,6 +42,7 @@ export interface Choice {
   text: string;
   action: string;
   disabled: boolean;
+  visited?: boolean;
   motivationAndRisk?: string;
 }
 
@@ -175,6 +176,12 @@ export interface PendingCharacterChoice {
   option: CharacterOption;
 }
 
+export interface ChoiceExploration {
+  visited: boolean;
+}
+
+export type ChoiceExplorations = Record<string, ChoiceExploration>;
+
 export type PlayerActionType = 'selected_option' | 'free_text';
 
 export interface PlayerActionItem {
@@ -202,6 +209,7 @@ export interface GameSessionWorldStateData {
   latestNarration: string;
   currentOutcome: string;
   choices: PendingCharacterChoice[];
+  choiceExplorations: ChoiceExplorations;
 }
 
 export interface SessionRoundHistoryData {
@@ -209,6 +217,7 @@ export interface SessionRoundHistoryData {
   worldState: SessionWorldState | null;
   narrationText: string;
   choices: PendingCharacterChoice[];
+  choiceExplorations: ChoiceExplorations;
   committedActions: PlayerActionItem[];
   selectedChoiceText?: string | null;
 }
@@ -228,6 +237,18 @@ export interface GetSessionRoundsOptions {
 export type GameSessionControlInput =
   | { control: { type: 'continue' }; action?: undefined; expectedRound?: undefined }
   | { control?: undefined; action: PlayerActionInput; expectedRound: number };
+
+export interface BacktrackGameSessionInput {
+  sourceRound: number;
+  action: PlayerActionInput;
+}
+
+export interface BacktrackGameSessionData {
+  session: GameSessionWorldStateData;
+  sourceRound: number;
+  branchRound: number;
+  reusedExistingBranch: boolean;
+}
 
 export type EngineEvent =
   | {
@@ -429,6 +450,19 @@ export function submitGameSessionControl(
     method: 'POST',
     body: JSON.stringify(input),
   });
+}
+
+export function backtrackGameSession(
+  sessionId: string,
+  input: BacktrackGameSessionInput,
+) {
+  return requestJson<BacktrackGameSessionData>(
+    withApiOrigin(`/api/game-sessions/${sessionId}/backtrack`),
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
 }
 
 export function openGameSessionStream(
