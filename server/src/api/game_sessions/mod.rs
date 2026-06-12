@@ -129,6 +129,25 @@ pub async fn get_game_session_rounds(
     Ok(Json(ApiResponse::ok(page)))
 }
 
+pub async fn get_game_session_storyline(
+    State(state): State<AppState>,
+    Path(path): Path<SessionPath>,
+) -> ApiResult<StorylineData> {
+    let storyline = state.get_game_session_storyline(&path.session_id).await?;
+    Ok(Json(ApiResponse::ok(storyline)))
+}
+
+pub async fn select_game_session_storyline_node(
+    State(state): State<AppState>,
+    Path(path): Path<SessionPath>,
+    Json(request): Json<SelectStorylineNodeRequest>,
+) -> ApiResult<GameSessionWorldStateData> {
+    let state_view = state
+        .select_game_session_storyline_node(&path.session_id, request)
+        .await?;
+    Ok(Json(ApiResponse::ok(state_view)))
+}
+
 pub async fn clone_game_session(
     State(state): State<AppState>,
     Path(path): Path<SessionPath>,

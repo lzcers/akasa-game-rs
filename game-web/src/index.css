@@ -201,6 +201,11 @@
     background-color: rgba(66, 69, 81, 0.95);
   }
 
+  .game-toolbar-icon-btn {
+    @apply h-8 min-h-0 w-8 flex-none gap-0 rounded-full p-0 text-[#f3ead8] md:min-h-0 md:px-0 md:py-0;
+    aspect-ratio: 1 / 1;
+  }
+
   .akashic-range {
     @apply h-1.5 w-full cursor-pointer appearance-none rounded-full sm:h-[0.3rem] md:h-1.25;
     background: linear-gradient(90deg, #d8c18f 0%, #c4a875 55%, rgba(69, 64, 57, 0.92) 55%, rgba(69, 64, 57, 0.92) 100%);

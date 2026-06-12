@@ -28,8 +28,8 @@ use crate::{
         ChoiceExplorationData, ChoiceExplorationsData, ControlGameSessionData,
         ControlGameSessionRequest, CreateGameSessionData, CreateGameSessionRequest,
         GameSessionControlCommand, GameSessionWorldStateData, GeneratedProfilesData,
-        RoundHistoryData, SaveExportData, SessionActionInput, SessionRoundsPageData,
-        WorldStateData,
+        RoundHistoryData, SaveExportData, SelectStorylineNodeRequest, SessionActionInput,
+        SessionRoundsPageData, StorylineData, StorylineEdgeData, StorylineNodeData, WorldStateData,
     },
     api::site::{AnalyticsBatchRequest, SubmitFeedbackData, ValidatedFeedbackRequest},
     database::AppDatabase,
@@ -456,6 +456,91 @@ impl AppState {
             next_before_round: page.next_before_round,
             has_more: page.has_more,
         })
+    }
+
+    pub async fn get_game_session_storyline(
+        &self,
+        session_id: &str,
+    ) -> Result<StorylineData, AppError> {
+        self.touch_session(session_id).await?;
+        let storyline = self
+            .session_archive_repo
+            .load_storyline(session_id)
+            .await
+            .map_err(|err| AppError::internal(format!("读取故事线失败：{err:#}")))?
+            .ok_or_else(|| AppError::not_found(format!("未找到会话 `{session_id}`")))?;
+
+        Ok(StorylineData {
+            session_id: session_id.to_string(),
+            root_node_id: storyline.root_node_id,
+            active_node_id: storyline.active_node_id,
+            nodes: storyline
+                .nodes
+                .into_iter()
+                .map(|node| StorylineNodeData {
+                    node_id: node.node_id,
+                    parent_node_id: node.parent_node_id,
+                    round: node.round,
+                    sequence_index: node.sequence_index,
+                    phase: node.phase,
+                    flow_end: node.flow_end,
+                    title: node.title,
+                    narration_text: node.narration_text,
+                    created_at: node.created_at,
+                    updated_at: node.updated_at,
+                    last_accessed_at: node.last_accessed_at,
+                })
+                .collect(),
+            edges: storyline
+                .edges
+                .into_iter()
+                .map(|edge| StorylineEdgeData {
+                    from_node_id: edge.from_node_id,
+                    to_node_id: edge.to_node_id,
+                    actions: edge.actions,
+                    created_at: edge.created_at,
+                })
+                .collect(),
+        })
+    }
+
+    pub async fn select_game_session_storyline_node(
+        &self,
+        session_id: &str,
+        request: SelectStorylineNodeRequest,
+    ) -> Result<GameSessionWorldStateData, AppError> {
+        let session_id = session_id.trim();
+        let node_id = request.node_id.trim();
+        if session_id.is_empty() {
+            return Err(AppError::bad_request("`sessionId` 不能为空。"));
+        }
+        if node_id.is_empty() {
+            return Err(AppError::bad_request("`nodeId` 不能为空。"));
+        }
+
+        self.ensure_hot_session(session_id, false).await?;
+        let selected = self
+            .session_archive_repo
+            .activate_storyline_node(session_id, node_id)
+            .await
+            .map_err(|err| AppError::internal(format!("切换故事线节点失败：{err:#}")))?
+            .ok_or_else(|| AppError::not_found("未找到可切换的已生成故事节点。"))?;
+
+        let payload = if selected.flow_end {
+            self.archive_payload_for_session(session_id, None, None)
+                .await?
+        } else {
+            self.archive_payload_for_session(session_id, None, Some(selected.round))
+                .await?
+        };
+        self.session_archive_repo
+            .update_session_turn_state_for_node(session_id, node_id, payload.turn_state.phase)
+            .await
+            .map_err(|err| AppError::internal(format!("更新故事线节点状态失败：{err:#}")))?;
+        self.replace_hot_session_from_payload(session_id, payload)
+            .await?;
+
+        self.game_session_world_from_database(session_id).await
     }
 
     pub async fn clone_game_session(

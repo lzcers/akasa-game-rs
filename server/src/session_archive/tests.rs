@@ -823,6 +823,222 @@ async fn backtrack_branch_preserves_old_future_and_switches_active_path() {
 }
 
 #[tokio::test]
+async fn storyline_loads_all_generated_nodes_edges_and_action_titles() {
+    let db_path = std::env::temp_dir().join(format!(
+        "akasa-storyline-{}.sqlite3",
+        Uuid::new_v4().simple()
+    ));
+    let repo = SessionArchiveRepository::new(AppDatabase::new(db_path));
+    let old_choice = CharacterOption {
+        title: "走正门".to_string(),
+        action: "走正门进入钟楼".to_string(),
+        motivation_and_risk: "更快，但更容易被看见".to_string(),
+    };
+    let branch_choice = CharacterOption {
+        title: "绕行".to_string(),
+        action: "绕到钟楼背面".to_string(),
+        motivation_and_risk: "视野更好，但会暴露脚步声".to_string(),
+    };
+    let downstream_choice = CharacterOption {
+        title: "钻入甬道".to_string(),
+        action: "沿着钟楼背面的潮湿甬道继续深入".to_string(),
+        motivation_and_risk: "可能找到暗门，但退路会变窄".to_string(),
+    };
+
+    repo.save_session_created(&SessionCreated {
+        session_id: "session-storyline".to_string(),
+        character_name: "hero".to_string(),
+        world_profile: "world".to_string(),
+        character_profile: "hero".to_string(),
+        key_story_beats: "beats".to_string(),
+    })
+    .await
+    .expect("session metadata should save");
+    repo.save_rounds(
+        "session-storyline",
+        &[
+            RoundHistoryEntry {
+                round: 1,
+                world_snapshot: Some(WorldSnapshot {
+                    round: 1,
+                    scene_title: "钟楼门前".to_string(),
+                    ..WorldSnapshot::default()
+                }),
+                narration_text: Some("钟楼门前雾气翻涌。".to_string()),
+                choices: vec![
+                    PendingCharacterChoice {
+                        id: "choice-1".to_string(),
+                        option: old_choice.clone(),
+                    },
+                    PendingCharacterChoice {
+                        id: "choice-2".to_string(),
+                        option: branch_choice.clone(),
+                    },
+                ],
+                ..RoundHistoryEntry::default()
+            },
+            RoundHistoryEntry {
+                round: 2,
+                world_snapshot: Some(WorldSnapshot {
+                    round: 2,
+                    scene_title: "正门大厅".to_string(),
+                    ..WorldSnapshot::default()
+                }),
+                narration_text: Some("你推开正门，木轴发出长声。".to_string()),
+                ..RoundHistoryEntry::default()
+            },
+        ],
+    )
+    .await
+    .expect("rounds should save");
+    repo.update_session_turn_state("session-storyline", TurnPhase::AwaitingPlayer, 1, 1)
+        .await
+        .expect("source node should become active");
+    repo.save_player_input(&PlayerInput {
+        session_id: "session-storyline".to_string(),
+        round: 1,
+        actions: vec![PlayerActionItem::character_selected_option(&old_choice)],
+    })
+    .await
+    .expect("old story edge should save");
+    repo.update_session_turn_state("session-storyline", TurnPhase::AwaitingPlayer, 2, 2)
+        .await
+        .expect("old future should become active");
+    let prepared_branch = repo
+        .prepare_backtrack_branch(
+            "session-storyline",
+            1,
+            &[PlayerActionItem::character_selected_option(&branch_choice)],
+        )
+        .await
+        .expect("backtrack branch should prepare");
+    repo.save_flow_turn_update(&FlowTurnUpdate {
+        session_id: "session-storyline".to_string(),
+        round: 2,
+        stage: TurnPhase::Simulation,
+        entity_name: "FateWeaver".to_string(),
+        output_type: AgentOutputType::Json,
+        content: serde_json::to_string(&WorldSnapshot {
+            round: 2,
+            scene_title: "钟楼背面".to_string(),
+            ..WorldSnapshot::default()
+        })
+        .expect("world snapshot should serialize"),
+    })
+    .await
+    .expect("branch world snapshot should save");
+    repo.save_flow_turn_update(&FlowTurnUpdate {
+        session_id: "session-storyline".to_string(),
+        round: 2,
+        stage: TurnPhase::Application,
+        entity_name: "UpperNarrator".to_string(),
+        output_type: AgentOutputType::Text,
+        content: "你绕到钟楼背面，潮湿砖缝里透出微光。".to_string(),
+    })
+    .await
+    .expect("branch narration should save");
+    repo.update_session_turn_state_for_node(
+        "session-storyline",
+        &prepared_branch.branch_node_id,
+        TurnPhase::AwaitingPlayer,
+    )
+    .await
+    .expect("branch node should become await player");
+    let prepared_downstream = repo
+        .prepare_backtrack_branch(
+            "session-storyline",
+            2,
+            &[PlayerActionItem::character_selected_option(
+                &downstream_choice,
+            )],
+        )
+        .await
+        .expect("downstream branch should prepare");
+    repo.save_flow_turn_update_for_node(
+        &FlowTurnUpdate {
+            session_id: "session-storyline".to_string(),
+            round: 3,
+            stage: TurnPhase::Simulation,
+            entity_name: "FateWeaver".to_string(),
+            output_type: AgentOutputType::Json,
+            content: serde_json::to_string(&WorldSnapshot {
+                round: 3,
+                scene_title: "潮湿甬道".to_string(),
+                ..WorldSnapshot::default()
+            })
+            .expect("world snapshot should serialize"),
+        },
+        &prepared_downstream.branch_node_id,
+    )
+    .await
+    .expect("downstream world snapshot should save");
+    repo.save_flow_turn_update_for_node(
+        &FlowTurnUpdate {
+            session_id: "session-storyline".to_string(),
+            round: 3,
+            stage: TurnPhase::Application,
+            entity_name: "UpperNarrator".to_string(),
+            output_type: AgentOutputType::Text,
+            content: "你钻进甬道，水声在砖缝后面回旋。".to_string(),
+        },
+        &prepared_downstream.branch_node_id,
+    )
+    .await
+    .expect("downstream narration should save");
+    repo.prepare_backtrack_branch(
+        "session-storyline",
+        1,
+        &[PlayerActionItem::character_selected_option(&old_choice)],
+    )
+    .await
+    .expect("old branch should reactivate");
+
+    let storyline = repo
+        .load_storyline("session-storyline")
+        .await
+        .expect("storyline should load")
+        .expect("storyline should exist");
+    assert_eq!(storyline.root_node_id, "start");
+    assert_ne!(storyline.active_node_id, prepared_downstream.branch_node_id);
+    assert_eq!(storyline.nodes.len(), 5);
+    assert!(storyline.nodes.iter().any(|node| node.title == "钟楼门前"));
+    assert!(storyline.nodes.iter().any(|node| node.title == "正门大厅"));
+    assert!(storyline.nodes.iter().any(|node| node.title == "钟楼背面"));
+    assert!(storyline.nodes.iter().any(|node| node.title == "潮湿甬道"));
+    assert_eq!(storyline.edges.len(), 3);
+    let action_titles = storyline
+        .edges
+        .iter()
+        .flat_map(|edge| edge.actions.iter().map(|action| action.title.as_str()))
+        .collect::<Vec<_>>();
+    assert!(action_titles.contains(&"走正门"));
+    assert!(action_titles.contains(&"绕行"));
+    assert!(action_titles.contains(&"钻入甬道"));
+
+    let activated = repo
+        .activate_storyline_node("session-storyline", &prepared_downstream.branch_node_id)
+        .await
+        .expect("storyline node should activate")
+        .expect("storyline node should be selectable");
+    assert_eq!(activated.round, 3);
+    let active_rounds = repo
+        .load_rounds("session-storyline")
+        .await
+        .expect("active storyline branch rounds should load");
+    let active_titles = active_rounds
+        .iter()
+        .filter_map(|round| {
+            round
+                .world_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.scene_title.as_str())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(active_titles, vec!["钟楼门前", "钟楼背面", "潮湿甬道"]);
+    assert!(!active_titles.contains(&"正门大厅"));
+}
+
+#[tokio::test]
 async fn backtrack_generation_persists_outputs_to_prepared_branch_node() {
     let db_path = std::env::temp_dir().join(format!(
         "akasa-backtrack-target-node-{}.sqlite3",

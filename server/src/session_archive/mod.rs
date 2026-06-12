@@ -13,6 +13,7 @@ mod schema;
 mod sessions;
 mod story_edges;
 mod story_path;
+mod storyline;
 
 #[cfg(test)]
 mod tests;
@@ -58,6 +59,43 @@ pub struct StoredBranchExploration {
     pub round: u64,
     pub action: PlayerActionItem,
     pub visited: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredStoryline {
+    pub root_node_id: String,
+    pub active_node_id: String,
+    pub nodes: Vec<StoredStorylineNode>,
+    pub edges: Vec<StoredStorylineEdge>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredStorylineNode {
+    pub node_id: String,
+    pub parent_node_id: Option<String>,
+    pub round: u64,
+    pub sequence_index: u64,
+    pub phase: TurnPhase,
+    pub flow_end: bool,
+    pub title: String,
+    pub narration_text: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_accessed_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredStorylineEdge {
+    pub from_node_id: String,
+    pub to_node_id: String,
+    pub actions: Vec<PlayerActionItem>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ActivatedStorylineNode {
+    pub round: u64,
+    pub flow_end: bool,
 }
 
 #[derive(Debug, Clone)]

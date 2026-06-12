@@ -101,6 +101,12 @@ pub struct BacktrackGameSessionData {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SelectStorylineNodeRequest {
+    pub node_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CloneGameSessionQuery {
     pub round: Option<u64>,
 }
@@ -166,6 +172,41 @@ pub struct SessionRoundsPageData {
     pub rounds: Vec<RoundHistoryData>,
     pub next_before_round: Option<u64>,
     pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorylineData {
+    pub session_id: String,
+    pub root_node_id: String,
+    pub active_node_id: String,
+    pub nodes: Vec<StorylineNodeData>,
+    pub edges: Vec<StorylineEdgeData>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorylineNodeData {
+    pub node_id: String,
+    pub parent_node_id: Option<String>,
+    pub round: u64,
+    pub sequence_index: u64,
+    pub phase: TurnPhase,
+    pub flow_end: bool,
+    pub title: String,
+    pub narration_text: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_accessed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorylineEdgeData {
+    pub from_node_id: String,
+    pub to_node_id: String,
+    pub actions: Vec<PlayerActionItem>,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

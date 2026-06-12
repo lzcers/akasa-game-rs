@@ -4,6 +4,7 @@ import {
   cloneSharedGameSession,
   loadStoredGameSave,
   restoreExistingGameSession,
+  selectStorylineNodeForSession,
 } from '../session/restoreRuntime';
 import {
   bootstrapOpeningSession,
@@ -57,6 +58,9 @@ export function createGameUIActions(
     ),
     cloneSharedSession: (sourceSessionId, sourceRound = null) => (
       cloneSharedGameSession(createSessionRestoreRuntime(set, get), sourceSessionId, sourceRound)
+    ),
+    selectStorylineNode: (sessionId, nodeId) => (
+      selectStorylineNodeForSession(createSessionRestoreRuntime(set, get), sessionId, nodeId)
     ),
     resetGame: () => {
       const runtime = resetGameWithBindings(set);

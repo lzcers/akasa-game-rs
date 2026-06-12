@@ -163,102 +163,104 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
               </>
             ) : null}
           </div>
-          <div className="relative shrink-0">
+          <div className="flex shrink-0 items-center gap-1.5">
             <SecondaryButton
               type="button"
-              onClick={() => setIsUtilityMenuOpen((prev) => !prev)}
-              className="min-h-0 gap-1.5 px-2 py-1 text-[0.72rem] leading-4 sm:text-xs"
-              aria-label="打开菜单"
+              disabled={!sessionId}
+              title={sessionId ? "查看故事线" : "第一段回响显影后可查看故事线"}
+              onClick={() => {
+                if (!sessionId) {
+                  return;
+                }
+                onOpenStoryline();
+                setIsUtilityMenuOpen(false);
+              }}
+              className="game-toolbar-icon-btn"
+              aria-label="查看故事线"
             >
-              <MoreHorizontal className="h-3.5 w-3.5" />
-              菜单
+              <GitBranch className="h-4 w-4 flex-none" />
             </SecondaryButton>
-            {isUtilityMenuOpen ? (
-              <div className="absolute bottom-[calc(100%+0.45rem)] right-0 z-[80] min-w-[8.8rem] rounded-[0.95rem] border border-[rgba(116,103,80,0.5)] bg-[rgba(7,13,24,0.96)] p-1.5 shadow-[0_10px_24px_rgba(0,0,0,0.45)]">
-                <button
-                  type="button"
-                  onClick={() => {
-                    onBackToLobby();
-                    setIsUtilityMenuOpen(false);
-                  }}
-                  className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] sm:text-xs"
-                >
-                  <House className="h-3.5 w-3.5" />
-                  返回回响厅
-                </button>
-                <button
-                  type="button"
-                  disabled={!hasGeneratedProfiles}
-                  title={
-                    hasGeneratedProfiles ? "查看回响记录" : "记录仍在显影中"
-                  }
-                  onClick={() => {
-                    if (!hasGeneratedProfiles) {
-                      return;
+            <div className="relative">
+              <SecondaryButton
+                type="button"
+                onClick={() => setIsUtilityMenuOpen((prev) => !prev)}
+                className="game-toolbar-icon-btn"
+                aria-label="打开菜单"
+                title="打开菜单"
+              >
+                <MoreHorizontal className="h-4 w-4 flex-none" />
+              </SecondaryButton>
+              {isUtilityMenuOpen ? (
+                <div className="absolute bottom-[calc(100%+0.45rem)] right-0 z-[80] min-w-[8.8rem] rounded-[0.95rem] border border-[rgba(116,103,80,0.5)] bg-[rgba(7,13,24,0.96)] p-1.5 shadow-[0_10px_24px_rgba(0,0,0,0.45)]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onBackToLobby();
+                      setIsUtilityMenuOpen(false);
+                    }}
+                    className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] sm:text-xs"
+                  >
+                    <House className="h-3.5 w-3.5" />
+                    返回回响厅
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!hasGeneratedProfiles}
+                    title={
+                      hasGeneratedProfiles ? "查看回响记录" : "记录仍在显影中"
                     }
-                    setIsRecordViewerOpen(true);
-                    setIsUtilityMenuOpen(false);
-                  }}
-                  className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] disabled:cursor-not-allowed disabled:text-[#8f98ab] disabled:hover:bg-transparent sm:text-xs"
-                >
-                  <BookOpenText className="h-3.5 w-3.5" />
-                  查看回响记录
-                </button>
-                <button
-                  type="button"
-                  disabled={!sessionId}
-                  title={sessionId ? "查看故事线" : "第一段回响显影后可查看故事线"}
-                  onClick={() => {
-                    if (!sessionId) {
-                      return;
-                    }
-                    onOpenStoryline();
-                    setIsUtilityMenuOpen(false);
-                  }}
-                  className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] disabled:cursor-not-allowed disabled:text-[#8f98ab] disabled:hover:bg-transparent sm:text-xs"
-                >
-                  <GitBranch className="h-3.5 w-3.5" />
-                  故事线
-                </button>
-                <button
-                  type="button"
-                  disabled={isArchiveActionDisabled}
-                  title={archiveActionUnavailableReason ?? "封存记录"}
-                  onClick={() => {
-                    if (isArchiveActionDisabled) {
-                      return;
-                    }
-                    void onSave();
-                    setIsUtilityMenuOpen(false);
-                  }}
-                  className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] disabled:cursor-not-allowed disabled:text-[#8f98ab] disabled:hover:bg-transparent sm:text-xs"
-                >
-                  <Save className="h-3.5 w-3.5" />
-                  存档
-                </button>
-                <button
-                  type="button"
-                  disabled={isArchiveActionDisabled}
-                  title={archiveActionUnavailableReason ?? "分享记录"}
-                  onClick={() => {
-                    if (isArchiveActionDisabled) {
-                      return;
-                    }
-                    setShareCardOpenKey(archiveActionKey);
-                    setIsUtilityMenuOpen(false);
-                  }}
-                  className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] disabled:cursor-not-allowed disabled:text-[#8f98ab] disabled:hover:bg-transparent sm:text-xs"
-                >
-                  <Share2 className="h-3.5 w-3.5" />
-                  分享记录
-                </button>
-                {isArchiveActionDisabled && archiveActionUnavailableReason ? (
-                  <p className="px-2 py-1 text-[0.68rem] leading-4 text-[#8f98ab]">
-                    {archiveActionUnavailableReason}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
+                    onClick={() => {
+                      if (!hasGeneratedProfiles) {
+                        return;
+                      }
+                      setIsRecordViewerOpen(true);
+                      setIsUtilityMenuOpen(false);
+                    }}
+                    className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] disabled:cursor-not-allowed disabled:text-[#8f98ab] disabled:hover:bg-transparent sm:text-xs"
+                  >
+                    <BookOpenText className="h-3.5 w-3.5" />
+                    查看回响记录
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isArchiveActionDisabled}
+                    title={archiveActionUnavailableReason ?? "封存记录"}
+                    onClick={() => {
+                      if (isArchiveActionDisabled) {
+                        return;
+                      }
+                      void onSave();
+                      setIsUtilityMenuOpen(false);
+                    }}
+                    className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] disabled:cursor-not-allowed disabled:text-[#8f98ab] disabled:hover:bg-transparent sm:text-xs"
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                    存档
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isArchiveActionDisabled}
+                    title={archiveActionUnavailableReason ?? "分享记录"}
+                    onClick={() => {
+                      if (isArchiveActionDisabled) {
+                        return;
+                      }
+                      setShareCardOpenKey(archiveActionKey);
+                      setIsUtilityMenuOpen(false);
+                    }}
+                    className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] disabled:cursor-not-allowed disabled:text-[#8f98ab] disabled:hover:bg-transparent sm:text-xs"
+                  >
+                    <Share2 className="h-3.5 w-3.5" />
+                    分享记录
+                  </button>
+                  {isArchiveActionDisabled && archiveActionUnavailableReason ? (
+                    <p className="px-2 py-1 text-[0.68rem] leading-4 text-[#8f98ab]">
+                      {archiveActionUnavailableReason}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
       </div>

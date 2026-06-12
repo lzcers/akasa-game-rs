@@ -3,6 +3,7 @@ import {
   cloneGameSession,
   getGameSession,
   loadGameSessionFromArchive,
+  selectGameSessionStorylineNode,
 } from '../../lib/api';
 import {
   getAnalyticsSourceSessionId,
@@ -155,4 +156,40 @@ export async function cloneSharedGameSession(
   })();
 
   return trackCloneRequest(targetSessionId, sourceRound, clonePromise);
+}
+
+export async function selectStorylineNodeForSession(
+  runtime: SessionRestoreRuntime,
+  sessionId: string,
+  nodeId: string,
+): Promise<{ sessionId: string; isEnding: boolean }> {
+  const targetSessionId = sessionId.trim();
+  const targetNodeId = nodeId.trim();
+  if (!targetSessionId || !targetNodeId) {
+    throw new Error('未找到要切换的故事节点。');
+  }
+
+  runtime.set({
+    isLoading: true,
+    error: null,
+  });
+
+  try {
+    const selected = await selectGameSessionStorylineNode(targetSessionId, {
+      nodeId: targetNodeId,
+    });
+    runtime.closeSessionStream();
+    activateSessionSnapshot(runtime.set, selected, runtime.connectSessionStream);
+    await loadCompleteSessionRounds(selected.sessionId);
+    return {
+      sessionId: selected.sessionId,
+      isEnding: selected.worldState.isEnding || selected.flowEnd,
+    };
+  } catch (error) {
+    runtime.set({
+      isLoading: false,
+      error: error instanceof Error ? error.message : '切换故事线失败。',
+    });
+    throw error;
+  }
 }

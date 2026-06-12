@@ -237,6 +237,39 @@ export interface SessionRoundsPageData {
   hasMore: boolean;
 }
 
+export interface StorylineNodeData {
+  nodeId: string;
+  parentNodeId?: string | null;
+  round: number;
+  sequenceIndex: number;
+  phase: TurnPhase;
+  flowEnd: boolean;
+  title: string;
+  narrationText: string;
+  createdAt: string;
+  updatedAt: string;
+  lastAccessedAt: string;
+}
+
+export interface StorylineEdgeData {
+  fromNodeId: string;
+  toNodeId: string;
+  actions: PlayerActionItem[];
+  createdAt: string;
+}
+
+export interface StorylineData {
+  sessionId: string;
+  rootNodeId: string;
+  activeNodeId: string;
+  nodes: StorylineNodeData[];
+  edges: StorylineEdgeData[];
+}
+
+export interface SelectStorylineNodeInput {
+  nodeId: string;
+}
+
 export interface GetSessionRoundsOptions {
   beforeRound?: number | null;
   limit?: number;
@@ -412,6 +445,25 @@ export function getGameSessionRounds(
 
   return requestJson<SessionRoundsPageData>(
     withApiOrigin(`/api/game-sessions/${encodeURIComponent(sessionId)}/rounds${search}`),
+  );
+}
+
+export function getGameSessionStoryline(sessionId: string) {
+  return requestJson<StorylineData>(
+    withApiOrigin(`/api/game-sessions/${encodeURIComponent(sessionId)}/storyline`),
+  );
+}
+
+export function selectGameSessionStorylineNode(
+  sessionId: string,
+  input: SelectStorylineNodeInput,
+) {
+  return requestJson<GameSessionWorldStateData>(
+    withApiOrigin(`/api/game-sessions/${encodeURIComponent(sessionId)}/storyline/select`),
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
   );
 }
 

@@ -43,9 +43,7 @@ fn engine_turn_index_for_archive_state(turn_state: &TurnStateArchive) -> u64 {
         crate::session_history::TurnPhase::Simulation
         | crate::session_history::TurnPhase::Application
         | crate::session_history::TurnPhase::AwaitingPlayer
-        | crate::session_history::TurnPhase::Failed => {
-            turn_state.active_turn_id.saturating_sub(1)
-        }
+        | crate::session_history::TurnPhase::Failed => turn_state.active_turn_id.saturating_sub(1),
         crate::session_history::TurnPhase::Start
         | crate::session_history::TurnPhase::TurnCompleted
         | crate::session_history::TurnPhase::Ended => turn_state.turn_index,

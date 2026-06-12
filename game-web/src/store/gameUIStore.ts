@@ -78,6 +78,8 @@ export interface GameUIActions {
   restoreSession: (sessionId: string) => Promise<void>;
   // 操作：基于分享链接复制一份独立会话并切换到该分支。
   cloneSharedSession: (sourceSessionId: string, sourceRound?: number | null) => Promise<{ sessionId: string; isEnding: boolean }>;
+  // 操作：切换到故事线中的指定节点，并从该节点继续游玩。
+  selectStorylineNode: (sessionId: string, nodeId: string) => Promise<{ sessionId: string; isEnding: boolean }>;
   // 操作：重置本地游戏状态并关闭流连接。
   resetGame: () => void;
 }

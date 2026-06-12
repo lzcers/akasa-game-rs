@@ -8,14 +8,16 @@ import React, {
 import { ArrowLeft, GitBranch, LocateFixed, MousePointer2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { ScreenShell, StoryFrame } from "../components/AkashicUI";
+import { appRoutes, routeWithSession } from "../lib/appRoutes";
 import {
-  appRoutes,
-  routeWithFocusedRound,
-  routeWithSession,
-} from "../lib/appRoutes";
+  getGameSessionStoryline,
+  type StorylineData,
+  type StorylineEdgeData,
+  type StorylineNodeData,
+} from "../lib/api";
 import { cn } from "../lib/utils";
-import { useGameInternalStore, type RoundState } from "../store/gameStore";
-import { loadCompleteSessionRounds } from "../store/session/roundHistoryRuntime";
+import { useGameInternalStore } from "../store/gameStore";
+import { useGameUIStore } from "../store/gameUIStore";
 
 interface StorylineNode {
   id: string;
@@ -47,8 +49,7 @@ const ROUND_WIDTH = 164;
 const ROUND_HEIGHT = 58;
 const LEVEL_GAP = 108;
 const CANVAS_PADDING = 70;
-const GRAPH_WIDTH = ROUND_WIDTH + CANVAS_PADDING * 2;
-const TREE_CENTER_X = GRAPH_WIDTH / 2;
+const SIBLING_GAP = 34;
 
 function trimText(
   value: string | null | undefined,
@@ -78,66 +79,104 @@ function edgePath(from: StorylineNode, to: StorylineNode): string {
   ].join(" ");
 }
 
-function incomingChoiceFromParent(
-  rounds: RoundState[],
-  index: number,
-): string | null {
-  if (index === 0) {
+function incomingChoiceTitle(edge: StorylineEdgeData | undefined): string | null {
+  if (!edge) {
     return null;
   }
 
-  const parentRound = rounds[index - 1];
-  return trimText(parentRound?.selectedChoiceText, "继续回响");
+  const firstAction = edge.actions[0];
+  if (!firstAction) {
+    return "继续回响";
+  }
+
+  return trimText(firstAction.title || firstAction.action, "继续回响");
 }
 
-function buildStorylineGraph(
-  roundStates: Record<number, RoundState>,
-): StorylineGraph {
-  const rounds = Object.values(roundStates)
-    .filter(
-      (round) =>
-        round.narrationText.trim() ||
-        round.choices.length > 0 ||
-        round.branchExplorations.length > 0 ||
-        round.selectedChoiceText ||
-        round.isAwaitingNarration,
-    )
-    .sort((left, right) => left.round - right.round);
+function sortStorylineNodes(
+  left: StorylineNodeData,
+  right: StorylineNodeData,
+): number {
+  return (
+    left.round - right.round ||
+    left.sequenceIndex - right.sequenceIndex ||
+    left.nodeId.localeCompare(right.nodeId)
+  );
+}
 
+function buildStorylineGraph(storyline: StorylineData | null): StorylineGraph {
+  if (!storyline) {
+    return {
+      nodes: [],
+      edges: [],
+      width: ROUND_WIDTH + CANVAS_PADDING * 2,
+      height: 480,
+    };
+  }
+
+  const sourceNodes = storyline.nodes
+    .filter((node) => node.nodeId !== storyline.rootNodeId)
+    .sort(sortStorylineNodes);
+  const nodeIds = new Set(sourceNodes.map((node) => node.nodeId));
+  const incomingEdges = new Map<string, StorylineEdgeData>();
+  const graphEdges = storyline.edges.filter(
+    (edge) => nodeIds.has(edge.fromNodeId) && nodeIds.has(edge.toNodeId),
+  );
+
+  for (const edge of graphEdges) {
+    incomingEdges.set(edge.toNodeId, edge);
+  }
+
+  const levelKeys = [...new Set(sourceNodes.map((node) => node.round))].sort(
+    (left, right) => left - right,
+  );
+  const levelIndexByRound = new Map(
+    levelKeys.map((round, index) => [round, index] as const),
+  );
+  const nodesByLevel = new Map<number, StorylineNodeData[]>();
+  for (const node of sourceNodes) {
+    const levelIndex = levelIndexByRound.get(node.round) ?? 0;
+    const levelNodes = nodesByLevel.get(levelIndex) ?? [];
+    levelNodes.push(node);
+    nodesByLevel.set(levelIndex, levelNodes);
+  }
+
+  const widestLevelCount = Math.max(
+    1,
+    ...[...nodesByLevel.values()].map((levelNodes) => levelNodes.length),
+  );
+  const graphWidth =
+    widestLevelCount * ROUND_WIDTH +
+    Math.max(0, widestLevelCount - 1) * SIBLING_GAP +
+    CANVAS_PADDING * 2;
   const nodes: StorylineNode[] = [];
-  const edges: StorylineEdge[] = [];
-  const roundNodeIds = new Map<number, string>();
 
-  rounds.forEach((roundState) => {
-    roundNodeIds.set(roundState.round, `round-${roundState.round}`);
-  });
+  for (const [levelIndex, levelNodes] of nodesByLevel.entries()) {
+    const levelWidth =
+      levelNodes.length * ROUND_WIDTH +
+      Math.max(0, levelNodes.length - 1) * SIBLING_GAP;
+    const startX = (graphWidth - levelWidth) / 2;
 
-  rounds.forEach((roundState, index) => {
-    const roundNodeId = `round-${roundState.round}`;
-    const x = TREE_CENTER_X - ROUND_WIDTH / 2;
-    const y = CANVAS_PADDING + index * LEVEL_GAP;
-    nodes.push({
-      id: roundNodeId,
-      kind: "round",
-      round: roundState.round,
-      x,
-      y,
-      width: ROUND_WIDTH,
-      height: ROUND_HEIGHT,
-      title: roundState.title || `第 ${roundState.round} 章`,
-      summary: trimText(roundState.narrationText, "这一章仍在铺展。"),
-      incomingChoice: incomingChoiceFromParent(rounds, index),
-    });
-
-    const nextRoundNodeId = roundNodeIds.get(roundState.round + 1);
-    if (nextRoundNodeId) {
-      edges.push({
-        id: `${roundNodeId}-${nextRoundNodeId}`,
-        from: roundNodeId,
-        to: nextRoundNodeId,
+    levelNodes.sort(sortStorylineNodes).forEach((node, index) => {
+      nodes.push({
+        id: node.nodeId,
+        kind: "round",
+        round: node.round,
+        x: startX + index * (ROUND_WIDTH + SIBLING_GAP),
+        y: CANVAS_PADDING + levelIndex * LEVEL_GAP,
+        width: ROUND_WIDTH,
+        height: ROUND_HEIGHT,
+        title: node.title || (node.round === 0 ? "根节点" : `第 ${node.round} 章`),
+        summary: trimText(node.narrationText, "这一章仍在铺展。"),
+        incomingChoice: incomingChoiceTitle(incomingEdges.get(node.nodeId)),
       });
-    }
-  });
+    });
+  }
+
+  const edges: StorylineEdge[] = graphEdges.map((edge) => ({
+    id: `${edge.fromNodeId}-${edge.toNodeId}`,
+    from: edge.fromNodeId,
+    to: edge.toNodeId,
+  }));
 
   const deepestContentBottom = nodes.reduce(
     (max, node) => Math.max(max, node.y + node.height),
@@ -147,7 +186,7 @@ function buildStorylineGraph(
   return {
     nodes,
     edges,
-    width: GRAPH_WIDTH,
+    width: graphWidth,
     height: Math.max(480, deepestContentBottom + CANVAS_PADDING),
   };
 }
@@ -163,9 +202,17 @@ const StorylinePage: React.FC = () => {
     originY: number;
   } | null>(null);
   const sessionId = useGameInternalStore((state) => state.sessionId);
-  const roundStates = useGameInternalStore((state) => state.roundStates);
-  const graph = useMemo(() => buildStorylineGraph(roundStates), [roundStates]);
-  const [isLoadingRounds, setIsLoadingRounds] = useState(false);
+  const selectStorylineNode = useGameUIStore(
+    (state) => state.selectStorylineNode,
+  );
+  const [storyline, setStoryline] = useState<StorylineData | null>(null);
+  const visibleStoryline = storyline?.sessionId === sessionId ? storyline : null;
+  const graph = useMemo(
+    () => buildStorylineGraph(visibleStoryline),
+    [visibleStoryline],
+  );
+  const [isLoadingStoryline, setIsLoadingStoryline] = useState(false);
+  const [selectingNodeId, setSelectingNodeId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [view, setView] = useState({ x: 0, y: 0 });
 
@@ -189,26 +236,30 @@ const StorylinePage: React.FC = () => {
 
     let cancelled = false;
 
-    const loadRounds = async () => {
-      setIsLoadingRounds(true);
+    const loadStoryline = async () => {
+      setIsLoadingStoryline(true);
       setFeedback(null);
       try {
-        await loadCompleteSessionRounds(sessionId);
+        const nextStoryline = await getGameSessionStoryline(sessionId);
+        if (!cancelled) {
+          setStoryline(nextStoryline);
+        }
       } catch (error) {
         if (cancelled) {
           return;
         }
+        setStoryline(null);
         setFeedback(
           error instanceof Error ? error.message : "读取故事线失败。",
         );
       } finally {
         if (!cancelled) {
-          setIsLoadingRounds(false);
+          setIsLoadingStoryline(false);
         }
       }
     };
 
-    void loadRounds();
+    void loadStoryline();
 
     return () => {
       cancelled = true;
@@ -232,15 +283,29 @@ const StorylinePage: React.FC = () => {
     focusGraph();
   }, [focusGraph]);
 
-  const openRound = useCallback(
-    (round: number) => {
+  const openNode = useCallback(
+    async (node: StorylineNode) => {
       if (!sessionId) {
         return;
       }
 
-      navigate(routeWithFocusedRound(appRoutes.gameplay, sessionId, round));
+      setSelectingNodeId(node.id);
+      setFeedback("正在切换故事线...");
+      try {
+        const selected = await selectStorylineNode(sessionId, node.id);
+        navigate(
+          routeWithSession(
+            selected.isEnding ? appRoutes.ending : appRoutes.gameplay,
+            selected.sessionId,
+          ),
+        );
+      } catch (error) {
+        setFeedback(error instanceof Error ? error.message : "切换故事线失败。");
+      } finally {
+        setSelectingNodeId(null);
+      }
     },
-    [navigate, sessionId],
+    [navigate, selectStorylineNode, sessionId],
   );
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -310,9 +375,9 @@ const StorylinePage: React.FC = () => {
             </div>
           </header>
 
-          {feedback || isLoadingRounds ? (
+          {feedback || isLoadingStoryline ? (
             <div className="rounded-[0.95rem] border border-[#d6c3a0]/20 bg-[#121927]/82 px-3 py-2 text-xs leading-5 text-[#d9cbb1]">
-              {isLoadingRounds ? "正在补全故事线..." : feedback}
+              {isLoadingStoryline ? "正在读取完整故事线..." : feedback}
             </div>
           ) : null}
 
@@ -401,9 +466,15 @@ const StorylinePage: React.FC = () => {
                   <button
                     key={node.id}
                     type="button"
-                    onClick={() => openRound(node.round)}
+                    onClick={() => {
+                      void openNode(node);
+                    }}
+                    disabled={selectingNodeId !== null}
                     className={cn(
                       "absolute flex flex-col items-center justify-center overflow-hidden rounded-[0.6rem] border border-[#d8c18f]/42 bg-[linear-gradient(180deg,rgba(18,30,51,0.96),rgba(10,17,31,0.94))] px-2 py-1.5 text-center shadow-[0_6px_14px_rgba(0,0,0,0.2)] transition-transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#d8c18f]/45",
+                      selectingNodeId === node.id &&
+                        "border-[#8fa4ca]/70 text-[#8fa4ca]",
+                      selectingNodeId !== null && "cursor-wait hover:translate-y-0",
                     )}
                     style={{
                       left: node.x,
@@ -411,7 +482,7 @@ const StorylinePage: React.FC = () => {
                       width: node.width,
                       height: node.height,
                     }}
-                    title={`跳转到第 ${node.round} 章`}
+                    title={`切换到第 ${node.round} 章`}
                   >
                     <span className="line-clamp-1 max-w-full text-[0.74rem] font-semibold leading-4 text-[#f6eddc]">
                       {node.title}
