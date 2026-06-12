@@ -84,6 +84,7 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
   onTypewriterComplete,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const narrationContentRef = useRef<HTMLDivElement | null>(null);
   const scrollTrackRef = useRef<HTMLDivElement | null>(null);
   const scrollbarDragRef = useRef<{
     pointerId: number;
@@ -157,47 +158,6 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!skipRestoredNarrationAnimation || !scrollContainerRef.current) {
-      return;
-    }
-
-    const frameId = window.requestAnimationFrame(() => {
-      if (!scrollContainerRef.current) {
-        return;
-      }
-      scrollContainerRef.current.scrollTop =
-        scrollContainerRef.current.scrollHeight;
-    });
-
-    return () => window.cancelAnimationFrame(frameId);
-  }, [currentRound, narrationHistory, skipRestoredNarrationAnimation]);
-
-  useEffect(() => {
-    if (skipRestoredNarrationAnimation || isScrollbarDragging) {
-      return undefined;
-    }
-
-    const frameId = window.requestAnimationFrame(() => {
-      const scrollElement = scrollContainerRef.current;
-      if (!scrollElement) {
-        return;
-      }
-
-      scrollElement.scrollTop = scrollElement.scrollHeight;
-      updateNarrationScrollbar();
-    });
-
-    return () => window.cancelAnimationFrame(frameId);
-  }, [
-    currentRound,
-    isAwaitingNarration,
-    isScrollbarDragging,
-    narrationHistory,
-    skipRestoredNarrationAnimation,
-    updateNarrationScrollbar,
-  ]);
-
-  useEffect(() => {
     const frameId = window.requestAnimationFrame(updateNarrationScrollbar);
     window.addEventListener("resize", updateNarrationScrollbar);
 
@@ -211,6 +171,33 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
     narrationHistory,
     updateNarrationScrollbar,
   ]);
+
+  useEffect(() => {
+    const contentElement = narrationContentRef.current;
+    if (!contentElement || typeof ResizeObserver === "undefined") {
+      return undefined;
+    }
+
+    let frameId: number | null = null;
+    const resizeObserver = new ResizeObserver(() => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+
+      frameId = window.requestAnimationFrame(() => {
+        frameId = null;
+        updateNarrationScrollbar();
+      });
+    });
+    resizeObserver.observe(contentElement);
+
+    return () => {
+      resizeObserver.disconnect();
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
+  }, [updateNarrationScrollbar]);
 
   const scrollByThumbDelta = useCallback(
     (deltaY: number) => {
@@ -470,7 +457,10 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
             className="scrollbar-none min-h-0 flex-1 touch-pan-y overscroll-contain overflow-y-auto"
             onScroll={updateNarrationScrollbar}
           >
-            <div className="h-full space-y-5 text-[1rem] font-semibold leading-[1.82] text-[#f6eddc] sm:text-[1rem] md:text-[1.2rem]">
+            <div
+              ref={narrationContentRef}
+              className="h-full space-y-5 text-[1rem] font-semibold leading-[1.82] text-[#f6eddc] sm:text-[1rem] md:text-[1.2rem]"
+            >
               {narrationHistory.map((entry) => {
                 return (
                   <NarrationHistoryItem

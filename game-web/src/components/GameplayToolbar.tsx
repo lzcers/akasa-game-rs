@@ -278,18 +278,16 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
             aria-hidden="true"
           />
           <div className="relative z-10 w-full max-w-3xl">
-            <div className="mb-3 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShareCardOpenKey(null)}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[rgba(116,103,80,0.5)] bg-[rgba(8,14,26,0.9)] text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)]"
-                aria-label="关闭分享卡片"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
             {isShareLoading ? (
-              <div className="game-card rounded-3xl border border-[rgba(116,103,80,0.5)] bg-[rgba(8,14,26,0.95)] px-6 py-8 text-center text-sm text-[#d9cbb1] shadow-[0_24px_80px_rgba(1,8,20,0.6)]">
+              <div className="game-card relative rounded-3xl border border-[rgba(116,103,80,0.5)] bg-[rgba(8,14,26,0.95)] px-14 py-8 text-center text-sm text-[#d9cbb1] shadow-[0_24px_80px_rgba(1,8,20,0.6)]">
+                <button
+                  type="button"
+                  onClick={() => setShareCardOpenKey(null)}
+                  className="absolute right-3 top-3 inline-flex h-9 w-9 items-center justify-center rounded-full border border-[rgba(116,103,80,0.5)] bg-[rgba(8,14,26,0.72)] text-[#f3ead8] backdrop-blur-sm transition-colors hover:bg-[rgba(188,169,124,0.14)] sm:right-4 sm:top-4 sm:h-10 sm:w-10"
+                  aria-label="关闭分享卡片"
+                >
+                  <X className="h-4 w-4" />
+                </button>
                 正在整理这一段记录的共鸣摘要...
               </div>
             ) : (
@@ -302,6 +300,7 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
                 <StoryShareCard
                   summary={resolvedShareSummary}
                   gameUrl={shareGameUrl}
+                  onClose={() => setShareCardOpenKey(null)}
                 />
               </div>
             )}

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Compass, Copy, Download, Sparkles } from "lucide-react";
+import { Compass, Copy, Download, Sparkles, X } from "lucide-react";
 
 import { cn } from "../lib/utils";
 import { createQrCodeMatrix, qrCodeToSvgPath } from "../lib/qrCode";
@@ -13,6 +13,8 @@ interface StoryShareCardProps {
   title?: string;
   sessionLabel?: string;
   ctaLabel?: string;
+  onClose?: () => void;
+  closeLabel?: string;
 }
 
 const StoryShareCard: React.FC<StoryShareCardProps> = ({
@@ -23,6 +25,8 @@ const StoryShareCard: React.FC<StoryShareCardProps> = ({
   title = "这一段记录，正在等待新的共鸣",
   sessionLabel = "回响摘录",
   ctaLabel = "分享入口",
+  onClose,
+  closeLabel = "关闭分享卡片",
 }) => {
   const content = summary.trim();
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -96,7 +100,18 @@ const StoryShareCard: React.FC<StoryShareCardProps> = ({
         <div className="absolute bottom-6 right-6 h-20 w-20 rounded-full border border-[#d8c18f]/10" />
       </div>
 
-      <div className="relative border-b border-[rgba(116,103,80,0.42)] px-4 py-3.5 sm:px-6 sm:py-5">
+      {onClose ? (
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-3 top-3 z-20 inline-flex h-9 w-9 items-center justify-center rounded-full border border-[rgba(116,103,80,0.5)] bg-[rgba(8,14,26,0.72)] text-[#f3ead8] backdrop-blur-sm transition-colors hover:bg-[rgba(188,169,124,0.14)] sm:right-4 sm:top-4 sm:h-10 sm:w-10"
+          aria-label={closeLabel}
+        >
+          <X className="h-4 w-4" />
+        </button>
+      ) : null}
+
+      <div className="relative border-b border-[rgba(116,103,80,0.42)] px-4 py-3.5 pr-14 sm:px-6 sm:py-5 sm:pr-20">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-2 sm:space-y-3">
             <div className="inline-flex items-center gap-1.5 rounded-full border border-[#d8c18f]/20 bg-[#d8c18f]/10 px-2.5 py-0.5 text-[9px] tracking-[0.2em] text-[#e6d1a2] uppercase sm:gap-2 sm:px-3 sm:py-1 sm:text-[10px] sm:tracking-[0.28em]">
@@ -128,7 +143,7 @@ const StoryShareCard: React.FC<StoryShareCardProps> = ({
               <div className="mb-2.5 flex items-center gap-3 sm:mb-4">
                 <div className="h-px flex-1 bg-gradient-to-r from-[#d8c18f]/70 to-transparent" />
                 <span className="text-[10px] tracking-[0.22em] text-[#e6d1a2]/85 uppercase sm:text-[11px] sm:tracking-[0.28em]">
-                    回响摘录
+                  回响摘录
                 </span>
               </div>
               <p className="line-clamp-4 text-sm leading-6 text-[#f3ead8]/92 sm:line-clamp-none sm:text-[1.05rem] sm:leading-8">
@@ -140,13 +155,13 @@ const StoryShareCard: React.FC<StoryShareCardProps> = ({
           <div className="grid grid-cols-[minmax(0,1fr)_5.5rem] items-center gap-3 rounded-[1.1rem] border border-cyan-100/15 bg-cyan-100/6 p-3 backdrop-blur-sm sm:grid-cols-[minmax(0,1fr)_7rem] sm:rounded-[1.4rem] sm:p-4 lg:block">
             <div>
               <p className="text-[10px] tracking-[0.22em] text-cyan-100/75 uppercase sm:text-[11px] sm:tracking-[0.28em]">
-                  共鸣入口
+                共鸣入口
               </p>
               <p className="mt-2 text-xs leading-5 text-[#a8b4c7] sm:mt-3 sm:text-sm sm:leading-6">
-                  扫描二维码复制一条独立共鸣分支，沿着这段记录继续推进故事。
+                扫描二维码复制一条独立共鸣分支，沿着这段记录继续推进故事。
               </p>
             </div>
-            <div className="rounded-[0.85rem] border border-white/10 bg-white p-1.5 shadow-[0_16px_36px_rgba(0,0,0,0.18)] sm:rounded-[1.1rem] sm:p-2.5 lg:mt-3">
+            <div className="rounded-[0.85rem] border border-white/10 bg-white overflow-hidden shadow-[0_16px_36px_rgba(0,0,0,0.18)] sm:rounded-[1.1rem] sm:p-2.5 lg:mt-3">
               {typeof qrCode === "string" ? (
                 <div className="flex aspect-square items-center justify-center rounded-xl bg-[#f4ecd8] px-3 text-center text-xs leading-5 text-[#111624]">
                   {qrCode}
@@ -171,7 +186,7 @@ const StoryShareCard: React.FC<StoryShareCardProps> = ({
       <div className="relative flex flex-col items-start gap-3 border-t border-[rgba(116,103,80,0.42)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-6 sm:py-4">
         <div className="space-y-1">
           <p className="text-[10px] tracking-[0.2em] text-[#8f98ab] uppercase sm:text-xs sm:tracking-[0.24em]">
-              可分享记录
+            可分享记录
           </p>
           {downloadError ? (
             <p className="text-xs leading-5 text-amber-100/85">
@@ -179,9 +194,7 @@ const StoryShareCard: React.FC<StoryShareCardProps> = ({
             </p>
           ) : null}
           {copyFeedback ? (
-            <p className="text-xs leading-5 text-cyan-100/85">
-              {copyFeedback}
-            </p>
+            <p className="text-xs leading-5 text-cyan-100/85">{copyFeedback}</p>
           ) : null}
         </div>
 
