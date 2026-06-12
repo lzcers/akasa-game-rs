@@ -433,8 +433,71 @@ const GameplayPage: React.FC = () => {
     });
   }, [currentRound, sessionId]);
 
+  const forgetSubmittedChoicesFromRound = useCallback(
+    (round: number) => {
+      setSubmittedChoiceState((prev) => {
+        if (prev.sessionId !== sessionId) {
+          return prev;
+        }
+
+        let changed = false;
+        const next: SubmittedChoiceState["choices"] = {};
+        for (const [roundKey, choice] of Object.entries(prev.choices)) {
+          if (Number(roundKey) >= round) {
+            changed = true;
+            continue;
+          }
+          next[Number(roundKey)] = choice;
+        }
+
+        return changed ? { sessionId, choices: next } : prev;
+      });
+    },
+    [sessionId],
+  );
+
   const handleChoiceClick = useCallback(
     async (choice: Choice) => {
+      if (choice.visited && !activeObsession) {
+        if (!sessionId) {
+          setFeedback("当前还没有可回溯的记录。");
+          return;
+        }
+        if (isNarrationOutputPending || isLoading) {
+          setFeedback("记录正在共鸣中，请稍后再回溯。");
+          return;
+        }
+
+        try {
+          setFeedback(`正在从第 ${currentRound} 章回溯...`);
+          await backtrackChoice(currentRound, {
+            input: {
+              actions: [{
+                character_name: playableCharacterName,
+                action_type: 'selected_option',
+                title: choice.text,
+                action: choice.action,
+                motivation_and_risk: choice.motivationAndRisk,
+              }],
+            },
+            displayText: choice.text,
+            visited: choice.visited,
+          });
+          forgetSubmittedChoicesFromRound(currentRound);
+          setExpandedChoicePanelRound(null);
+          setRoundControls({
+            round: currentRound + 1,
+            activeObsession: false,
+            obsessionInput: "",
+            previews: {},
+          });
+          setFeedback(null);
+        } catch (backtrackError) {
+          setFeedback(readErrorMessage(backtrackError, "回溯展开失败。"));
+        }
+        return;
+      }
+
       try {
         rememberSubmittedChoice({
           action: choice.action,
@@ -465,11 +528,17 @@ const GameplayPage: React.FC = () => {
     },
     [
       activeObsession,
+      backtrackChoice,
+      currentRound,
       forgetSubmittedChoice,
+      forgetSubmittedChoicesFromRound,
+      isLoading,
+      isNarrationOutputPending,
       playableCharacterName,
       rememberSubmittedChoice,
       readErrorMessage,
       resetChoicePanelAfterSubmission,
+      sessionId,
       submitChoice,
     ],
   );
@@ -500,7 +569,9 @@ const GameplayPage: React.FC = () => {
             }],
           },
           displayText: choice.text,
+          visited: choice.visited,
         });
+        forgetSubmittedChoicesFromRound(sourceRound);
         setExpandedChoicePanelRound(null);
         setRoundControls({
           round: sourceRound + 1,
@@ -516,6 +587,7 @@ const GameplayPage: React.FC = () => {
     [
       backtrackChoice,
       choicePanelRound,
+      forgetSubmittedChoicesFromRound,
       isLoading,
       isNarrationOutputPending,
       playableCharacterName,

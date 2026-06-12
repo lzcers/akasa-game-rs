@@ -22,6 +22,23 @@ use super::{
 
 impl SessionArchiveRepository {
     pub async fn save_flow_turn_update(&self, update: &FlowTurnUpdate) -> Result<()> {
+        self.save_flow_turn_update_with_node(update, None).await
+    }
+
+    pub async fn save_flow_turn_update_for_node(
+        &self,
+        update: &FlowTurnUpdate,
+        node_id: &str,
+    ) -> Result<()> {
+        self.save_flow_turn_update_with_node(update, Some(node_id))
+            .await
+    }
+
+    async fn save_flow_turn_update_with_node(
+        &self,
+        update: &FlowTurnUpdate,
+        node_id: Option<&str>,
+    ) -> Result<()> {
         let session_id = update.session_id.trim();
         let entity_name = update.entity_name.trim();
         if session_id.is_empty() || entity_name.is_empty() {
@@ -34,7 +51,10 @@ impl SessionArchiveRepository {
         let conn = self.db.open_connection("entity flow outputs")?;
         schema::init(&conn)?;
         let now = chrono::Utc::now().to_rfc3339();
-        let node_id = active_or_linear_node_id_for_depth(&conn, session_id, update.round, &now)?;
+        let node_id = match node_id.map(str::trim).filter(|node_id| !node_id.is_empty()) {
+            Some(node_id) => node_id.to_string(),
+            None => active_or_linear_node_id_for_depth(&conn, session_id, update.round, &now)?,
+        };
         conn.execute(
             r#"
             INSERT INTO entity_flow_outputs (

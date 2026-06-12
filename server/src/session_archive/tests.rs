@@ -355,15 +355,15 @@ async fn story_edge_actions_store_choice_option_fields() {
             },
         )
         .expect("story edge action should be stored");
-    let loaded_actions = repo
+    let loaded_actions_before_target = repo
         .load_story_edge_actions("session-choice-edge")
         .await
         .expect("story edge actions should load");
-    let choice_explorations = repo
+    let empty_choice_explorations = repo
         .load_choice_explorations("session-choice-edge")
         .await
         .expect("choice explorations should load");
-    let has_round_one_action = repo
+    let has_round_one_action_before_target = repo
         .has_story_edge_action_for_round("session-choice-edge", 1)
         .await
         .expect("round duplicate check should run");
@@ -373,7 +373,7 @@ async fn story_edge_actions_store_choice_option_fields() {
         .expect("round duplicate check should run");
 
     assert_eq!(edge_count, 1);
-    assert!(has_round_one_action);
+    assert!(!has_round_one_action_before_target);
     assert!(!has_round_two_action);
     assert_eq!(stored_action.0, "hero");
     assert_eq!(stored_action.1, None);
@@ -381,6 +381,34 @@ async fn story_edge_actions_store_choice_option_fields() {
     assert_eq!(stored_action.3, choice.option.title);
     assert_eq!(stored_action.4, choice.option.action);
     assert_eq!(stored_action.5, choice.option.motivation_and_risk);
+    assert!(loaded_actions_before_target.is_empty());
+    assert!(empty_choice_explorations.is_empty());
+    repo.update_session_turn_state("session-choice-edge", TurnPhase::Application, 1, 2)
+        .await
+        .expect("target node should become active");
+    let has_round_one_action = repo
+        .has_story_edge_action_for_round("session-choice-edge", 1)
+        .await
+        .expect("round duplicate check should run");
+    let loaded_actions = repo
+        .load_story_edge_actions("session-choice-edge")
+        .await
+        .expect("story edge actions should load");
+    repo.save_flow_turn_update(&FlowTurnUpdate {
+        session_id: "session-choice-edge".to_string(),
+        round: 2,
+        stage: TurnPhase::Application,
+        entity_name: "UpperNarrator".to_string(),
+        output_type: AgentOutputType::Text,
+        content: "你绕到钟楼背面，潮湿砖缝里透出微光。".to_string(),
+    })
+    .await
+    .expect("target narration should save");
+    let choice_explorations = repo
+        .load_choice_explorations("session-choice-edge")
+        .await
+        .expect("choice explorations should load");
+    assert!(has_round_one_action);
     assert_eq!(loaded_actions.len(), 1);
     assert_eq!(loaded_actions[0].action.action, "绕到钟楼背面");
     assert_eq!(choice_explorations.len(), 1);
@@ -527,6 +555,9 @@ async fn session_flow_turn_and_entity_context_tables_round_trip() {
     })
     .await
     .expect("story edge action should save");
+    repo.update_session_turn_state("session-db", TurnPhase::AwaitingPlayer, 2, 2)
+        .await
+        .expect("target node should become active");
     let inputs = repo
         .load_story_edge_actions("session-db")
         .await
@@ -697,6 +728,14 @@ async fn backtrack_branch_preserves_old_future_and_switches_active_path() {
         )
         .expect("story nodes should be countable");
     assert_eq!(depth_two_node_count_after_reuse, 2);
+    let reused_metadata = repo
+        .load_session_metadata("session-backtrack")
+        .await
+        .expect("metadata should load")
+        .expect("metadata should exist");
+    assert_eq!(reused_metadata.phase, TurnPhase::AwaitingPlayer);
+    assert_eq!(reused_metadata.turn_index, 2);
+    assert_eq!(reused_metadata.active_turn_id, 2);
 
     let downstream_choice = CharacterOption {
         title: "推开后门".to_string(),
@@ -739,6 +778,330 @@ async fn backtrack_branch_preserves_old_future_and_switches_active_path() {
     assert_eq!(reactivated_actions.len(), 1);
     assert_eq!(reactivated_actions[0].round, 1);
     assert_eq!(reactivated_actions[0].action.action, branch_choice.action);
+    let parent_rounds = repo
+        .load_rounds("session-backtrack")
+        .await
+        .expect("parent branch rounds should load");
+    assert_eq!(parent_rounds.len(), 2);
+    assert_eq!(
+        parent_rounds[1].narration_text.as_deref(),
+        Some("你绕到钟楼背面，潮湿砖缝里透出微光。")
+    );
+}
+
+#[tokio::test]
+async fn backtrack_generation_persists_outputs_to_prepared_branch_node() {
+    let db_path = std::env::temp_dir().join(format!(
+        "akasa-backtrack-target-node-{}.sqlite3",
+        Uuid::new_v4().simple()
+    ));
+    let repo = SessionArchiveRepository::new(AppDatabase::new(db_path.clone()));
+    let old_choice = CharacterOption {
+        title: "翻窗上屋顶，暂时躲避".to_string(),
+        action: "翻窗上屋顶，暂时躲避搜查队".to_string(),
+        motivation_and_risk: "可以避开搜查，但屋顶容易暴露身形".to_string(),
+    };
+    let branch_choice = CharacterOption {
+        title: "继续研读古卷，试图找到更多线索".to_string(),
+        action: "继续研读古卷，寻找父亲下落和猎杀标记的线索".to_string(),
+        motivation_and_risk: "能获得更多情报，但会耽误逃离时机".to_string(),
+    };
+
+    repo.save_session_created(&SessionCreated {
+        session_id: "session-backtrack-target".to_string(),
+        character_name: "hero".to_string(),
+        world_profile: "world".to_string(),
+        character_profile: "hero".to_string(),
+        key_story_beats: "beats".to_string(),
+    })
+    .await
+    .expect("session metadata should save");
+    repo.save_rounds(
+        "session-backtrack-target",
+        &[RoundHistoryEntry {
+            round: 1,
+            narration_text: Some("阁楼外传来搜查队的脚步声。".to_string()),
+            choices: vec![
+                PendingCharacterChoice {
+                    id: "choice-1".to_string(),
+                    option: old_choice.clone(),
+                },
+                PendingCharacterChoice {
+                    id: "choice-2".to_string(),
+                    option: branch_choice.clone(),
+                },
+            ],
+            ..RoundHistoryEntry::default()
+        }],
+    )
+    .await
+    .expect("round choices should save");
+    repo.update_session_turn_state("session-backtrack-target", TurnPhase::AwaitingPlayer, 1, 1)
+        .await
+        .expect("source node should become active");
+    repo.save_player_input(&PlayerInput {
+        session_id: "session-backtrack-target".to_string(),
+        round: 1,
+        actions: vec![PlayerActionItem::character_selected_option(&old_choice)],
+    })
+    .await
+    .expect("old story edge should save");
+    repo.update_session_turn_state("session-backtrack-target", TurnPhase::Application, 1, 2)
+        .await
+        .expect("old future should become active");
+    repo.save_flow_turn_update(&FlowTurnUpdate {
+        session_id: "session-backtrack-target".to_string(),
+        round: 2,
+        stage: TurnPhase::Application,
+        entity_name: "UpperNarrator".to_string(),
+        output_type: AgentOutputType::Text,
+        content: "你翻上屋顶，夜风压低了瓦片间的声响。".to_string(),
+    })
+    .await
+    .expect("old branch narration should save");
+
+    let branch = repo
+        .prepare_backtrack_branch(
+            "session-backtrack-target",
+            1,
+            &[PlayerActionItem::character_selected_option(&branch_choice)],
+        )
+        .await
+        .expect("backtrack branch should prepare");
+    assert!(!branch.reused_existing_branch);
+    assert_eq!(branch.branch_round, 2);
+    assert_ne!(branch.branch_node_id, "node-2");
+
+    repo.prepare_backtrack_branch(
+        "session-backtrack-target",
+        1,
+        &[PlayerActionItem::character_selected_option(&old_choice)],
+    )
+    .await
+    .expect("sibling branch should reactivate");
+    repo.save_player_input(&PlayerInput {
+        session_id: "session-backtrack-target".to_string(),
+        round: 1,
+        actions: vec![PlayerActionItem::character_selected_option(&branch_choice)],
+    })
+    .await
+    .expect("prepared branch edge action should save to prepared target");
+    repo.update_session_turn_state_for_node(
+        "session-backtrack-target",
+        &branch.branch_node_id,
+        TurnPhase::Application,
+    )
+    .await
+    .expect("target branch node state should update explicitly");
+    repo.save_flow_turn_update_for_node(
+        &FlowTurnUpdate {
+            session_id: "session-backtrack-target".to_string(),
+            round: 2,
+            stage: TurnPhase::Application,
+            entity_name: "UpperNarrator".to_string(),
+            output_type: AgentOutputType::Text,
+            content: "你继续研读古卷，符文在煤油灯下逐渐连成一条暗线。".to_string(),
+        },
+        &branch.branch_node_id,
+    )
+    .await
+    .expect("target branch narration should save");
+
+    let conn = Connection::open(db_path).expect("sqlite db should open");
+    let linear_narration: String = conn
+        .query_row(
+            r#"
+            SELECT content
+            FROM entity_flow_outputs
+            WHERE session_id = ?1
+                AND node_id = 'node-2'
+                AND stage = 'application'
+                AND entity_name = 'UpperNarrator'
+                AND output_type = 'text'
+            "#,
+            params!["session-backtrack-target"],
+            |row| row.get(0),
+        )
+        .expect("linear narration should remain");
+    let linear_action: String = conn
+        .query_row(
+            r#"
+            SELECT action
+            FROM story_edge_actions
+            WHERE session_id = ?1
+                AND from_node_id = 'node-1'
+                AND to_node_id = 'node-2'
+            "#,
+            params!["session-backtrack-target"],
+            |row| row.get(0),
+        )
+        .expect("linear action should remain");
+    let branch_action: String = conn
+        .query_row(
+            r#"
+            SELECT action
+            FROM story_edge_actions
+            WHERE session_id = ?1
+                AND from_node_id = 'node-1'
+                AND to_node_id = ?2
+            "#,
+            params!["session-backtrack-target", &branch.branch_node_id],
+            |row| row.get(0),
+        )
+        .expect("branch action should remain");
+    let branch_narration: String = conn
+        .query_row(
+            r#"
+            SELECT content
+            FROM entity_flow_outputs
+            WHERE session_id = ?1
+                AND node_id = ?2
+                AND stage = 'application'
+                AND entity_name = 'UpperNarrator'
+                AND output_type = 'text'
+            "#,
+            params!["session-backtrack-target", &branch.branch_node_id],
+            |row| row.get(0),
+        )
+        .expect("branch narration should exist");
+    assert_eq!(linear_narration, "你翻上屋顶，夜风压低了瓦片间的声响。");
+    assert_eq!(linear_action, old_choice.action);
+    assert_eq!(branch_action, branch_choice.action);
+    assert_eq!(
+        branch_narration,
+        "你继续研读古卷，符文在煤油灯下逐渐连成一条暗线。"
+    );
+
+    let reused = repo
+        .prepare_backtrack_branch(
+            "session-backtrack-target",
+            1,
+            &[PlayerActionItem::character_selected_option(&branch_choice)],
+        )
+        .await
+        .expect("stored branch should reactivate");
+    assert!(reused.reused_existing_branch);
+    assert_eq!(reused.branch_node_id, branch.branch_node_id);
+}
+
+#[tokio::test]
+async fn active_leaf_does_not_overlay_its_existing_child_edge() {
+    let db_path = std::env::temp_dir().join(format!(
+        "akasa-active-leaf-child-edge-{}.sqlite3",
+        Uuid::new_v4().simple()
+    ));
+    let repo = SessionArchiveRepository::new(AppDatabase::new(db_path.clone()));
+    let choice_1 = CharacterOption {
+        title: "进入二层".to_string(),
+        action: "沿楼梯进入二层".to_string(),
+        motivation_and_risk: "更接近线索，但可能遇到守卫".to_string(),
+    };
+    let choice_2 = CharacterOption {
+        title: "进入三层".to_string(),
+        action: "继续上到三层".to_string(),
+        motivation_and_risk: "视野更好，但退路变窄".to_string(),
+    };
+    let choice_3 = CharacterOption {
+        title: "推开档案室门".to_string(),
+        action: "推开三层档案室的门".to_string(),
+        motivation_and_risk: "能确认档案线索，但门后可能有埋伏".to_string(),
+    };
+
+    repo.save_session_created(&SessionCreated {
+        session_id: "session-active-leaf".to_string(),
+        character_name: "hero".to_string(),
+        world_profile: "world".to_string(),
+        character_profile: "hero".to_string(),
+        key_story_beats: "beats".to_string(),
+    })
+    .await
+    .expect("session metadata should save");
+    repo.save_rounds(
+        "session-active-leaf",
+        &[
+            RoundHistoryEntry {
+                round: 1,
+                choices: vec![PendingCharacterChoice {
+                    id: "choice-1".to_string(),
+                    option: choice_1.clone(),
+                }],
+                ..RoundHistoryEntry::default()
+            },
+            RoundHistoryEntry {
+                round: 2,
+                choices: vec![PendingCharacterChoice {
+                    id: "choice-1".to_string(),
+                    option: choice_2.clone(),
+                }],
+                ..RoundHistoryEntry::default()
+            },
+            RoundHistoryEntry {
+                round: 3,
+                choices: vec![PendingCharacterChoice {
+                    id: "choice-1".to_string(),
+                    option: choice_3.clone(),
+                }],
+                ..RoundHistoryEntry::default()
+            },
+            RoundHistoryEntry {
+                round: 4,
+                narration_text: Some("档案室门后尘埃浮起。".to_string()),
+                ..RoundHistoryEntry::default()
+            },
+        ],
+    )
+    .await
+    .expect("rounds should save");
+
+    for (round, choice) in [(1, &choice_1), (2, &choice_2), (3, &choice_3)] {
+        repo.update_session_turn_state(
+            "session-active-leaf",
+            TurnPhase::AwaitingPlayer,
+            round,
+            round,
+        )
+        .await
+        .expect("source node should become active");
+        repo.save_player_input(&PlayerInput {
+            session_id: "session-active-leaf".to_string(),
+            round,
+            actions: vec![PlayerActionItem::character_selected_option(choice)],
+        })
+        .await
+        .expect("story edge should save");
+    }
+
+    repo.update_session_turn_state("session-active-leaf", TurnPhase::AwaitingPlayer, 3, 3)
+        .await
+        .expect("round 3 should become active");
+    let leaf_actions = repo
+        .load_story_edge_actions("session-active-leaf")
+        .await
+        .expect("leaf story edge actions should load");
+    assert_eq!(leaf_actions.len(), 2);
+    assert_eq!(leaf_actions[0].round, 1);
+    assert_eq!(leaf_actions[1].round, 2);
+    assert!(
+        !repo
+            .has_story_edge_action_for_round("session-active-leaf", 3)
+            .await
+            .expect("duplicate check should run")
+    );
+
+    repo.update_session_turn_state("session-active-leaf", TurnPhase::AwaitingPlayer, 4, 4)
+        .await
+        .expect("round 4 should become active");
+    let active_path_actions = repo
+        .load_story_edge_actions("session-active-leaf")
+        .await
+        .expect("active path story edge actions should load");
+    assert_eq!(active_path_actions.len(), 3);
+    assert_eq!(active_path_actions[2].round, 3);
+    assert!(
+        repo.has_story_edge_action_for_round("session-active-leaf", 3)
+            .await
+            .expect("duplicate check should run")
+    );
 }
 
 #[tokio::test]

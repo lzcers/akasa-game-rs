@@ -68,7 +68,7 @@ export interface GameUIActions {
   // 操作：从历史节点创建/切换回溯分支并提交所选行动。
   backtrackChoice: (
     sourceRound: number,
-    submission: { input: PlayerActionInput; displayText: string },
+    submission: { input: PlayerActionInput; displayText: string; visited?: boolean },
   ) => Promise<void>;
   // 操作：创建当前进度的存档。
   createSave: (title?: string) => Promise<string>;

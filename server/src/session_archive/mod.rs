@@ -57,6 +57,7 @@ pub struct StoredChoiceExploration {
 pub struct PreparedBacktrackBranch {
     pub source_round: u64,
     pub branch_round: u64,
+    pub branch_node_id: String,
     pub reused_existing_branch: bool,
     pub requires_generation: bool,
 }

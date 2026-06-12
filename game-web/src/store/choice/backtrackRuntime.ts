@@ -17,6 +17,7 @@ import type { GameUIStoreState } from '../gameUIStore';
 interface ChoiceBacktrackSubmission {
   input: PlayerActionInput;
   displayText: string;
+  visited?: boolean;
 }
 
 interface BacktrackOptimisticPlan {
@@ -154,9 +155,11 @@ export async function backtrackGameChoice(
     error: null,
     skipRestoredNarrationAnimation: false,
   });
-  useGameInternalStore.setState((state) => (
-    pendingBacktrackPatch(state, plan)
-  ));
+  if (!submission.visited) {
+    useGameInternalStore.setState((state) => (
+      pendingBacktrackPatch(state, plan)
+    ));
+  }
 
   try {
     const result = await backtrackGameSession(plan.sessionId, {

@@ -87,6 +87,7 @@ struct HotSession {
     events_tx: broadcast::Sender<LiveEngineEvent>,
     live_events: Arc<Mutex<LiveEventLog>>,
     submitted_action_rounds: Arc<Mutex<HashSet<u64>>>,
+    output_node_targets: Arc<Mutex<HashMap<u64, String>>>,
 }
 
 struct HotSessionAccess {
@@ -95,6 +96,7 @@ struct HotSessionAccess {
     events_tx: broadcast::Sender<LiveEngineEvent>,
     live_events: Arc<Mutex<LiveEventLog>>,
     submitted_action_rounds: Arc<Mutex<HashSet<u64>>>,
+    output_node_targets: Arc<Mutex<HashMap<u64, String>>>,
 }
 
 pub struct LiveSessionStream {
@@ -525,7 +527,17 @@ impl AppState {
             self.replace_hot_session_from_payload(session_id, source_payload)
                 .await?;
             let hot = self.ensure_hot_session(session_id, false).await?;
-            submit_prepared_action(&hot, source_round, actions).await?;
+            hot.output_node_targets
+                .lock()
+                .await
+                .insert(branch.branch_round, branch.branch_node_id.clone());
+            if let Err(error) = submit_prepared_action(&hot, source_round, actions).await {
+                hot.output_node_targets
+                    .lock()
+                    .await
+                    .remove(&branch.branch_round);
+                return Err(error);
+            }
         }
 
         let session = self.game_session_world_from_database(session_id).await?;
@@ -675,6 +687,7 @@ impl AppState {
                                 let live_events = Arc::clone(&hot.live_events);
                                 let submitted_action_rounds =
                                     Arc::clone(&hot.submitted_action_rounds);
+                                let output_node_targets = Arc::clone(&hot.output_node_targets);
                                 if register_stream {
                                     record.active_streams += 1;
                                 }
@@ -684,6 +697,7 @@ impl AppState {
                                     events_tx,
                                     live_events,
                                     submitted_action_rounds,
+                                    output_node_targets,
                                 });
                             }
                             SessionSlot::Cooling { .. } => HotSessionLookup::Cooling,
@@ -756,6 +770,7 @@ impl AppState {
                     events_tx: hot.events_tx.clone(),
                     live_events: Arc::clone(&hot.live_events),
                     submitted_action_rounds: Arc::clone(&hot.submitted_action_rounds),
+                    output_node_targets: Arc::clone(&hot.output_node_targets),
                 });
             }
         }
@@ -784,18 +799,21 @@ impl AppState {
                 let events_tx = hot.events_tx.clone();
                 let live_events = Arc::clone(&hot.live_events);
                 let submitted_action_rounds = Arc::new(Mutex::new(HashSet::new()));
+                let output_node_targets = Arc::new(Mutex::new(HashMap::new()));
                 spawn_engine_event_bridge(
                     session_id,
                     &engine,
                     events_tx.clone(),
                     Arc::clone(&live_events),
                     self.session_archive_repo.clone(),
+                    Arc::clone(&output_node_targets),
                 );
                 *hot = HotSession {
                     engine,
                     events_tx,
                     live_events,
                     submitted_action_rounds,
+                    output_node_targets,
                 };
             }
             SessionSlot::Cooling { .. } | SessionSlot::Cold { .. } => {
@@ -860,6 +878,7 @@ impl AppState {
         let events_tx = hot.events_tx.clone();
         let live_events = Arc::clone(&hot.live_events);
         let submitted_action_rounds = Arc::clone(&hot.submitted_action_rounds);
+        let output_node_targets = Arc::clone(&hot.output_node_targets);
         if register_stream {
             record.active_streams += 1;
         }
@@ -869,6 +888,7 @@ impl AppState {
             events_tx,
             live_events,
             submitted_action_rounds,
+            output_node_targets,
         }))
     }
 
@@ -1254,6 +1274,7 @@ fn build_hot_session(
         live_event_history_capacity,
     )));
     let submitted_action_rounds = Arc::new(Mutex::new(HashSet::new()));
+    let output_node_targets = Arc::new(Mutex::new(HashMap::new()));
     // 这个后台任务把 engine 事件同时桥接到实时订阅者和归档数据库，避免请求
     // 路径手动维护每一种 turn 事件的持久化细节。
     spawn_engine_event_bridge(
@@ -1262,6 +1283,7 @@ fn build_hot_session(
         events_tx.clone(),
         Arc::clone(&live_events),
         session_archive_repo,
+        Arc::clone(&output_node_targets),
     );
 
     HotSession {
@@ -1269,6 +1291,7 @@ fn build_hot_session(
         events_tx,
         live_events,
         submitted_action_rounds,
+        output_node_targets,
     }
 }
 
@@ -1278,6 +1301,7 @@ fn spawn_engine_event_bridge(
     events_tx: broadcast::Sender<LiveEngineEvent>,
     live_events: Arc<Mutex<LiveEventLog>>,
     session_archive_repo: SessionArchiveRepository,
+    output_node_targets: Arc<Mutex<HashMap<u64, String>>>,
 ) {
     let mut event_rx = engine.subscribe_session_events();
     let session_id_for_event_task = session_id.to_string();
@@ -1342,36 +1366,67 @@ fn spawn_engine_event_bridge(
                         }
                         EngineEvent::FlowTurnUpdate(update) => {
                             let persisted_phase = persisted_phase_for_flow_turn_update(&update);
-                            if let Err(error) = session_archive_repo
-                                .update_session_turn_state(
-                                    &update.session_id,
-                                    persisted_phase,
-                                    if matches!(
+                            let output_node_target =
+                                output_node_targets.lock().await.get(&update.round).cloned();
+                            if let Some(node_id) = output_node_target.as_deref() {
+                                if let Err(error) = session_archive_repo
+                                    .update_session_turn_state_for_node(
+                                        &update.session_id,
+                                        node_id,
                                         persisted_phase,
-                                        TurnPhase::AwaitingPlayer | TurnPhase::TurnCompleted
-                                    ) {
-                                        update.round
-                                    } else {
-                                        update.round.saturating_sub(1)
-                                    },
-                                    update.round,
-                                )
-                                .await
-                            {
-                                tracing::warn!(
-                                    "failed to update session turn state for {}: {:?}",
-                                    update.session_id,
-                                    error
-                                );
-                            }
-                            if let Err(error) =
-                                session_archive_repo.save_flow_turn_update(&update).await
-                            {
-                                tracing::warn!(
-                                    "failed to persist entity flow output for {}: {:?}",
-                                    session_id_for_event_task,
-                                    error
-                                );
+                                    )
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        "failed to update session turn state for {} at {}: {:?}",
+                                        update.session_id,
+                                        node_id,
+                                        error
+                                    );
+                                }
+                                if let Err(error) = session_archive_repo
+                                    .save_flow_turn_update_for_node(&update, node_id)
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        "failed to persist entity flow output for {} at {}: {:?}",
+                                        session_id_for_event_task,
+                                        node_id,
+                                        error
+                                    );
+                                }
+                            } else {
+                                if let Err(error) = session_archive_repo
+                                    .update_session_turn_state(
+                                        &update.session_id,
+                                        persisted_phase,
+                                        if matches!(
+                                            persisted_phase,
+                                            TurnPhase::AwaitingPlayer | TurnPhase::TurnCompleted
+                                        ) {
+                                            update.round
+                                        } else {
+                                            update.round.saturating_sub(1)
+                                        },
+                                        update.round,
+                                    )
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        "failed to update session turn state for {}: {:?}",
+                                        update.session_id,
+                                        error
+                                    );
+                                }
+                                if let Err(error) =
+                                    session_archive_repo.save_flow_turn_update(&update).await
+                                {
+                                    tracing::warn!(
+                                        "failed to persist entity flow output for {}: {:?}",
+                                        session_id_for_event_task,
+                                        error
+                                    );
+                                }
                             }
                         }
                         EngineEvent::FlowTurnCompleted(completed) => {
@@ -1386,6 +1441,7 @@ fn spawn_engine_event_bridge(
                                     error
                                 );
                             }
+                            output_node_targets.lock().await.remove(&completed.round);
                             tracing::debug!(
                                 session_id = %completed.session_id,
                                 round = completed.round,
@@ -1404,6 +1460,7 @@ fn spawn_engine_event_bridge(
                                     error
                                 );
                             }
+                            output_node_targets.lock().await.remove(&end.round);
                         }
                         EngineEvent::FlowTurnError(error_event) => {
                             if let Err(error) = session_archive_repo
@@ -1417,6 +1474,7 @@ fn spawn_engine_event_bridge(
                                     error
                                 );
                             }
+                            output_node_targets.lock().await.remove(&error_event.round);
                         }
                     }
                 }
@@ -1664,7 +1722,7 @@ fn choice_explorations_for_round(
         .iter()
         .map(|choice| {
             (
-                choice.id.clone(),
+                choice.option.action.clone(),
                 ChoiceExplorationData {
                     visited: visited_actions.contains(choice.option.action.as_str()),
                 },
@@ -1968,7 +2026,7 @@ mod tests {
         assert_eq!(restored.phase, TurnPhase::AwaitingPlayer);
         assert_eq!(restored.turn_index, 8);
         assert_eq!(restored.active_turn_id, 7);
-        assert_eq!(restored.current_outcome, "绕到钟楼背面");
+        assert_eq!(restored.current_outcome, "尚未做出选择");
         assert_eq!(restored.choices.len(), 1);
 
         let loaded_again = state
@@ -2027,7 +2085,7 @@ mod tests {
             .expect("history page should load");
 
         assert_eq!(history.rounds.len(), total_rounds as usize);
-        for round in 1..=total_rounds {
+        for round in 1..total_rounds {
             let entry = history
                 .rounds
                 .iter()
@@ -2040,6 +2098,13 @@ mod tests {
                 Some(format!("选择-{round}").as_str())
             );
         }
+        let active_entry = history
+            .rounds
+            .iter()
+            .find(|entry| entry.round == total_rounds)
+            .expect("active round should be present");
+        assert!(active_entry.committed_actions.is_empty());
+        assert_eq!(active_entry.selected_choice_text, None);
     }
 
     #[test]
@@ -2291,7 +2356,7 @@ mod tests {
             .get_game_session_world("session-b")
             .await
             .expect("restored session should be queryable");
-        assert_eq!(loaded_again.current_outcome, "绕到钟楼背面");
+        assert_eq!(loaded_again.current_outcome, "尚未做出选择");
     }
 
     #[tokio::test]
@@ -2396,7 +2461,7 @@ mod tests {
         assert_ne!(cloned.session_id, "session-from-slot");
         assert!(cloned.session_id.starts_with("session-"));
         assert_eq!(cloned.world_state.scene_title, "钟楼阴影");
-        assert_eq!(cloned.current_outcome, "绕到钟楼背面");
+        assert_eq!(cloned.current_outcome, "尚未做出选择");
 
         let source = state
             .get_game_session_world("session-from-slot")

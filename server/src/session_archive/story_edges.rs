@@ -17,6 +17,7 @@ use super::codec::{
 use super::story_path::{
     activate_story_node, active_or_linear_node_id_for_depth, create_branch_story_node,
     ensure_linear_story_path, linear_node_id_for_depth, story_node_id_for_active_path_depth,
+    update_story_node_state,
 };
 use super::{
     PreparedBacktrackBranch, SessionArchiveRepository, StoredChoiceExploration,
@@ -48,8 +49,16 @@ impl SessionArchiveRepository {
         let now = chrono::Utc::now().to_rfc3339();
         let from_node_id =
             active_or_linear_node_id_for_depth(&conn, session_id, input.round, &now)?;
-        let to_node_id =
-            active_or_linear_node_id_for_depth(&conn, session_id, input.round + 1, &now)?;
+        let prepared_to_node_id = match actions.first() {
+            Some(action) => {
+                branch_node_for_action(&conn, session_id, &from_node_id, &action.action)?
+            }
+            None => None,
+        };
+        let to_node_id = match prepared_to_node_id {
+            Some(node_id) => node_id,
+            None => active_or_linear_node_id_for_depth(&conn, session_id, input.round + 1, &now)?,
+        };
         conn.execute(
             r#"
             INSERT INTO story_edges (
@@ -120,22 +129,11 @@ impl SessionArchiveRepository {
                     AND e.to_node_id = action.to_node_id
                 JOIN active_path from_path
                     ON from_path.node_id = e.from_node_id
-                LEFT JOIN active_path to_path
+                JOIN active_path to_path
                     ON to_path.node_id = e.to_node_id
                 WHERE action.session_id = ?1
                     AND from_path.node_depth > 0
-                    AND (
-                        to_path.node_depth = from_path.node_depth + 1
-                        OR (
-                            from_path.node_id = 'node-' || from_path.node_depth
-                            AND e.to_node_id = 'node-' || (from_path.node_depth + 1)
-                            AND NOT EXISTS (
-                                SELECT 1
-                                FROM active_path next_path
-                                WHERE next_path.node_depth = from_path.node_depth + 1
-                            )
-                        )
-                    )
+                    AND to_path.node_depth = from_path.node_depth + 1
                 ORDER BY from_path.node_depth ASC, action.character_name ASC
                 "#,
             )
@@ -205,6 +203,15 @@ impl SessionArchiveRepository {
                 WHERE action.session_id = ?1
                     AND active_path.node_depth > 0
                     AND length(trim(action.action)) > 0
+                    AND EXISTS (
+                        SELECT 1
+                        FROM entity_flow_outputs output
+                        WHERE output.session_id = action.session_id
+                            AND output.node_id = action.to_node_id
+                            AND output.stage = 'application'
+                            AND output.output_type = 'text'
+                            AND length(trim(output.content)) > 0
+                    )
                 ORDER BY active_path.node_depth ASC, action.action ASC
                 "#,
             )
@@ -239,10 +246,26 @@ impl SessionArchiveRepository {
         let count = conn
             .query_row(
                 r#"
+                WITH RECURSIVE active_path(node_id, parent_node_id, node_depth) AS (
+                    SELECT n.node_id, n.parent_node_id, n.node_depth
+                    FROM story_nodes n
+                    JOIN sessions s
+                        ON s.session_id = n.session_id
+                        AND s.active_node_id = n.node_id
+                    WHERE n.session_id = ?1
+                    UNION ALL
+                    SELECT parent.node_id, parent.parent_node_id, parent.node_depth
+                    FROM story_nodes parent
+                    JOIN active_path child
+                        ON child.parent_node_id = parent.node_id
+                    WHERE parent.session_id = ?1
+                )
                 SELECT COUNT(1)
-                FROM story_edge_actions
-                WHERE session_id = ?1
-                    AND from_node_id = ?2
+                FROM story_edge_actions action
+                JOIN active_path to_path
+                    ON to_path.node_id = action.to_node_id
+                WHERE action.session_id = ?1
+                    AND action.from_node_id = ?2
                 "#,
                 params![session_id, from_node_id],
                 |row| row.get::<_, i64>(0),
@@ -291,11 +314,24 @@ impl SessionArchiveRepository {
                 activate_story_node(&tx, session_id, &existing_branch_node_id, &now)?;
             let has_existing_narration =
                 story_node_has_narration_output(&tx, session_id, &existing_branch_node_id)?;
+            if has_existing_narration {
+                let phase =
+                    story_node_reactivation_phase(&tx, session_id, &existing_branch_node_id)?;
+                update_story_node_state(
+                    &tx,
+                    session_id,
+                    &existing_branch_node_id,
+                    phase,
+                    None,
+                    &now,
+                )?;
+            }
             tx.commit()
                 .context("failed to commit existing backtrack branch activation")?;
             return Ok(PreparedBacktrackBranch {
                 source_round,
                 branch_round: existing_branch_round,
+                branch_node_id: existing_branch_node_id,
                 reused_existing_branch: has_existing_narration,
                 requires_generation: !has_existing_narration,
             });
@@ -342,6 +378,7 @@ impl SessionArchiveRepository {
         Ok(PreparedBacktrackBranch {
             source_round,
             branch_round,
+            branch_node_id,
             reused_existing_branch: false,
             requires_generation: true,
         })
@@ -445,6 +482,30 @@ fn story_node_has_narration_output(
         )
         .context("failed to check story node narration output")?;
     Ok(count > 0)
+}
+
+fn story_node_reactivation_phase(
+    conn: &Connection,
+    session_id: &str,
+    node_id: &str,
+) -> Result<TurnPhase> {
+    let flow_end: bool = conn
+        .query_row(
+            r#"
+            SELECT flow_end
+            FROM story_nodes
+            WHERE session_id = ?1
+                AND node_id = ?2
+            "#,
+            params![session_id, node_id],
+            |row| row.get(0),
+        )
+        .context("failed to load story node flow end flag")?;
+    Ok(if flow_end {
+        TurnPhase::Ended
+    } else {
+        TurnPhase::AwaitingPlayer
+    })
 }
 
 fn choice_option_for_story_edge(

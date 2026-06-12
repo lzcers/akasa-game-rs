@@ -156,6 +156,50 @@ impl SessionArchiveRepository {
         .context("failed to update session turn state")?;
         Ok(())
     }
+    pub async fn update_session_turn_state_for_node(
+        &self,
+        session_id: &str,
+        node_id: &str,
+        phase: TurnPhase,
+    ) -> Result<()> {
+        let session_id = session_id.trim();
+        let node_id = node_id.trim();
+        if session_id.is_empty() || node_id.is_empty() {
+            return Ok(());
+        }
+
+        let _guard = self.db.lock().await;
+        let conn = self.db.open_connection("sessions")?;
+        schema::init(&conn)?;
+        let now = chrono::Utc::now().to_rfc3339();
+        let (node_depth, sequence_index): (i64, i64) = conn
+            .query_row(
+                r#"
+                SELECT node_depth, sequence_index
+                FROM story_nodes
+                WHERE session_id = ?1
+                    AND node_id = ?2
+                "#,
+                params![session_id, node_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .context("failed to load explicit story node turn state target")?;
+        let total_node_count = node_depth.max(sequence_index);
+        update_story_node_state(&conn, session_id, node_id, phase, None, &now)?;
+        conn.execute(
+            r#"
+            UPDATE sessions
+            SET active_node_id = ?2,
+                total_node_count = MAX(total_node_count, ?3),
+                updated_at = ?4,
+                last_accessed_at = ?4
+            WHERE session_id = ?1
+            "#,
+            params![session_id, node_id, total_node_count, now],
+        )
+        .context("failed to update session turn state for explicit story node")?;
+        Ok(())
+    }
     pub async fn load_session_metadata(
         &self,
         session_id: &str,

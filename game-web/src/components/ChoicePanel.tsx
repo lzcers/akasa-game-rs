@@ -1,5 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Bot, ChevronDown, Eye, Flame, MousePointer2 } from "lucide-react";
+import {
+  Bot,
+  CheckCircle2,
+  ChevronDown,
+  Eye,
+  Flame,
+  MousePointer2,
+} from "lucide-react";
 import type { Choice } from "../lib/api";
 import { SecondaryButton } from "./AkashicUI";
 
@@ -245,12 +252,19 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
                       className={[
                         "akashic-choice h-10 text-[#f3ead8] disabled:cursor-not-allowed disabled:opacity-50",
                         choice.visited ? "akashic-choice-visited" : "",
-                      ].filter(Boolean).join(" ")}
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
                     >
-                      <div className="flex min-h-7 items-center text-left">
-                        <div className="w-full truncate text-sm font-semibold leading-5 sm:text-[0.95rem]">
+                      <div className="flex min-h-7 items-center gap-2 text-left">
+                        <div className="min-w-0 flex-1 truncate text-sm font-semibold leading-5 sm:text-[0.95rem]">
                           {choice.text}
                         </div>
+                        {choice.visited ? (
+                          <span className="inline-flex h-6 shrink-0 items-center gap-1 px-1.5 text-[0.65rem] leading-none text-amber-50 sm:text-[0.7rem]">
+                            <CheckCircle2 className="h-3 w-3" />
+                          </span>
+                        ) : null}
                       </div>
                     </button>
 

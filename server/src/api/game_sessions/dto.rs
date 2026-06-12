@@ -258,7 +258,12 @@ impl From<RoundHistoryEntry> for RoundHistoryData {
         let choice_explorations = value
             .choices
             .iter()
-            .map(|choice| (choice.id.clone(), ChoiceExplorationData { visited: false }))
+            .map(|choice| {
+                (
+                    choice.option.action.clone(),
+                    ChoiceExplorationData { visited: false },
+                )
+            })
             .collect();
 
         Self {
@@ -333,4 +338,31 @@ impl From<OngoingEvent> for OngoingEventData {
 #[serde(rename_all = "camelCase")]
 pub struct ControlGameSessionData {
     pub action: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use story_engine::components::outcome::CharacterOption;
+
+    #[test]
+    fn round_history_choice_explorations_are_keyed_by_action() {
+        let entry = RoundHistoryEntry {
+            round: 1,
+            choices: vec![PendingCharacterChoice {
+                id: "choice-1".to_string(),
+                option: CharacterOption {
+                    title: "绕行".to_string(),
+                    action: "绕到钟楼背面".to_string(),
+                    motivation_and_risk: "视野更好，但会暴露脚步声".to_string(),
+                },
+            }],
+            ..RoundHistoryEntry::default()
+        };
+
+        let data = RoundHistoryData::from(entry);
+
+        assert!(data.choice_explorations.contains_key("绕到钟楼背面"));
+        assert!(!data.choice_explorations.contains_key("choice-1"));
+    }
 }

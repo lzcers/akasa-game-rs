@@ -84,7 +84,7 @@ export function roundStateFromPersistedHistoryEntry(
   entry: SessionRoundHistoryData,
 ): RoundState {
   const choices = entry.choices.map((choice) => (
-    toChoiceFromSession(choice, entry.choiceExplorations?.[choice.id])
+    toChoiceFromSession(choice, entry.choiceExplorations?.[choice.option.action])
   ));
   const selectedChoiceText = entry.selectedChoiceText?.trim()
     || deriveSelectedChoiceText(entry)
@@ -123,7 +123,7 @@ function currentRoundStateFromSession(
       narrationText: latestHistoryFromSession(session),
       narrationStatus: session.latestNarration.trim() ? 'done' : null,
       choices: session.choices.map((choice) => (
-        toChoiceFromSession(choice, session.choiceExplorations?.[choice.id])
+        toChoiceFromSession(choice, session.choiceExplorations?.[choice.option.action])
       )),
       choicesStatus: session.choices.length > 0 || session.phase === 'awaiting_player' ? 'ready' : 'idle',
       selectedChoiceText: null,

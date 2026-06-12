@@ -180,6 +180,7 @@ export interface ChoiceExploration {
   visited: boolean;
 }
 
+// Keyed by CharacterOption.action so exploration state matches backtrack reuse.
 export type ChoiceExplorations = Record<string, ChoiceExploration>;
 
 export type PlayerActionType = 'selected_option' | 'free_text';
