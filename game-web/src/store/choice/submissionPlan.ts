@@ -95,8 +95,8 @@ export function applyChoiceSubmissionOptimisticUpdate(
         round: plan.activeRound,
         selectedChoiceText: plan.selectedChoiceText,
         selectedChoiceAction: plan.input.actions[0]?.action ?? null,
-        choices: [],
-        choicesStatus: 'idle',
+        choices: state.roundStates[plan.activeRound]?.choices ?? [],
+        choicesStatus: state.roundStates[plan.activeRound]?.choicesStatus ?? 'idle',
         isAwaitingNarration: false,
       }),
       [plan.nextRound]: createRoundState(plan.nextRound, {

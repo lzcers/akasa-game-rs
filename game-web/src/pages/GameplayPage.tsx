@@ -20,6 +20,7 @@ import {
   appRoutes,
   isStoryReviewSearch,
   routeWithClonedSession,
+  routeWithSession,
 } from "../lib/appRoutes";
 import { track } from "../lib/analytics";
 import { suppressSessionRestore } from "../lib/sessionRestore";
@@ -67,10 +68,11 @@ const GameplayPage: React.FC = () => {
       skipRestoredNarrationAnimation: state.skipRestoredNarrationAnimation,
     })),
   );
-  const { bootstrapSession, createSave, submitChoice, resetGame } =
+  const { bootstrapSession, cloneSharedSession, createSave, submitChoice, resetGame } =
     useGameUIStore(
       useShallow((state) => ({
         bootstrapSession: state.bootstrapSession,
+        cloneSharedSession: state.cloneSharedSession,
         createSave: state.createSave,
         submitChoice: state.submitChoice,
         resetGame: state.resetGame,
@@ -153,22 +155,31 @@ const GameplayPage: React.FC = () => {
     [roundStates, submittedChoices],
   );
   const activeRoundState = roundStates[currentRound];
+  const choicePanelRound = expandedChoicePanelRound ?? currentRound;
+  const choicePanelState = roundStates[choicePanelRound];
+  const isBacktrackChoicePanel = choicePanelRound !== currentRound;
   const isEndingReviewMode =
     isStoryReviewSearch(location.search) && (phase === "ended" || isEnding);
-  const hasCurrentRoundControls = roundControls.round === currentRound;
-  const activeObsession = hasCurrentRoundControls
+  const hasChoicePanelRoundControls = roundControls.round === choicePanelRound;
+  const activeObsession = hasChoicePanelRoundControls && !isBacktrackChoicePanel
     ? roundControls.activeObsession
     : false;
-  const isChoicePanelCollapsed = expandedChoicePanelRound !== currentRound;
-  const obsessionInput = hasCurrentRoundControls
+  const isChoicePanelCollapsed =
+    !isBacktrackChoicePanel && expandedChoicePanelRound !== currentRound;
+  const obsessionInput = hasChoicePanelRoundControls
     ? roundControls.obsessionInput
     : "";
-  const previews = hasCurrentRoundControls ? roundControls.previews : {};
+  const previews = hasChoicePanelRoundControls ? roundControls.previews : {};
   const currentRoundChoices = useMemo(
     () => activeRoundState?.choices ?? [],
     [activeRoundState?.choices],
   );
+  const choicePanelChoices = useMemo(
+    () => choicePanelState?.choices ?? [],
+    [choicePanelState?.choices],
+  );
   const hasChoices = currentRoundChoices.length > 0;
+  const hasChoicePanelChoices = choicePanelChoices.length > 0;
   const isNarrationStreaming =
     activeRoundState?.narrationStatus === "running";
   const shouldAnimateCurrentNarration =
@@ -185,6 +196,10 @@ const GameplayPage: React.FC = () => {
     isCurrentNarrationTyping;
   const isChoiceInteractionDisabled =
     isEndingReviewMode || isNarrationOutputPending || isLoading;
+  const isChoicePanelInteractionDisabled =
+    isEndingReviewMode ||
+    isLoading ||
+    (!isBacktrackChoicePanel && isNarrationOutputPending);
   const canContinueWithoutChoice =
     phase === "awaiting_player" &&
     activeRoundState?.choicesStatus === "ready" &&
@@ -192,9 +207,14 @@ const GameplayPage: React.FC = () => {
     !isNarrationStreaming &&
     !isEndingReviewMode;
   const isObsessionToggleDisabled =
-    isChoiceInteractionDisabled || !hasChoices || obsessionPoints <= 0;
+    isBacktrackChoicePanel ||
+    isChoicePanelInteractionDisabled ||
+    !hasChoicePanelChoices ||
+    obsessionPoints <= 0;
   const isObsessionSubmitDisabled =
-    isChoiceInteractionDisabled || obsessionInput.trim().length === 0;
+    isBacktrackChoicePanel ||
+    isChoicePanelInteractionDisabled ||
+    obsessionInput.trim().length === 0;
   const latestCompletedNarration = useMemo(
     () =>
       [...narrationHistory]
@@ -340,12 +360,13 @@ const GameplayPage: React.FC = () => {
       track("intuition_preview_used");
 
       setRoundControls((prev) => ({
-        round: currentRound,
+        round: choicePanelRound,
         activeObsession:
-          prev.round === currentRound ? prev.activeObsession : false,
-        obsessionInput: prev.round === currentRound ? prev.obsessionInput : "",
+          prev.round === choicePanelRound ? prev.activeObsession : false,
+        obsessionInput:
+          prev.round === choicePanelRound ? prev.obsessionInput : "",
         previews: {
-          ...(prev.round === currentRound ? prev.previews : {}),
+          ...(prev.round === choicePanelRound ? prev.previews : {}),
           [choice.id]: motivationAndRisk,
         },
       }));
@@ -354,6 +375,26 @@ const GameplayPage: React.FC = () => {
       setFeedback(readErrorMessage(previewError, "记录窥见失败。"));
     }
   };
+
+  const handleBacktrackRound = useCallback(
+    (round: number) => {
+      const targetRoundState = roundStates[round];
+      if (!targetRoundState?.choices.length) {
+        setFeedback("这一章暂时没有可回溯的候选项。");
+        return;
+      }
+
+      setExpandedChoicePanelRound((prev) => (prev === round ? null : round));
+      setRoundControls((prev) => ({
+        round,
+        activeObsession: false,
+        obsessionInput: prev.round === round ? prev.obsessionInput : "",
+        previews: prev.round === round ? prev.previews : {},
+      }));
+      setFeedback(null);
+    },
+    [roundStates],
+  );
 
   const resetChoicePanelAfterSubmission = useCallback(() => {
     setExpandedChoicePanelRound(null);
@@ -430,6 +471,56 @@ const GameplayPage: React.FC = () => {
       rememberSubmittedChoice,
       readErrorMessage,
       resetChoicePanelAfterSubmission,
+      submitChoice,
+    ],
+  );
+
+  const handleBacktrackChoiceClick = useCallback(
+    async (choice: Choice) => {
+      const sourceSessionId = sessionId;
+      const sourceRound = choicePanelRound;
+      if (!sourceSessionId) {
+        setFeedback("当前还没有可回溯的记录。");
+        return;
+      }
+
+      try {
+        setFeedback(`正在从第 ${sourceRound} 章回溯...`);
+        const cloned = await cloneSharedSession(sourceSessionId, sourceRound);
+        navigate(routeWithSession(appRoutes.gameplay, cloned.sessionId), {
+          replace: true,
+        });
+        setExpandedChoicePanelRound(null);
+        setRoundControls({
+          round: sourceRound,
+          activeObsession: false,
+          obsessionInput: "",
+          previews: {},
+        });
+        await submitChoice({
+          input: {
+            actions: [{
+              character_name: playableCharacterName,
+              action_type: 'selected_option',
+              title: choice.text,
+              action: choice.action,
+              motivation_and_risk: choice.motivationAndRisk,
+            }],
+          },
+          displayText: choice.text,
+        });
+        setFeedback(null);
+      } catch (backtrackError) {
+        setFeedback(readErrorMessage(backtrackError, "回溯展开失败。"));
+      }
+    },
+    [
+      choicePanelRound,
+      cloneSharedSession,
+      navigate,
+      playableCharacterName,
+      readErrorMessage,
+      sessionId,
       submitChoice,
     ],
   );
@@ -594,6 +685,10 @@ const GameplayPage: React.FC = () => {
               }
               broadcastMessages={broadcastMessages}
               onTypewriterComplete={handleTypewriterComplete}
+              activeBacktrackRound={isBacktrackChoicePanel ? choicePanelRound : null}
+              onBacktrackRound={
+                isEndingReviewMode ? undefined : handleBacktrackRound
+              }
             />
             {!isEndingReviewMode ? (
               <div className="pointer-events-none absolute inset-x-1 bottom-1 z-10 sm:inset-x-3">
@@ -607,9 +702,11 @@ const GameplayPage: React.FC = () => {
                   ) : null}
                   <div className="pointer-events-auto">
                   <ChoicePanel
-                    hasChoices={hasChoices}
-                    canContinue={canContinueWithoutChoice}
-                    choices={currentRoundChoices}
+                    hasChoices={hasChoicePanelChoices}
+                    canContinue={
+                      !isBacktrackChoicePanel && canContinueWithoutChoice
+                    }
+                    choices={choicePanelChoices}
                     previews={previews}
                     remainingIntuitionPoints={intuitionPoints}
                     activeObsession={activeObsession}
@@ -618,9 +715,13 @@ const GameplayPage: React.FC = () => {
                     autoChoiceEnabled={autoChoiceEnabled}
                     showAutoChoiceToggle={import.meta.env.DEV}
                     isCollapsed={isChoicePanelCollapsed}
-                    isChoiceInteractionDisabled={isChoiceInteractionDisabled}
+                    isChoiceInteractionDisabled={isChoicePanelInteractionDisabled}
                     isObsessionSubmitDisabled={isObsessionSubmitDisabled}
                     onToggleCollapsed={() => {
+                      if (isBacktrackChoicePanel) {
+                        setExpandedChoicePanelRound(null);
+                        return;
+                      }
                       const isExpandingChoicePanel =
                         expandedChoicePanelRound !== currentRound;
                       setExpandedChoicePanelRound((prev) =>
@@ -639,21 +740,25 @@ const GameplayPage: React.FC = () => {
                         }));
                       }
                     }}
-                    onChoiceClick={handleChoiceClick}
+                    onChoiceClick={
+                      isBacktrackChoicePanel
+                        ? handleBacktrackChoiceClick
+                        : handleChoiceClick
+                    }
                     onContinue={handleContinueClick}
                     onAutoChoiceToggle={setAutoChoiceEnabled}
                     onToggleObsession={handleToggleObsession}
                     onPreview={handlePreview}
                     onObsessionInputChange={(nextValue) => {
                       setRoundControls((prev) => ({
-                        round: currentRound,
+                        round: choicePanelRound,
                         activeObsession:
-                          prev.round === currentRound
+                          prev.round === choicePanelRound
                             ? prev.activeObsession
                             : false,
                         obsessionInput: nextValue,
                         previews:
-                          prev.round === currentRound ? prev.previews : {},
+                          prev.round === choicePanelRound ? prev.previews : {},
                       }));
                     }}
                     onObsessionSubmit={handleObsessionSubmit}

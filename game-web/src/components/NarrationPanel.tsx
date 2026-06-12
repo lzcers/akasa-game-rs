@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Clock3, MousePointer2, Sparkles } from "lucide-react";
+import { Clock3, Sparkles } from "lucide-react";
 import Typewriter from "./Typewriter";
+import SelectedChoiceDisplay from "./SelectedChoiceDisplay";
 import { STREAM_PLACEHOLDER_TEXT } from "../store/session/taskContent";
 import type { NarrationRoundEntry } from "./gameplayTypes";
 
@@ -9,7 +10,9 @@ interface NarrationHistoryItemProps {
   isCurrentRound: boolean;
   animateCurrentRound: boolean;
   isFinished: boolean;
+  activeBacktrackRound: number | null;
   onComplete?: () => void;
+  onBacktrack?: (round: number) => void;
 }
 
 interface NarrationPanelProps {
@@ -19,6 +22,8 @@ interface NarrationPanelProps {
   skipRestoredNarrationAnimation: boolean;
   broadcastMessages: string[];
   onTypewriterComplete: () => void;
+  activeBacktrackRound?: number | null;
+  onBacktrackRound?: (round: number) => void;
 }
 
 const NarrationHistoryItem: React.FC<NarrationHistoryItemProps> = React.memo(
@@ -27,14 +32,10 @@ const NarrationHistoryItem: React.FC<NarrationHistoryItemProps> = React.memo(
     isCurrentRound,
     animateCurrentRound,
     isFinished,
+    activeBacktrackRound,
     onComplete,
+    onBacktrack,
   }) => {
-    const selectedChoiceAction = entry.selectedChoiceAction?.trim();
-    const shouldShowSelectedChoiceAction = Boolean(
-      selectedChoiceAction &&
-      selectedChoiceAction !== entry.selectedChoiceText?.trim(),
-    );
-
     return (
       <div className="space-y-2">
         <p className="text-sm font-medium text-[#d8c7aa]">
@@ -54,19 +55,13 @@ const NarrationHistoryItem: React.FC<NarrationHistoryItemProps> = React.memo(
           />
         )}
         {entry.selectedChoiceText ? (
-          <div className="inline-flex max-w-full items-start gap-1.5 rounded-[0.85rem] border border-amber-300/25 bg-amber-100/8 px-2.5 py-1.5 text-[0.82rem] font-medium leading-5 text-amber-100/90 sm:text-[0.92rem]">
-            <div className="min-w-0 space-y-1">
-              <span className="flex">
-                <MousePointer2 className="mr-1 mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-200/90" />
-                {entry.selectedChoiceText}
-              </span>
-              {shouldShowSelectedChoiceAction ? (
-                <span className="block text-[0.76rem] leading-5 text-amber-100/72 sm:text-[0.84rem]">
-                  {selectedChoiceAction}
-                </span>
-              ) : null}
-            </div>
-          </div>
+          <SelectedChoiceDisplay
+            selectedChoiceText={entry.selectedChoiceText}
+            selectedChoiceAction={entry.selectedChoiceAction}
+            canBacktrack={entry.choices.length > 0}
+            isBacktrackActive={activeBacktrackRound === entry.round}
+            onBacktrack={onBacktrack ? () => onBacktrack(entry.round) : undefined}
+          />
         ) : null}
       </div>
     );
@@ -82,6 +77,8 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
   skipRestoredNarrationAnimation,
   broadcastMessages,
   onTypewriterComplete,
+  activeBacktrackRound = null,
+  onBacktrackRound,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const narrationContentRef = useRef<HTMLDivElement | null>(null);
@@ -475,7 +472,9 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
                       entry.round !== currentRound ||
                       entry.narrationStatus === "done"
                     }
+                    activeBacktrackRound={activeBacktrackRound}
                     onComplete={onTypewriterComplete}
+                    onBacktrack={onBacktrackRound}
                   />
                 );
               })}

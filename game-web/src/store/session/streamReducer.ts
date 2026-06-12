@@ -200,8 +200,8 @@ function reducePlayerInput(
     round,
     selectedChoiceText,
     selectedChoiceAction: actionText,
-    choices: [],
-    choicesStatus: 'idle',
+    choices: previousRoundState?.choices ?? [],
+    choicesStatus: previousRoundState?.choicesStatus ?? 'idle',
     isAwaitingNarration: false,
   });
 
