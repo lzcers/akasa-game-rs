@@ -19,7 +19,9 @@ import type { NarrationRoundEntry } from "../components/gameplayTypes";
 import {
   appRoutes,
   isStoryReviewSearch,
+  readFocusRoundFromSearch,
   routeWithClonedSession,
+  routeWithSession,
 } from "../lib/appRoutes";
 import { track } from "../lib/analytics";
 import { suppressSessionRestore } from "../lib/sessionRestore";
@@ -120,6 +122,10 @@ const GameplayPage: React.FC = () => {
   const reachedRoundKeyRef = useRef<string | null>(null);
 
   const currentRound = Math.max(displayRound || turnIndex || 1, 1);
+  const requestedFocusRound = useMemo(
+    () => readFocusRoundFromSearch(location.search),
+    [location.search],
+  );
   const playableCharacterName = characterName.trim() || "玩家角色";
   const submittedChoices = useMemo(
     () =>
@@ -338,6 +344,50 @@ const GameplayPage: React.FC = () => {
       setFeedback(readErrorMessage(roundsError, "读取完整回响失败。"));
     });
   }, [isEndingReviewMode, readErrorMessage, sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || !requestedFocusRound || isEndingReviewMode) {
+      return;
+    }
+
+    const targetRoundState = roundStates[requestedFocusRound];
+    if (!targetRoundState) {
+      void loadCompleteSessionRounds(sessionId).catch((roundsError) => {
+        setFeedback(readErrorMessage(roundsError, "读取完整回响失败。"));
+      });
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      if (
+        !targetRoundState.choices.length &&
+        !targetRoundState.branchExplorations.length
+      ) {
+        setFeedback("这一章暂时没有可回溯的候选项。");
+      } else {
+        setExpandedChoicePanelRound(requestedFocusRound);
+        setRoundControls((prev) => ({
+          round: requestedFocusRound,
+          activeObsession: false,
+          obsessionInput:
+            prev.round === requestedFocusRound ? prev.obsessionInput : "",
+          previews: prev.round === requestedFocusRound ? prev.previews : {},
+        }));
+        setFeedback(null);
+      }
+
+      navigate(routeWithSession(appRoutes.gameplay, sessionId), { replace: true });
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    isEndingReviewMode,
+    navigate,
+    readErrorMessage,
+    requestedFocusRound,
+    roundStates,
+    sessionId,
+  ]);
 
   useEffect(() => {
     if (!sessionId || phase !== "booting") {
@@ -930,6 +980,11 @@ const GameplayPage: React.FC = () => {
                 suppressSessionRestore(sessionId);
                 navigate(appRoutes.lobby, { replace: true });
                 resetGame();
+              }}
+              onOpenStoryline={() => {
+                if (sessionId) {
+                  navigate(routeWithSession(appRoutes.storyline, sessionId));
+                }
               }}
               onSave={handleSave}
             />

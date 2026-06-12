@@ -11,7 +11,7 @@ import {
   setAnalyticsGameSessionId,
   track,
 } from './lib/analytics';
-import { EndingRoute, GameplayRoute, GeneratingRoute } from './routes/GameSessionRoutes';
+import { EndingRoute, GameplayRoute, GeneratingRoute, StorylineRoute } from './routes/GameSessionRoutes';
 
 function NavigationBridge() {
   const navigate = useNavigate();
@@ -55,6 +55,7 @@ function App() {
           <Route path={appRoutes.creation} element={<CreationPage />} />
           <Route path={appRoutes.generating} element={<GeneratingRoute />} />
           <Route path={appRoutes.gameplay} element={<GameplayRoute />} />
+          <Route path={appRoutes.storyline} element={<StorylineRoute />} />
           <Route path={appRoutes.ending} element={<EndingRoute />} />
           <Route path="*" element={<Navigate to={appRoutes.lobby} replace />} />
         </Routes>

@@ -12,6 +12,7 @@ import { isSessionRestoreSuppressed } from '../lib/sessionRestore';
 import EndingPage from '../pages/EndingPage';
 import GameplayPage from '../pages/GameplayPage';
 import GeneratingPage from '../pages/GeneratingPage';
+import StorylinePage from '../pages/StorylinePage';
 import { useGameInternalStore } from '../store/gameStore';
 import { useGameUIStore } from '../store/gameUIStore';
 
@@ -104,7 +105,7 @@ function SessionRouteGuard({
   route,
   children,
 }: {
-  route: typeof appRoutes.gameplay | typeof appRoutes.ending;
+  route: typeof appRoutes.gameplay | typeof appRoutes.ending | typeof appRoutes.storyline;
   children: ReactNode;
 }) {
   const location = useLocation();
@@ -172,6 +173,14 @@ export function EndingRoute() {
   return (
     <SessionRouteGuard route={appRoutes.ending}>
       <EndingPage />
+    </SessionRouteGuard>
+  );
+}
+
+export function StorylineRoute() {
+  return (
+    <SessionRouteGuard route={appRoutes.storyline}>
+      <StorylinePage />
     </SessionRouteGuard>
   );
 }

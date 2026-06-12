@@ -4,6 +4,7 @@ import {
   Clock3,
   Eye,
   Flame,
+  GitBranch,
   House,
   MoreHorizontal,
   Save,
@@ -30,6 +31,7 @@ interface GameplayToolbarProps {
   isArchiveActionDisabled: boolean;
   archiveActionUnavailableReason: string | null;
   onBackToLobby: () => void;
+  onOpenStoryline: () => void;
   onSave: () => void | Promise<void>;
 }
 
@@ -46,6 +48,7 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
   isArchiveActionDisabled,
   archiveActionUnavailableReason,
   onBackToLobby,
+  onOpenStoryline,
   onSave,
 }) => {
   const [isUtilityMenuOpen, setIsUtilityMenuOpen] = useState(false);
@@ -200,6 +203,22 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
                 >
                   <BookOpenText className="h-3.5 w-3.5" />
                   查看回响记录
+                </button>
+                <button
+                  type="button"
+                  disabled={!sessionId}
+                  title={sessionId ? "查看故事线" : "第一段回响显影后可查看故事线"}
+                  onClick={() => {
+                    if (!sessionId) {
+                      return;
+                    }
+                    onOpenStoryline();
+                    setIsUtilityMenuOpen(false);
+                  }}
+                  className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] disabled:cursor-not-allowed disabled:text-[#8f98ab] disabled:hover:bg-transparent sm:text-xs"
+                >
+                  <GitBranch className="h-3.5 w-3.5" />
+                  故事线
                 </button>
                 <button
                   type="button"
