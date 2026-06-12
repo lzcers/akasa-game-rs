@@ -26,7 +26,7 @@ pub async fn load_archive_payload(
                 character_profile: payload.character_profile,
                 key_story_beats: payload.key_story_beats,
                 phase: payload.turn_state.phase,
-                turn_index: payload.turn_state.turn_index,
+                turn_index: engine_turn_index_for_archive_state(&payload.turn_state),
                 world_snapshot: payload.world_snapshot,
                 committed_actions: payload.character_decision.committed_actions,
                 choices: payload.character_decision.choices,
@@ -36,6 +36,20 @@ pub async fn load_archive_payload(
             },
         )
         .await
+}
+
+fn engine_turn_index_for_archive_state(turn_state: &TurnStateArchive) -> u64 {
+    match turn_state.phase {
+        crate::session_history::TurnPhase::Simulation
+        | crate::session_history::TurnPhase::Application
+        | crate::session_history::TurnPhase::AwaitingPlayer
+        | crate::session_history::TurnPhase::Failed => {
+            turn_state.active_turn_id.saturating_sub(1)
+        }
+        crate::session_history::TurnPhase::Start
+        | crate::session_history::TurnPhase::TurnCompleted
+        | crate::session_history::TurnPhase::Ended => turn_state.turn_index,
+    }
 }
 
 pub fn validate_archive_payload(payload: &SessionArchivePayload) -> Result<(), String> {
@@ -192,5 +206,27 @@ mod tests {
             restored.turn_state.turn_index,
             payload.turn_state.turn_index
         );
+    }
+
+    #[test]
+    fn archive_loader_maps_awaiting_player_active_round_to_engine_turn_index() {
+        let turn_state = TurnStateArchive {
+            phase: TurnPhase::AwaitingPlayer,
+            turn_index: 4,
+            active_turn_id: 4,
+        };
+
+        assert_eq!(engine_turn_index_for_archive_state(&turn_state), 3);
+    }
+
+    #[test]
+    fn archive_loader_keeps_completed_engine_turn_index() {
+        let turn_state = TurnStateArchive {
+            phase: TurnPhase::TurnCompleted,
+            turn_index: 4,
+            active_turn_id: 4,
+        };
+
+        assert_eq!(engine_turn_index_for_archive_state(&turn_state), 4);
     }
 }
