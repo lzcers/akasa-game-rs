@@ -97,6 +97,7 @@ export function roundStateFromPersistedHistoryEntry(
     narrationStatus: entry.narrationText.trim() ? 'done' : null,
     choices,
     choicesStatus: choices.length > 0 ? 'ready' : 'idle',
+    branchExplorations: entry.branchExplorations ?? [],
     selectedChoiceText,
     selectedChoiceAction,
     isAwaitingNarration: false,
@@ -104,13 +105,18 @@ export function roundStateFromPersistedHistoryEntry(
 }
 
 function deriveSelectedChoiceText(entry: SessionRoundHistoryData): string | null {
-  const committedAction = entry.committedActions[0]?.action.trim();
+  const committed = entry.committedActions[0];
+  const committedAction = committed?.action.trim();
   if (!committedAction) {
     return null;
   }
 
+  if (committed?.action_type === 'free_text') {
+    return committedAction === 'continue' ? '继续回响' : '[执念]';
+  }
+
   const matchedChoice = entry.choices.find((choice) => choice.option.action === committedAction);
-  return matchedChoice?.option.title || entry.committedActions[0]?.title || committedAction;
+  return matchedChoice?.option.title || committed?.title || committedAction;
 }
 
 function currentRoundStateFromSession(
@@ -126,6 +132,7 @@ function currentRoundStateFromSession(
         toChoiceFromSession(choice, session.choiceExplorations?.[choice.option.action])
       )),
       choicesStatus: session.choices.length > 0 || session.phase === 'awaiting_player' ? 'ready' : 'idle',
+      branchExplorations: session.branchExplorations ?? [],
       selectedChoiceText: null,
       selectedChoiceAction: null,
       isAwaitingNarration: false,

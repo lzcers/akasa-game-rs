@@ -24,19 +24,20 @@ use crate::{
     analytics::{AnalyticsRepository, AnalyticsSummary},
     api::archive,
     api::game_sessions::{
-        BacktrackGameSessionData, BacktrackGameSessionRequest, ChoiceExplorationData,
-        ChoiceExplorationsData, ControlGameSessionData, ControlGameSessionRequest,
-        CreateGameSessionData, CreateGameSessionRequest, GameSessionControlCommand,
-        GameSessionWorldStateData, GeneratedProfilesData, RoundHistoryData, SaveExportData,
-        SessionActionInput, SessionRoundsPageData, WorldStateData,
+        BacktrackGameSessionData, BacktrackGameSessionRequest, BranchExplorationData,
+        ChoiceExplorationData, ChoiceExplorationsData, ControlGameSessionData,
+        ControlGameSessionRequest, CreateGameSessionData, CreateGameSessionRequest,
+        GameSessionControlCommand, GameSessionWorldStateData, GeneratedProfilesData,
+        RoundHistoryData, SaveExportData, SessionActionInput, SessionRoundsPageData,
+        WorldStateData,
     },
     api::site::{AnalyticsBatchRequest, SubmitFeedbackData, ValidatedFeedbackRequest},
     database::AppDatabase,
     email::{FeedbackEmail, FeedbackMailer},
     error::AppError,
     session_archive::{
-        SessionArchiveRepository, StoredChoiceExploration, StoredSessionMetadata,
-        StoredStoryEdgeAction,
+        SessionArchiveRepository, StoredBranchExploration, StoredChoiceExploration,
+        StoredSessionMetadata, StoredStoryEdgeAction,
     },
     session_history::{RoundHistoryEntry, SessionHistoryLog, TurnPhase},
 };
@@ -434,13 +435,23 @@ impl AppState {
             .into_iter()
             .filter(|exploration| page_rounds.contains(&exploration.round))
             .collect::<Vec<_>>();
+        let branch_explorations = self
+            .session_archive_repo
+            .load_branch_explorations(session_id)
+            .await
+            .map_err(|err| AppError::internal(format!("读取分支探索状态失败：{err:#}")))?
+            .into_iter()
+            .filter(|exploration| page_rounds.contains(&exploration.round))
+            .collect::<Vec<_>>();
         let rounds = rounds_with_story_edge_actions(page.rounds, story_edge_actions);
 
         Ok(SessionRoundsPageData {
             session_id: session_id.to_string(),
             rounds: rounds
                 .into_iter()
-                .map(|round| round_history_data_from_entry(round, &choice_explorations))
+                .map(|round| {
+                    round_history_data_from_entry(round, &choice_explorations, &branch_explorations)
+                })
                 .collect(),
             next_before_round: page.next_before_round,
             has_more: page.has_more,
@@ -966,10 +977,16 @@ impl AppState {
             .load_choice_explorations(session_id)
             .await
             .map_err(|err| AppError::internal(format!("读取选项探索状态失败：{err:#}")))?;
+        let branch_explorations = self
+            .session_archive_repo
+            .load_branch_explorations(session_id)
+            .await
+            .map_err(|err| AppError::internal(format!("读取分支探索状态失败：{err:#}")))?;
         Ok(world_state_from_database(
             metadata,
             &rounds,
             &choice_explorations,
+            &branch_explorations,
         ))
     }
 
@@ -1575,6 +1592,7 @@ fn world_state_from_database(
     metadata: StoredSessionMetadata,
     rounds: &[RoundHistoryEntry],
     choice_explorations: &[StoredChoiceExploration],
+    branch_explorations: &[StoredBranchExploration],
 ) -> GameSessionWorldStateData {
     let world_snapshot = latest_world_snapshot(rounds).unwrap_or_default();
     let latest_narration = latest_narration_from_rounds(rounds, &world_snapshot);
@@ -1587,14 +1605,16 @@ fn world_state_from_database(
                 "尚未做出选择".to_string()
             }
         });
-    let (choices, choice_explorations) = latest_choices_round_from_rounds(rounds)
-        .map(|round| {
-            (
-                round.choices.clone(),
-                choice_explorations_for_round(round, choice_explorations),
-            )
-        })
-        .unwrap_or_default();
+    let (choices, choice_explorations, branch_explorations) =
+        latest_choices_round_from_rounds(rounds)
+            .map(|round| {
+                (
+                    round.choices.clone(),
+                    choice_explorations_for_round(round, choice_explorations),
+                    branch_explorations_for_round(round.round, branch_explorations),
+                )
+            })
+            .unwrap_or_default();
 
     GameSessionWorldStateData {
         session_id: metadata.session_id,
@@ -1617,6 +1637,7 @@ fn world_state_from_database(
         current_outcome,
         choices,
         choice_explorations,
+        branch_explorations,
     }
 }
 
@@ -1701,9 +1722,11 @@ fn latest_choices_round_from_rounds(rounds: &[RoundHistoryEntry]) -> Option<&Rou
 fn round_history_data_from_entry(
     entry: RoundHistoryEntry,
     choice_explorations: &[StoredChoiceExploration],
+    branch_explorations: &[StoredBranchExploration],
 ) -> RoundHistoryData {
     let mut data = RoundHistoryData::from(entry.clone());
     data.choice_explorations = choice_explorations_for_round(&entry, choice_explorations);
+    data.branch_explorations = branch_explorations_for_round(entry.round, branch_explorations);
     data
 }
 
@@ -1727,6 +1750,20 @@ fn choice_explorations_for_round(
                     visited: visited_actions.contains(choice.option.action.as_str()),
                 },
             )
+        })
+        .collect()
+}
+
+fn branch_explorations_for_round(
+    round: u64,
+    branch_explorations: &[StoredBranchExploration],
+) -> Vec<BranchExplorationData> {
+    branch_explorations
+        .iter()
+        .filter(|exploration| exploration.round == round)
+        .map(|exploration| BranchExplorationData {
+            action: exploration.action.clone(),
+            visited: exploration.visited,
         })
         .collect()
 }
@@ -2506,6 +2543,7 @@ mod tests {
             current_outcome: "action".to_string(),
             choices: vec![],
             choice_explorations: ChoiceExplorationsData::new(),
+            branch_explorations: vec![],
         };
 
         let value = serde_json::to_value(dto).expect("dto should serialize");
@@ -2619,26 +2657,29 @@ mod tests {
         )];
         payload.history_log = SessionHistoryLog {
             rounds: (1..=total_rounds)
-                .map(|round| RoundHistoryEntry {
-                    round,
-                    world_snapshot: Some(WorldSnapshot {
+                .map(|round| {
+                    let option = CharacterOption {
+                        title: format!("选择-{round}"),
+                        action: format!("行动-{round}"),
+                        motivation_and_risk: "保持测试稳定".to_string(),
+                    };
+                    RoundHistoryEntry {
                         round,
-                        scene_title: format!("第{round}轮"),
-                        description: format!("第{round}轮描述"),
-                        ..WorldSnapshot::default()
-                    }),
-                    narration_text: Some(format!("叙事-{round}")),
-                    choices: vec![PendingCharacterChoice {
-                        id: format!("choice-{round}"),
-                        option: CharacterOption {
-                            title: format!("选择-{round}"),
-                            action: format!("行动-{round}"),
-                            motivation_and_risk: "保持测试稳定".to_string(),
-                        },
-                    }],
-                    committed_actions: vec![PlayerActionItem::character_free_text(format!(
-                        "行动-{round}"
-                    ))],
+                        world_snapshot: Some(WorldSnapshot {
+                            round,
+                            scene_title: format!("第{round}轮"),
+                            description: format!("第{round}轮描述"),
+                            ..WorldSnapshot::default()
+                        }),
+                        narration_text: Some(format!("叙事-{round}")),
+                        choices: vec![PendingCharacterChoice {
+                            id: format!("choice-{round}"),
+                            option: option.clone(),
+                        }],
+                        committed_actions: vec![PlayerActionItem::character_selected_option(
+                            &option,
+                        )],
+                    }
                 })
                 .collect(),
         };

@@ -20,8 +20,9 @@ use super::story_path::{
     update_story_node_state,
 };
 use super::{
-    PreparedBacktrackBranch, SessionArchiveRepository, StoredChoiceExploration,
-    StoredStoryEdgeAction, normalize_action_character_name, schema, session_character_name,
+    PreparedBacktrackBranch, SessionArchiveRepository, StoredBranchExploration,
+    StoredChoiceExploration, StoredStoryEdgeAction, normalize_action_character_name, schema,
+    session_character_name,
 };
 
 impl SessionArchiveRepository {
@@ -50,9 +51,7 @@ impl SessionArchiveRepository {
         let from_node_id =
             active_or_linear_node_id_for_depth(&conn, session_id, input.round, &now)?;
         let prepared_to_node_id = match actions.first() {
-            Some(action) => {
-                branch_node_for_action(&conn, session_id, &from_node_id, &action.action)?
-            }
+            Some(action) => branch_node_for_action(&conn, session_id, &from_node_id, action)?,
             None => None,
         };
         let to_node_id = match prepared_to_node_id {
@@ -228,6 +227,90 @@ impl SessionArchiveRepository {
             .context("failed to read choice explorations")
     }
 
+    pub async fn load_branch_explorations(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<StoredBranchExploration>> {
+        let _guard = self.db.lock().await;
+        let conn = self.db.open_connection("branch explorations")?;
+        schema::init(&conn)?;
+        let mut stmt = conn
+            .prepare(
+                r#"
+                WITH RECURSIVE active_path(node_id, parent_node_id, node_depth) AS (
+                    SELECT n.node_id, n.parent_node_id, n.node_depth
+                    FROM story_nodes n
+                    JOIN sessions s
+                        ON s.session_id = n.session_id
+                        AND s.active_node_id = n.node_id
+                    WHERE n.session_id = ?1
+                    UNION ALL
+                    SELECT parent.node_id, parent.parent_node_id, parent.node_depth
+                    FROM story_nodes parent
+                    JOIN active_path child
+                        ON child.parent_node_id = parent.node_id
+                    WHERE parent.session_id = ?1
+                )
+                SELECT
+                    active_path.node_depth,
+                    action.character_name,
+                    action.player_id,
+                    action.action_type,
+                    action.title,
+                    action.action,
+                    action.motivation_and_risk
+                FROM story_edge_actions action
+                JOIN active_path
+                    ON active_path.node_id = action.from_node_id
+                WHERE action.session_id = ?1
+                    AND active_path.node_depth > 0
+                    AND length(trim(action.action)) > 0
+                    AND EXISTS (
+                        SELECT 1
+                        FROM entity_flow_outputs output
+                        WHERE output.session_id = action.session_id
+                            AND output.node_id = action.to_node_id
+                            AND output.stage = 'application'
+                            AND output.output_type = 'text'
+                            AND length(trim(output.content)) > 0
+                    )
+                ORDER BY active_path.node_depth ASC, action.submitted_at ASC, action.action ASC
+                "#,
+            )
+            .context("failed to prepare branch exploration load")?;
+        let rows = stmt
+            .query_map(params![session_id], |row| {
+                let action_type: String = row.get(3)?;
+                Ok(StoredBranchExploration {
+                    round: row.get::<_, i64>(0)?.try_into().unwrap_or_default(),
+                    action: PlayerActionItem {
+                        character_name: row.get(1)?,
+                        player_id: row.get(2)?,
+                        action_type: deserialize_player_action_type(&action_type).map_err(
+                            |err| {
+                                rusqlite::Error::FromSqlConversionFailure(
+                                    3,
+                                    rusqlite::types::Type::Text,
+                                    Box::new(std::io::Error::new(
+                                        std::io::ErrorKind::InvalidData,
+                                        err,
+                                    )),
+                                )
+                            },
+                        )?,
+                        title: row.get(4)?,
+                        action: row.get(5)?,
+                        motivation_and_risk: row.get(6)?,
+                    },
+                    visited: true,
+                })
+            })
+            .context("failed to query branch explorations")?;
+
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .context("failed to read branch explorations")
+    }
+
     pub async fn has_story_edge_action_for_round(
         &self,
         session_id: &str,
@@ -308,7 +391,7 @@ impl SessionArchiveRepository {
         let now = chrono::Utc::now().to_rfc3339();
 
         if let Some(existing_branch_node_id) =
-            branch_node_for_action(&tx, session_id, &source_node_id, &primary_action.action)?
+            branch_node_for_action(&tx, session_id, &source_node_id, primary_action)?
         {
             let existing_branch_round =
                 activate_story_node(&tx, session_id, &existing_branch_node_id, &now)?;
@@ -563,8 +646,9 @@ fn branch_node_for_action(
     conn: &Connection,
     session_id: &str,
     source_node_id: &str,
-    action: &str,
+    action: &PlayerActionItem,
 ) -> Result<Option<String>> {
+    let action_type = serialize_player_action_type(action.action_type)?;
     conn.query_row(
         r#"
         SELECT edge.to_node_id
@@ -576,10 +660,11 @@ fn branch_node_for_action(
         WHERE edge.session_id = ?1
             AND edge.from_node_id = ?2
             AND action.action = ?3
+            AND action.action_type = ?4
         ORDER BY edge.created_at DESC, edge.to_node_id DESC
         LIMIT 1
         "#,
-        params![session_id, source_node_id, action],
+        params![session_id, source_node_id, action.action, action_type],
         |row| row.get::<_, String>(0),
     )
     .optional()

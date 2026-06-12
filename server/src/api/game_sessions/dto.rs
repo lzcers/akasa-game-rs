@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use story_engine::components::{
-    outcome::{PendingCharacterChoice, PlayerActionInput, PlayerActionItem},
+    outcome::{PendingCharacterChoice, PlayerActionInput, PlayerActionItem, PlayerActionType},
     world_snapshot::{ItemState, NpcState, OngoingEvent, WorldSnapshot},
 };
 
@@ -120,6 +120,7 @@ pub struct GameSessionWorldStateData {
     pub current_outcome: String,
     pub choices: Vec<PendingCharacterChoice>,
     pub choice_explorations: ChoiceExplorationsData,
+    pub branch_explorations: Vec<BranchExplorationData>,
 }
 
 pub type ChoiceExplorationsData = BTreeMap<String, ChoiceExplorationData>;
@@ -127,6 +128,13 @@ pub type ChoiceExplorationsData = BTreeMap<String, ChoiceExplorationData>;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChoiceExplorationData {
+    pub visited: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchExplorationData {
+    pub action: PlayerActionItem,
     pub visited: bool,
 }
 
@@ -146,6 +154,7 @@ pub struct RoundHistoryData {
     pub narration_text: String,
     pub choices: Vec<PendingCharacterChoice>,
     pub choice_explorations: ChoiceExplorationsData,
+    pub branch_explorations: Vec<BranchExplorationData>,
     pub committed_actions: Vec<PlayerActionItem>,
     pub selected_choice_text: Option<String>,
 }
@@ -272,6 +281,7 @@ impl From<RoundHistoryEntry> for RoundHistoryData {
             narration_text: value.narration_text.unwrap_or_default(),
             choices: value.choices,
             choice_explorations,
+            branch_explorations: Vec::new(),
             committed_actions: value.committed_actions,
             selected_choice_text,
         }
@@ -281,6 +291,13 @@ impl From<RoundHistoryEntry> for RoundHistoryData {
 fn selected_choice_text(value: &RoundHistoryEntry) -> Option<String> {
     match value.committed_actions.as_slice() {
         [] => None,
+        [single] if single.action_type == PlayerActionType::FreeText => {
+            if single.action.trim() == "continue" {
+                Some("继续回响".to_string())
+            } else {
+                Some("[执念]".to_string())
+            }
+        }
         [single] => value
             .choices
             .iter()
@@ -343,7 +360,7 @@ pub struct ControlGameSessionData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use story_engine::components::outcome::CharacterOption;
+    use story_engine::components::outcome::{CharacterOption, PlayerActionItem};
 
     #[test]
     fn round_history_choice_explorations_are_keyed_by_action() {
@@ -364,5 +381,18 @@ mod tests {
 
         assert!(data.choice_explorations.contains_key("绕到钟楼背面"));
         assert!(!data.choice_explorations.contains_key("choice-1"));
+    }
+
+    #[test]
+    fn round_history_free_text_selected_choice_uses_obsession_label() {
+        let entry = RoundHistoryEntry {
+            round: 1,
+            committed_actions: vec![PlayerActionItem::character_free_text("检查密室暗门")],
+            ..RoundHistoryEntry::default()
+        };
+
+        let data = RoundHistoryData::from(entry);
+
+        assert_eq!(data.selected_choice_text.as_deref(), Some("[执念]"));
     }
 }

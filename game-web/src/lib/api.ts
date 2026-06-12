@@ -198,6 +198,11 @@ export interface PlayerActionInput {
   actions: PlayerActionItem[];
 }
 
+export interface BranchExploration {
+  action: PlayerActionItem;
+  visited: boolean;
+}
+
 export interface GameSessionWorldStateData {
   sessionId: string;
   generatedProfiles: GeneratedProfiles;
@@ -211,6 +216,7 @@ export interface GameSessionWorldStateData {
   currentOutcome: string;
   choices: PendingCharacterChoice[];
   choiceExplorations: ChoiceExplorations;
+  branchExplorations: BranchExploration[];
 }
 
 export interface SessionRoundHistoryData {
@@ -219,6 +225,7 @@ export interface SessionRoundHistoryData {
   narrationText: string;
   choices: PendingCharacterChoice[];
   choiceExplorations: ChoiceExplorations;
+  branchExplorations: BranchExploration[];
   committedActions: PlayerActionItem[];
   selectedChoiceText?: string | null;
 }

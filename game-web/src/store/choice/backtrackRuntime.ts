@@ -116,6 +116,7 @@ function pendingBacktrackPatch(
       narrationStatus: null,
       choices: [],
       choicesStatus: 'loading',
+      branchExplorations: [],
       selectedChoiceText: null,
       selectedChoiceAction: null,
       isAwaitingNarration: true,

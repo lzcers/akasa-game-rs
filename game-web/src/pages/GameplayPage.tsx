@@ -23,7 +23,7 @@ import {
 } from "../lib/appRoutes";
 import { track } from "../lib/analytics";
 import { suppressSessionRestore } from "../lib/sessionRestore";
-import type { Choice } from "../lib/api";
+import type { BranchExploration, Choice } from "../lib/api";
 
 const EMPTY_BROADCAST_ITEMS: string[] = [];
 const AUTO_CHOICE_STORAGE_KEY = "akasa:auto-choice-enabled";
@@ -176,6 +176,13 @@ const GameplayPage: React.FC = () => {
   const choicePanelChoices = useMemo(
     () => choicePanelState?.choices ?? [],
     [choicePanelState?.choices],
+  );
+  const choicePanelObsessionBranches = useMemo(
+    () => (choicePanelState?.branchExplorations ?? []).filter((branch) => {
+      const action = branch.action.action.trim();
+      return branch.action.action_type === "free_text" && action && action !== "continue";
+    }),
+    [choicePanelState?.branchExplorations],
   );
   const hasChoices = currentRoundChoices.length > 0;
   const hasChoicePanelChoices = choicePanelChoices.length > 0;
@@ -378,7 +385,10 @@ const GameplayPage: React.FC = () => {
   const handleBacktrackRound = useCallback(
     (round: number) => {
       const targetRoundState = roundStates[round];
-      if (!targetRoundState?.choices.length) {
+      if (
+        !targetRoundState?.choices.length &&
+        !targetRoundState?.branchExplorations.length
+      ) {
         setFeedback("这一章暂时没有可回溯的候选项。");
         return;
       }
@@ -596,6 +606,68 @@ const GameplayPage: React.FC = () => {
     ],
   );
 
+  const handleBacktrackBranchClick = useCallback(
+    async (branch: BranchExploration) => {
+      const sourceSessionId = sessionId;
+      const sourceRound = choicePanelRound;
+      const actionText = branch.action.action.trim();
+      if (!sourceSessionId) {
+        setFeedback("当前还没有可回溯的记录。");
+        return;
+      }
+      if (!actionText) {
+        setFeedback("这条执念分支暂时无法回溯。");
+        return;
+      }
+      if (isNarrationOutputPending || isLoading) {
+        setFeedback("记录正在共鸣中，请稍后再回溯。");
+        return;
+      }
+
+      try {
+        setFeedback(`正在从第 ${sourceRound} 章回溯...`);
+        await backtrackChoice(sourceRound, {
+          input: {
+            actions: [{
+              character_name:
+                branch.action.character_name?.trim() || playableCharacterName,
+              player_id: branch.action.player_id,
+              action_type: branch.action.action_type ?? 'free_text',
+              title: branch.action.title,
+              action: actionText,
+              motivation_and_risk: branch.action.motivation_and_risk,
+            }],
+          },
+          displayText: branch.action.action_type === 'free_text'
+            ? '[执念]'
+            : branch.action.title || actionText,
+          visited: branch.visited,
+        });
+        forgetSubmittedChoicesFromRound(sourceRound);
+        setExpandedChoicePanelRound(null);
+        setRoundControls({
+          round: sourceRound + 1,
+          activeObsession: false,
+          obsessionInput: "",
+          previews: {},
+        });
+        setFeedback(null);
+      } catch (backtrackError) {
+        setFeedback(readErrorMessage(backtrackError, "回溯展开失败。"));
+      }
+    },
+    [
+      backtrackChoice,
+      choicePanelRound,
+      forgetSubmittedChoicesFromRound,
+      isLoading,
+      isNarrationOutputPending,
+      playableCharacterName,
+      readErrorMessage,
+      sessionId,
+    ],
+  );
+
   const handleContinueClick = useCallback(async () => {
     try {
       rememberSubmittedChoice({
@@ -778,6 +850,7 @@ const GameplayPage: React.FC = () => {
                       !isBacktrackChoicePanel && canContinueWithoutChoice
                     }
                     choices={choicePanelChoices}
+                    branchExplorations={choicePanelObsessionBranches}
                     previews={previews}
                     remainingIntuitionPoints={intuitionPoints}
                     activeObsession={activeObsession}
@@ -816,6 +889,7 @@ const GameplayPage: React.FC = () => {
                         ? handleBacktrackChoiceClick
                         : handleChoiceClick
                     }
+                    onBranchClick={handleBacktrackBranchClick}
                     onContinue={handleContinueClick}
                     onAutoChoiceToggle={setAutoChoiceEnabled}
                     onToggleObsession={handleToggleObsession}

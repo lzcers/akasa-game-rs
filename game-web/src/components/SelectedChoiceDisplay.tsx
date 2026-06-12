@@ -1,5 +1,5 @@
 import React from "react";
-import { MousePointer2, RotateCcw } from "lucide-react";
+import { Flame, MousePointer2, RotateCcw } from "lucide-react";
 
 interface SelectedChoiceDisplayProps {
   selectedChoiceText: string;
@@ -17,18 +17,35 @@ const SelectedChoiceDisplay: React.FC<SelectedChoiceDisplayProps> = ({
   onBacktrack,
 }) => {
   const normalizedAction = selectedChoiceAction?.trim();
+  const isObsessionChoice = selectedChoiceText.trim() === "[执念]";
+  const ChoiceIcon = isObsessionChoice ? Flame : MousePointer2;
 
   return (
     <div
       className={[
-        "relative inline-flex w-full flex-col overflow-hidden rounded-[0.85rem] border border-amber-200/55 bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(14,165,233,0.1)_52%,rgba(15,23,42,0.18))] px-2.5 py-1.5 pl-3.5 text-[0.82rem] font-medium leading-5 text-amber-50 shadow-[0_0_0_1px_rgba(251,191,36,0.16),0_10px_28px_rgba(251,191,36,0.1)] sm:text-[0.92rem]",
+        "relative inline-flex w-full flex-col overflow-hidden rounded-[0.85rem] border px-2.5 py-1.5 pl-3.5 text-[0.82rem] font-medium leading-5 shadow-[0_10px_28px_rgba(251,191,36,0.1)] sm:text-[0.92rem]",
+        isObsessionChoice
+          ? "border-red-300/55 bg-[linear-gradient(135deg,rgba(248,113,113,0.2),rgba(251,191,36,0.1)_50%,rgba(15,23,42,0.2))] text-red-50 shadow-[0_0_0_1px_rgba(248,113,113,0.16),0_10px_28px_rgba(248,113,113,0.12)]"
+          : "border-amber-200/55 bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(14,165,233,0.1)_52%,rgba(15,23,42,0.18))] text-amber-50 shadow-[0_0_0_1px_rgba(251,191,36,0.16),0_10px_28px_rgba(251,191,36,0.1)]",
         onBacktrack ? "min-w-52" : "",
       ].join(" ")}
     >
-      <span className="absolute inset-y-1.5 left-1 w-1 rounded-full bg-amber-200/85 shadow-[0_0_12px_rgba(251,191,36,0.58)]" />
+      <span
+        className={[
+          "absolute inset-y-1.5 left-1 w-1 rounded-full",
+          isObsessionChoice
+            ? "bg-red-300/90 shadow-[0_0_12px_rgba(248,113,113,0.65)]"
+            : "bg-amber-200/85 shadow-[0_0_12px_rgba(251,191,36,0.58)]",
+        ].join(" ")}
+      />
       <div className="flex min-w-0 items-start justify-between gap-2">
         <span className="flex min-w-0 flex-1">
-          <MousePointer2 className="mr-1 mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-100" />
+          <ChoiceIcon
+            className={[
+              "mr-1 mt-0.5 h-3.5 w-3.5 shrink-0",
+              isObsessionChoice ? "text-red-100" : "text-amber-100",
+            ].join(" ")}
+          />
           <span className="min-w-0 break-words">{selectedChoiceText}</span>
         </span>
         {onBacktrack ? (
@@ -41,8 +58,12 @@ const SelectedChoiceDisplay: React.FC<SelectedChoiceDisplayProps> = ({
             className={[
               "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[0.65rem] leading-none transition-colors sm:text-[0.7rem]",
               isBacktrackActive
-                ? "border-amber-200/70 bg-amber-200/16 text-amber-50"
-                : "border-amber-200/30 bg-black/15 text-amber-100/82 hover:border-amber-200/60 hover:text-amber-50",
+                ? isObsessionChoice
+                  ? "border-red-200/70 bg-red-300/18 text-red-50"
+                  : "border-amber-200/70 bg-amber-200/16 text-amber-50"
+                : isObsessionChoice
+                  ? "border-red-200/30 bg-black/15 text-red-100/82 hover:border-red-200/60 hover:text-red-50"
+                  : "border-amber-200/30 bg-black/15 text-amber-100/82 hover:border-amber-200/60 hover:text-amber-50",
               canBacktrack ? "" : "cursor-not-allowed opacity-45",
             ].join(" ")}
           >
@@ -52,7 +73,12 @@ const SelectedChoiceDisplay: React.FC<SelectedChoiceDisplayProps> = ({
         ) : null}
       </div>
       {normalizedAction ? (
-        <span className="mt-1 block wrap-break-word text-[0.76rem] leading-5 text-amber-100/72 sm:text-[0.84rem]">
+        <span
+          className={[
+            "mt-1 block wrap-break-word text-[0.76rem] leading-5 sm:text-[0.84rem]",
+            isObsessionChoice ? "text-red-100/78" : "text-amber-100/72",
+          ].join(" ")}
+        >
           {normalizedAction}
         </span>
       ) : null}

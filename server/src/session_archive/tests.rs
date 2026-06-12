@@ -461,6 +461,39 @@ async fn story_edge_actions_store_empty_title_for_free_text() {
     assert_eq!(stored_action.1, "free_text");
     assert_eq!(stored_action.2, "");
     assert_eq!(stored_action.3, "检查密室暗门");
+
+    let empty_branch_explorations = repo
+        .load_branch_explorations("session-free-text-edge")
+        .await
+        .expect("empty branch explorations should load");
+    assert!(empty_branch_explorations.is_empty());
+
+    repo.update_session_turn_state("session-free-text-edge", TurnPhase::Application, 1, 2)
+        .await
+        .expect("target node should become active");
+    repo.save_flow_turn_update(&FlowTurnUpdate {
+        session_id: "session-free-text-edge".to_string(),
+        round: 2,
+        stage: TurnPhase::Application,
+        entity_name: "UpperNarrator".to_string(),
+        output_type: AgentOutputType::Text,
+        content: "你按下暗门边缘，石墙后传来低沉的回响。".to_string(),
+    })
+    .await
+    .expect("target narration should save");
+
+    let branch_explorations = repo
+        .load_branch_explorations("session-free-text-edge")
+        .await
+        .expect("branch explorations should load");
+    assert_eq!(branch_explorations.len(), 1);
+    assert_eq!(branch_explorations[0].round, 1);
+    assert_eq!(
+        branch_explorations[0].action.action_type,
+        PlayerActionType::FreeText
+    );
+    assert_eq!(branch_explorations[0].action.action, "检查密室暗门");
+    assert!(branch_explorations[0].visited);
 }
 
 #[tokio::test]
@@ -1173,6 +1206,134 @@ async fn backtrack_existing_empty_branch_requires_generation() {
         )
         .expect("story nodes should be countable");
     assert_eq!(depth_two_node_count, 1);
+}
+
+#[tokio::test]
+async fn backtrack_distinguishes_free_text_from_selected_option_with_same_action() {
+    let db_path = std::env::temp_dir().join(format!(
+        "akasa-backtrack-action-type-{}.sqlite3",
+        Uuid::new_v4().simple()
+    ));
+    let repo = SessionArchiveRepository::new(AppDatabase::new(db_path.clone()));
+    let shared_action_choice = CharacterOption {
+        title: "检查暗门".to_string(),
+        action: "检查密室暗门".to_string(),
+        motivation_and_risk: "可能找到出口，也可能触发机关".to_string(),
+    };
+
+    repo.save_session_created(&SessionCreated {
+        session_id: "session-action-type-branch".to_string(),
+        character_name: "hero".to_string(),
+        world_profile: "world".to_string(),
+        character_profile: "hero".to_string(),
+        key_story_beats: "beats".to_string(),
+    })
+    .await
+    .expect("session metadata should save");
+    repo.save_rounds(
+        "session-action-type-branch",
+        &[
+            RoundHistoryEntry {
+                round: 1,
+                narration_text: Some("石厅中央有一道暗痕。".to_string()),
+                choices: vec![PendingCharacterChoice {
+                    id: "choice-1".to_string(),
+                    option: shared_action_choice.clone(),
+                }],
+                ..RoundHistoryEntry::default()
+            },
+            RoundHistoryEntry {
+                round: 2,
+                narration_text: Some("你按常规检查暗门，发现门缝里有新鲜划痕。".to_string()),
+                ..RoundHistoryEntry::default()
+            },
+        ],
+    )
+    .await
+    .expect("rounds should save");
+    repo.update_session_turn_state(
+        "session-action-type-branch",
+        TurnPhase::AwaitingPlayer,
+        1,
+        1,
+    )
+    .await
+    .expect("source node should become active");
+    repo.save_player_input(&PlayerInput {
+        session_id: "session-action-type-branch".to_string(),
+        round: 1,
+        actions: vec![PlayerActionItem::character_selected_option(
+            &shared_action_choice,
+        )],
+    })
+    .await
+    .expect("selected option edge should save");
+    repo.update_session_turn_state(
+        "session-action-type-branch",
+        TurnPhase::AwaitingPlayer,
+        2,
+        2,
+    )
+    .await
+    .expect("selected option node should become active");
+
+    let free_text_branch = repo
+        .prepare_backtrack_branch(
+            "session-action-type-branch",
+            1,
+            &[PlayerActionItem::character_free_text("检查密室暗门")],
+        )
+        .await
+        .expect("free text branch should prepare");
+    assert!(!free_text_branch.reused_existing_branch);
+    assert_ne!(free_text_branch.branch_node_id, "node-2");
+    repo.update_session_turn_state_for_node(
+        "session-action-type-branch",
+        &free_text_branch.branch_node_id,
+        TurnPhase::Application,
+    )
+    .await
+    .expect("free text node state should update");
+    repo.save_flow_turn_update_for_node(
+        &FlowTurnUpdate {
+            session_id: "session-action-type-branch".to_string(),
+            round: 2,
+            stage: TurnPhase::Application,
+            entity_name: "UpperNarrator".to_string(),
+            output_type: AgentOutputType::Text,
+            content: "你凭执念触摸暗痕，听见门后有人屏住呼吸。".to_string(),
+        },
+        &free_text_branch.branch_node_id,
+    )
+    .await
+    .expect("free text narration should save");
+
+    let reused_selected = repo
+        .prepare_backtrack_branch(
+            "session-action-type-branch",
+            1,
+            &[PlayerActionItem::character_selected_option(
+                &shared_action_choice,
+            )],
+        )
+        .await
+        .expect("selected branch should reactivate");
+    assert!(reused_selected.reused_existing_branch);
+    assert_eq!(reused_selected.branch_node_id, "node-2");
+
+    let reused_free_text = repo
+        .prepare_backtrack_branch(
+            "session-action-type-branch",
+            1,
+            &[PlayerActionItem::character_free_text("检查密室暗门")],
+        )
+        .await
+        .expect("free text branch should reactivate");
+    assert!(reused_free_text.reused_existing_branch);
+    assert_eq!(
+        reused_free_text.branch_node_id,
+        free_text_branch.branch_node_id
+    );
 }
 
 fn test_repo() -> SessionArchiveRepository {

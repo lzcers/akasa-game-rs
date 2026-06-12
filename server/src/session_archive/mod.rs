@@ -54,6 +54,13 @@ pub struct StoredChoiceExploration {
 }
 
 #[derive(Debug, Clone)]
+pub struct StoredBranchExploration {
+    pub round: u64,
+    pub action: PlayerActionItem,
+    pub visited: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct PreparedBacktrackBranch {
     pub source_round: u64,
     pub branch_round: u64,

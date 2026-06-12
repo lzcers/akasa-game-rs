@@ -7,13 +7,14 @@ import {
   Flame,
   MousePointer2,
 } from "lucide-react";
-import type { Choice } from "../lib/api";
+import type { BranchExploration, Choice } from "../lib/api";
 import { SecondaryButton } from "./AkashicUI";
 
 interface ChoicePanelProps {
   hasChoices: boolean;
   canContinue: boolean;
   choices: Choice[];
+  branchExplorations: BranchExploration[];
   previews: Record<string, string>;
   remainingIntuitionPoints: number;
   activeObsession: boolean;
@@ -27,6 +28,7 @@ interface ChoicePanelProps {
   onToggleCollapsed?: () => void;
   onToggleObsession: () => void;
   onChoiceClick: (choice: Choice) => void | Promise<void>;
+  onBranchClick: (branch: BranchExploration) => void | Promise<void>;
   onContinue: () => void | Promise<void>;
   onAutoChoiceToggle?: (enabled: boolean) => void;
   onPreview: (
@@ -41,6 +43,7 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
   hasChoices,
   canContinue,
   choices,
+  branchExplorations,
   previews,
   remainingIntuitionPoints,
   activeObsession,
@@ -54,6 +57,7 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
   onToggleCollapsed,
   onToggleObsession,
   onChoiceClick,
+  onBranchClick,
   onContinue,
   onAutoChoiceToggle,
   onPreview,
@@ -72,6 +76,7 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
   const [collapsedOffset, setCollapsedOffset] = useState({ x: 0, y: 0 });
   const [isCollapsedDragging, setIsCollapsedDragging] = useState(false);
   const submitObsessionAction = () => onObsessionSubmit(obsessionInput.trim());
+  const hasBranchExplorations = branchExplorations.length > 0;
 
   const releaseCollapsedPointer = (
     event: React.PointerEvent<HTMLButtonElement>,
@@ -151,7 +156,7 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
     obsessionInputRef.current?.focus();
   }, [activeObsession]);
 
-  if (!hasChoices && !canContinue) {
+  if (!hasChoices && !hasBranchExplorations && !canContinue) {
     return null;
   }
 
@@ -289,7 +294,7 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
                   </div>
                 </div>
               ))
-            ) : (
+            ) : hasBranchExplorations ? null : (
               <button
                 type="button"
                 onClick={() => void onContinue()}
@@ -301,6 +306,49 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
                 </div>
               </button>
             )}
+            {hasBranchExplorations ? (
+              <div className={hasChoices ? "space-y-1.5 pt-1" : "space-y-1.5"}>
+                {branchExplorations.map((branch, index) => {
+                  const actionText = branch.action.action.trim();
+                  const branchKey = `${branch.action.action_type ?? "free_text"}:${actionText}:${index}`;
+                  return (
+                    <div key={branchKey} className="space-y-1.5">
+                      <div className="grid grid-cols-[minmax(0,1fr)_2.5rem] items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => void onBranchClick(branch)}
+                          disabled={isChoiceInteractionDisabled}
+                          className={[
+                            "akashic-choice akashic-choice-obsession-visited h-10 w-full text-red-50 disabled:cursor-not-allowed disabled:opacity-50",
+                          ].join(" ")}
+                          title="回到这条执念分支"
+                        >
+                          <div className="flex min-h-7 items-center gap-2 text-left">
+                            <div className="min-w-0 flex-1 truncate text-sm font-semibold leading-5 sm:text-[0.95rem]">
+                              {actionText}
+                            </div>
+                            {branch.visited ? (
+                              <span className="inline-flex h-6 shrink-0 items-center gap-1 px-1.5 text-[0.65rem] leading-none text-red-50 sm:text-[0.7rem]">
+                                <CheckCircle2 className="h-3 w-3" />
+                              </span>
+                            ) : null}
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled
+                          className="relative h-10 min-h-10 w-10 self-auto cursor-not-allowed overflow-hidden rounded-full border border-red-300/35 bg-red-950/18 text-red-100 opacity-60 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                          title="执念分支"
+                        >
+                          <Flame className="relative z-10 mx-auto h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
           </div>
         ) : null}
 

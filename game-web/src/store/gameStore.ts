@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Choice } from '../lib/api';
+import type { BranchExploration, Choice } from '../lib/api';
 
 export type RoundChoicesStatus = 'idle' | 'loading' | 'ready';
 export type RoundNarrationStatus = 'running' | 'done' | 'error';
@@ -11,6 +11,7 @@ export interface RoundState {
   narrationStatus: RoundNarrationStatus | null;
   choices: Choice[];
   choicesStatus: RoundChoicesStatus;
+  branchExplorations: BranchExploration[];
   selectedChoiceText: string | null;
   selectedChoiceAction: string | null;
   isAwaitingNarration: boolean;
@@ -42,6 +43,7 @@ export function createRoundState(round: number, overrides: Partial<RoundState> =
     narrationStatus: null,
     choices: [],
     choicesStatus: 'idle',
+    branchExplorations: [],
     selectedChoiceText: null,
     selectedChoiceAction: null,
     isAwaitingNarration: false,

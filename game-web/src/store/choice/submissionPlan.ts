@@ -112,6 +112,7 @@ export function applyChoiceSubmissionOptimisticUpdate(
         round: plan.nextRound,
         choices: [],
         choicesStatus: 'loading',
+        branchExplorations: [],
         isAwaitingNarration: true,
       }),
     },
