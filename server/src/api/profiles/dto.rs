@@ -1,8 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+use crate::api::creation::{CreationCharacter, CreationWorld};
+
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GenerateProfilesRequest {
-    pub prompt: String,
+    pub character: CreationCharacter,
+    pub world: CreationWorld,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

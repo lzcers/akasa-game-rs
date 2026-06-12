@@ -17,7 +17,11 @@ use axum::{
 };
 use futures::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
-use story_engine::utils::{build_chat_model, parse_json_response};
+use serde_json::Value;
+use story_engine::{
+    resources::session_events::EngineEvent,
+    utils::{build_chat_model, parse_json_response},
+};
 use tokio::sync::broadcast;
 
 use crate::{
@@ -51,6 +55,13 @@ struct StreamHandshakeData {
     session_id: String,
     protocol: &'static str,
     note: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StreamLiveEngineEvent {
+    event_id: u64,
+    event: Value,
 }
 
 #[derive(Default, Deserialize)]
@@ -230,33 +241,41 @@ pub async fn stream_game_session(
         live_stream
             .replayed_events
             .into_iter()
-            .map(|event| Ok::<_, Infallible>(engine_event_sse(event))),
+            .filter_map(engine_event_sse)
+            .map(Ok::<_, Infallible>),
     );
     let live_stream = stream::unfold(
         Some((live_stream.event_rx, session_id, lease)),
         |state| async move {
             let (mut event_rx, session_id, lease) = state?;
 
-            match event_rx.recv().await {
-                Ok(event) => Some((
-                    Ok(engine_event_sse(event)),
-                    Some((event_rx, session_id, lease)),
-                )),
-                Err(broadcast::error::RecvError::Lagged(skipped)) => Some((
-                    Ok(sse_json_event(
-                        "stream.warning",
-                        StreamWarningData {
-                            session_id: session_id.clone(),
-                            reason: "lagged",
-                            skipped,
-                        },
-                    )),
-                    Some((event_rx, session_id, lease)),
-                )),
-                Err(broadcast::error::RecvError::Closed) => Some((
-                    Ok(sse_done_event("stream_game_session.done", Some(session_id))),
-                    None,
-                )),
+            loop {
+                match event_rx.recv().await {
+                    Ok(event) => {
+                        if let Some(event) = engine_event_sse(event) {
+                            return Some((Ok(event), Some((event_rx, session_id, lease))));
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        return Some((
+                            Ok(sse_json_event(
+                                "stream.warning",
+                                StreamWarningData {
+                                    session_id: session_id.clone(),
+                                    reason: "lagged",
+                                    skipped,
+                                },
+                            )),
+                            Some((event_rx, session_id, lease)),
+                        ));
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        return Some((
+                            Ok(sse_done_event("stream_game_session.done", Some(session_id))),
+                            None,
+                        ));
+                    }
+                }
             }
         },
     );
@@ -293,9 +312,45 @@ fn last_event_id_from_headers(headers: &HeaderMap) -> Option<u64> {
         .and_then(|value| value.parse().ok())
 }
 
-fn engine_event_sse(update: LiveEngineEvent) -> Event {
+fn engine_event_sse(update: LiveEngineEvent) -> Option<Event> {
     let event_id = update.event_id;
-    sse_json_event("engine.event", update).id(event_id.to_string())
+    compact_live_engine_event(update)
+        .map(|event| sse_json_event("engine.event", event).id(event_id.to_string()))
+}
+
+fn compact_live_engine_event(update: LiveEngineEvent) -> Option<StreamLiveEngineEvent> {
+    let event = compact_engine_event(update.event)?;
+    Some(StreamLiveEngineEvent {
+        event_id: update.event_id,
+        event,
+    })
+}
+
+fn compact_engine_event(event: EngineEvent) -> Option<Value> {
+    let mut event = serde_json::to_value(event).expect("failed to serialize engine event");
+    let Some(event_object) = event.as_object_mut() else {
+        return Some(event);
+    };
+    let event_type = event_object.get("type").and_then(Value::as_str);
+
+    match event_type {
+        Some(
+            "session_created"
+            | "task_completed"
+            | "entity_context_item_appended"
+            | "entity_context_rollback",
+        ) => None,
+        Some("task_update")
+            if event_object.get("entity_name").and_then(Value::as_str) != Some("UpperNarrator") =>
+        {
+            None
+        }
+        Some("flow_turn_update") => {
+            event_object.remove("content");
+            Some(event)
+        }
+        _ => Some(event),
+    }
 }
 
 fn format_story_narrations(narrations: &[String]) -> String {
@@ -326,6 +381,13 @@ const DEFAULT_SESSION_ROUNDS_LIMIT: usize = 30;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use story_engine::{
+        components::{agent::AgentOutputType, turn_flow::TurnStage},
+        resources::session_events::{
+            EntityContextItemAppended, EntityContextRollback, EntityContextRollbackPolicy,
+            FlowTurnUpdate, SessionCreated, TaskCompleted, TaskUpdate,
+        },
+    };
 
     #[test]
     fn format_story_narrations_numbers_and_trims_segments() {
@@ -353,5 +415,100 @@ mod tests {
         headers.insert("Last-Event-ID", "17".parse().expect("valid header"));
 
         assert_eq!(last_event_id_from_headers(&headers), Some(17));
+    }
+
+    #[test]
+    fn compact_engine_event_keeps_task_update_chunks() {
+        let event = compact_engine_event(EngineEvent::TaskUpdate(TaskUpdate {
+            session_id: "session-1".to_string(),
+            round: 2,
+            entity_name: "UpperNarrator".to_string(),
+            chunk: "雨声".to_string(),
+        }))
+        .expect("task updates should be streamed");
+
+        assert_eq!(event["type"], "task_update");
+        assert_eq!(event["chunk"], "雨声");
+    }
+
+    #[test]
+    fn compact_engine_event_filters_non_narrator_task_updates() {
+        let event = compact_engine_event(EngineEvent::TaskUpdate(TaskUpdate {
+            session_id: "session-1".to_string(),
+            round: 2,
+            entity_name: "FateWeaver".to_string(),
+            chunk: r#"{"large":"internal json chunk"}"#.to_string(),
+        }));
+
+        assert!(event.is_none());
+    }
+
+    #[test]
+    fn compact_engine_event_filters_session_created() {
+        let event = compact_engine_event(EngineEvent::SessionCreated(SessionCreated {
+            session_id: "session-1".to_string(),
+            character_name: "洛寒".to_string(),
+            world_profile: "world".to_string(),
+            character_profile: "hero".to_string(),
+            key_story_beats: "beats".to_string(),
+        }));
+
+        assert!(event.is_none());
+    }
+
+    #[test]
+    fn compact_engine_event_filters_completed_tasks() {
+        let event = compact_engine_event(EngineEvent::TaskCompleted(TaskCompleted {
+            session_id: "session-1".to_string(),
+            round: 2,
+            entity_name: "UpperNarrator".to_string(),
+            content: "完整叙事正文".to_string(),
+        }));
+
+        assert!(event.is_none());
+    }
+
+    #[test]
+    fn compact_engine_event_filters_entity_context_items() {
+        let event = compact_engine_event(EngineEvent::EntityContextItemAppended(
+            EntityContextItemAppended {
+                session_id: "session-1".to_string(),
+                round: 2,
+                entity_name: "UpperNarrator".to_string(),
+                message: Message::user("internal context"),
+            },
+        ));
+
+        assert!(event.is_none());
+    }
+
+    #[test]
+    fn compact_engine_event_filters_entity_context_rollbacks() {
+        let event =
+            compact_engine_event(EngineEvent::EntityContextRollback(EntityContextRollback {
+                session_id: "session-1".to_string(),
+                round: 2,
+                entity_name: "UpperNarrator".to_string(),
+                policy: EntityContextRollbackPolicy::LatestInput,
+            }));
+
+        assert!(event.is_none());
+    }
+
+    #[test]
+    fn compact_engine_event_removes_flow_turn_update_content() {
+        let event = compact_engine_event(EngineEvent::FlowTurnUpdate(FlowTurnUpdate {
+            session_id: "session-1".to_string(),
+            round: 2,
+            stage: TurnStage::Application,
+            entity_name: "UpperNarrator".to_string(),
+            output_type: AgentOutputType::Text,
+            content: "完整叙事正文".to_string(),
+        }))
+        .expect("flow turn updates should still be streamed");
+
+        assert_eq!(event["type"], "flow_turn_update");
+        assert_eq!(event["stage"], "application");
+        assert!(event.get("content").is_none());
     }
 }

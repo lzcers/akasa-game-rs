@@ -19,10 +19,6 @@ type ApiResult<T> = Result<Json<ApiResponse<T>>, AppError>;
 pub async fn generate_profiles(
     Json(request): Json<GenerateProfilesRequest>,
 ) -> ApiResult<GenerateProfilesData> {
-    if request.prompt.trim().is_empty() {
-        return Err(AppError::bad_request("`prompt` 不能为空。"));
-    }
-
     let mut model = build_chat_model();
     model.set_output_json(true);
 
@@ -84,7 +80,7 @@ pub async fn generate_profiles(
 4. `keyStoryBeats` 必须是多行字符串，且每行都是一个独立节点。
 5. 两段正文都要具体、克制、可演绎，避免空话、套话和泛泛而谈。"#,
         ),
-        Message::user(request.prompt),
+        Message::user(build_generate_profiles_prompt(&request)),
     ];
 
     let mut stream = std::pin::pin!(call_model(&model, &messages, None));
@@ -105,6 +101,62 @@ pub async fn generate_profiles(
     }
 
     Err(AppError::internal("模型未返回完整结果。"))
+}
+
+fn build_generate_profiles_prompt(request: &GenerateProfilesRequest) -> String {
+    format!(
+        r#"请基于以下两组设定，像从“阿卡夏记录”中与玩家输入共鸣一样，生成“世界记录”和“角色记录”。
+
+这些表单内容都是已确定事实，禁止改写、替换或否定，只能围绕它们做扩写、补完和强化。生成结果应像记录被唤醒、世界与角色逐步显影，而不是普通设定简介。
+
+[角色记录种子]
+- 姓名：{name}
+- 性别：{gender}
+- 年龄：{age}
+- 角色烙印：{background}
+- 角色描述：{appearance}
+- 属性分配：
+  - 智力：{intellect}
+  - 体力：{physique}
+  - 耐力：{endurance}
+  - 勇气：{courage}
+  - 理性：{rationality}
+  - 利他：{altruism}
+
+[世界记录种子]
+- 时代：{era}
+- 世界记录：{description}
+
+[生成目标]
+- 这是长期 AI 互动小说的记录底稿，不是一次性简介。
+- 世界记录必须严格建立在“世界记录种子”事实上。
+- 角色记录必须严格建立在“角色记录种子”事实上，并自然解释角色为何会被卷入这个故事。
+- 世界记录重点写清世界如何运转、现实压力从何而来，以及什么样的秩序正在支配众人。
+- 角色记录重点写清欲望、弱点、行动倾向，以及六项属性如何转化为行为习惯与判断方式。
+- 语气可以带有“记录、共鸣、显影、回响”的阿卡夏感，但不要堆砌术语。"#,
+        name = request.character.name.trim(),
+        gender = request.character.gender.trim(),
+        age = request.character.age,
+        background = empty_placeholder(&request.character.background),
+        appearance = empty_placeholder(&request.character.appearance),
+        intellect = request.character.traits.intellect,
+        physique = request.character.traits.physique,
+        endurance = request.character.traits.endurance,
+        courage = request.character.traits.courage,
+        rationality = request.character.traits.rationality,
+        altruism = request.character.traits.altruism,
+        era = request.world.era.trim(),
+        description = empty_placeholder(&request.world.description),
+    )
+}
+
+fn empty_placeholder(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        "未填写".to_string()
+    } else {
+        value.to_string()
+    }
 }
 
 fn parse_generated_profiles(content: &str) -> Result<GenerateProfilesData, String> {
@@ -133,4 +185,80 @@ fn validate_generated_profiles(data: GenerateProfilesData) -> Result<GeneratePro
         character: character.to_string(),
         key_story_beats: beats.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::creation::{CreationCharacter, CreationTraits, CreationWorld};
+
+    fn profiles_request() -> GenerateProfilesRequest {
+        GenerateProfilesRequest {
+            character: CreationCharacter {
+                name: " 叶知秋 ".to_string(),
+                gender: " 女 ".to_string(),
+                age: 28,
+                appearance: "总把银色发针别在袖口".to_string(),
+                traits: CreationTraits {
+                    intellect: 8,
+                    physique: 3,
+                    endurance: 4,
+                    courage: 6,
+                    rationality: 7,
+                    altruism: 2,
+                },
+                background: "被旧神契约标记的人".to_string(),
+            },
+            world: CreationWorld {
+                era: " 雨夜财阀异能 ".to_string(),
+                description: "高楼之间的契约会吞掉违约者的名字。".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn build_generate_profiles_prompt_uses_structured_form_fields() {
+        let prompt = build_generate_profiles_prompt(&profiles_request());
+
+        assert!(prompt.contains("- 姓名：叶知秋"));
+        assert!(prompt.contains("- 性别：女"));
+        assert!(prompt.contains("- 年龄：28"));
+        assert!(prompt.contains("- 角色烙印：被旧神契约标记的人"));
+        assert!(prompt.contains("- 时代：雨夜财阀异能"));
+        assert!(prompt.contains("- 智力：8"));
+        assert!(!prompt.contains("prompt"));
+    }
+
+    #[test]
+    fn build_generate_profiles_prompt_marks_blank_optional_text() {
+        let mut request = profiles_request();
+        request.character.background = "  ".to_string();
+        request.character.appearance.clear();
+        request.world.description = "\n".to_string();
+
+        let prompt = build_generate_profiles_prompt(&request);
+
+        assert!(prompt.contains("- 角色烙印：未填写"));
+        assert!(prompt.contains("- 角色描述：未填写"));
+        assert!(prompt.contains("- 世界记录：未填写"));
+    }
+
+    #[test]
+    fn parse_generated_profiles_trims_visible_fields() {
+        let parsed = parse_generated_profiles(
+            r#"{
+                "world": " 雨幕之下，契约成为城市真正的法律。 ",
+                "character": " 叶知秋习惯以理性遮掩恐惧。 ",
+                "keyStoryBeats": "她第一次听见被抹去者的名字\n财阀公开撕毁旧契约"
+            }"#,
+        )
+        .expect("profiles should parse");
+
+        assert_eq!(parsed.world, "雨幕之下，契约成为城市真正的法律。");
+        assert_eq!(parsed.character, "叶知秋习惯以理性遮掩恐惧。");
+        assert_eq!(
+            parsed.key_story_beats,
+            "她第一次听见被抹去者的名字\n财阀公开撕毁旧契约"
+        );
+    }
 }

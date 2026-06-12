@@ -154,7 +154,6 @@ const GeneratingPage: React.FC = () => {
     character,
     world,
     preparedProfiles,
-    isLoading,
     error,
     startGame,
     enterWorld,
@@ -165,7 +164,6 @@ const GeneratingPage: React.FC = () => {
       character: state.character,
       world: state.world,
       preparedProfiles: state.preparedProfiles,
-      isLoading: state.isLoading,
       error: state.error,
       startGame: state.startGame,
       enterWorld: state.enterWorld,
@@ -177,7 +175,7 @@ const GeneratingPage: React.FC = () => {
     startupStage === "ready_to_enter" &&
     Boolean(sessionId) &&
     hasPlayableSession;
-  const isEnterWorldPending = !canEnterWorld || isLoading;
+  const isEnterWorldPending = !canEnterWorld;
   const headline = stageHeadline(
     startupStage,
     character.name || "这位角色",

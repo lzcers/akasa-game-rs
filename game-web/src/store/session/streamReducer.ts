@@ -79,42 +79,44 @@ export function reduceStreamEvent({
   }
 
   if (event.type === 'flow_turn_update') {
-    if (event.stage === 'simulation' && event.output_type === 'json') {
+    const content = typeof event.content === 'string' ? event.content : null;
+
+    shouldSyncSnapshot = true;
+
+    if (event.stage === 'simulation' && event.output_type === 'json' && content) {
       const reduction = reduceWorldSnapshotEvent(
         internalState,
         uiState.stateView,
         activeRound,
         event.entity_name,
-        event.content,
+        content,
       );
       internalStatePatch = reduction.internalStatePatch;
       uiStatePatch = reduction.uiStatePatch;
     }
 
-    if (event.stage === 'application' && event.output_type === 'text') {
+    if (event.stage === 'application' && event.output_type === 'text' && content) {
       const reduction = reduceNarrationText(
         internalState,
         uiState.stateView,
         activeRound,
-        event.content,
+        content,
         'done',
         'complete',
       );
       internalStatePatch = reduction.internalStatePatch;
       uiStatePatch = reduction.uiStatePatch;
-      shouldSyncSnapshot = true;
     }
 
-    if (event.stage === 'application' && event.output_type === 'json') {
+    if (event.stage === 'application' && event.output_type === 'json' && content) {
       const reduction = reduceCharacterOptions(
         internalState,
         uiState.stateView,
         activeRound,
-        event.content,
+        content,
       );
       internalStatePatch = reduction.internalStatePatch;
       uiStatePatch = reduction.uiStatePatch;
-      shouldSyncSnapshot = true;
     }
   }
 
