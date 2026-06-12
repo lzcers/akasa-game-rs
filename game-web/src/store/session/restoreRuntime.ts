@@ -115,13 +115,14 @@ export async function restoreExistingGameSession(
 export async function cloneSharedGameSession(
   runtime: SessionRestoreRuntime,
   sourceSessionId: string,
+  sourceRound: number | null = null,
 ): Promise<{ sessionId: string; isEnding: boolean }> {
   const targetSessionId = sourceSessionId.trim();
   if (!targetSessionId) {
     throw new Error('未找到要复制的记录编号。');
   }
 
-  const activeRequest = getActiveCloneRequest(targetSessionId);
+  const activeRequest = getActiveCloneRequest(targetSessionId, sourceRound);
   if (activeRequest) {
     return activeRequest;
   }
@@ -131,7 +132,7 @@ export async function cloneSharedGameSession(
     restoringSessionId = null;
 
     try {
-      const cloned = await cloneGameSession(targetSessionId);
+      const cloned = await cloneGameSession(targetSessionId, sourceRound);
       track('share_clone_session_created', {
         sourceSessionId: targetSessionId,
         clonedSessionId: cloned.sessionId,
@@ -153,5 +154,5 @@ export async function cloneSharedGameSession(
     }
   })();
 
-  return trackCloneRequest(targetSessionId, clonePromise);
+  return trackCloneRequest(targetSessionId, sourceRound, clonePromise);
 }

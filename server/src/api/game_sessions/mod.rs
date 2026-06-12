@@ -121,8 +121,11 @@ pub async fn get_game_session_rounds(
 pub async fn clone_game_session(
     State(state): State<AppState>,
     Path(path): Path<SessionPath>,
+    Query(query): Query<CloneGameSessionQuery>,
 ) -> ApiResult<GameSessionWorldStateData> {
-    let state_view = state.clone_game_session(&path.session_id).await?;
+    let state_view = state
+        .clone_game_session(&path.session_id, query.round)
+        .await?;
     Ok(Json(ApiResponse::ok(state_view)))
 }
 

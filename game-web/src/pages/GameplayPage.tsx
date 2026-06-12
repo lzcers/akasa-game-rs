@@ -250,11 +250,15 @@ const GameplayPage: React.FC = () => {
     () =>
       new URL(
         sessionId
-          ? routeWithClonedSession(appRoutes.gameplay, sessionId)
+          ? routeWithClonedSession(
+              appRoutes.gameplay,
+              sessionId,
+              latestCompletedNarration?.round,
+            )
           : appRoutes.lobby,
         window.location.origin,
       ).toString(),
-    [sessionId],
+    [latestCompletedNarration?.round, sessionId],
   );
 
   useEffect(() => {

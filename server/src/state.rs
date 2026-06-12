@@ -82,6 +82,7 @@ struct HotSession {
     engine: AkashicSessionEngine,
     events_tx: broadcast::Sender<LiveEngineEvent>,
     live_events: Arc<Mutex<LiveEventLog>>,
+    submitted_action_rounds: Arc<Mutex<HashSet<u64>>>,
 }
 
 struct HotSessionAccess {
@@ -89,6 +90,7 @@ struct HotSessionAccess {
     engine: AkashicSessionEngine,
     events_tx: broadcast::Sender<LiveEngineEvent>,
     live_events: Arc<Mutex<LiveEventLog>>,
+    submitted_action_rounds: Arc<Mutex<HashSet<u64>>>,
 }
 
 pub struct LiveSessionStream {
@@ -337,7 +339,9 @@ impl AppState {
         session_id: &str,
         title: Option<&str>,
     ) -> Result<SaveExportData, AppError> {
-        let archive = self.archive_payload_for_session(session_id, title).await?;
+        let archive = self
+            .archive_payload_for_session(session_id, title, None)
+            .await?;
         let exported_at = now_string();
         let compressed_archive =
             archive::compress_archive_payload(&archive).map_err(AppError::internal)?;
@@ -429,6 +433,7 @@ impl AppState {
     pub async fn clone_game_session(
         &self,
         source_session_id: &str,
+        source_round: Option<u64>,
     ) -> Result<GameSessionWorldStateData, AppError> {
         let source_session_id = source_session_id.trim();
         if source_session_id.is_empty() {
@@ -437,7 +442,7 @@ impl AppState {
 
         let clone_session_id = format!("session-{}", Uuid::new_v4().simple());
         let mut payload = self
-            .archive_payload_for_session(source_session_id, None)
+            .archive_payload_for_session(source_session_id, None, source_round)
             .await?;
         // 克隆会话本质是改写 archive 身份，再用改写后的 payload 同时重建
         // 持久化状态和新的热 runtime。
@@ -469,7 +474,9 @@ impl AppState {
         &self,
         session_id: &str,
     ) -> Result<Vec<String>, AppError> {
-        let payload = self.archive_payload_for_session(session_id, None).await?;
+        let payload = self
+            .archive_payload_for_session(session_id, None, None)
+            .await?;
         Ok(collect_history_narrations(&payload.history_log.rounds))
     }
 
@@ -482,7 +489,7 @@ impl AppState {
         let result = match (request.control, request.action) {
             (Some(control), None) => apply_control(&hot.engine, control),
             (None, Some(action)) => {
-                self.apply_action_from_database(&hot.engine, session_id, action)
+                self.apply_action_from_database(&hot, session_id, action, request.expected_round)
                     .await
             }
             (None, None) => Err(AppError::bad_request(
@@ -524,10 +531,14 @@ impl AppState {
 
     async fn apply_action_from_database(
         &self,
-        engine: &AkashicSessionEngine,
+        hot: &HotSessionAccess,
         session_id: &str,
         action: SessionActionInput,
+        expected_round: Option<u64>,
     ) -> Result<ControlGameSessionData, AppError> {
+        let expected_round = expected_round
+            .filter(|round| *round > 0)
+            .ok_or_else(|| AppError::bad_request("提交行动必须提供 expectedRound。"))?;
         let actions = action
             .actions
             .into_iter()
@@ -556,10 +567,33 @@ impl AppState {
             }
         }
 
-        engine
-            .submit_player_action(SessionActionInput { actions })
-            .map_err(AppError::bad_request)?;
-        engine.start_next_turn().map_err(AppError::bad_request)?;
+        if self
+            .session_archive_repo
+            .has_story_edge_action_for_round(session_id, expected_round)
+            .await
+            .map_err(|err| AppError::internal(format!("检查重复行动失败：{err:#}")))?
+        {
+            return Err(AppError::bad_request("这一轮行动已经提交过。"));
+        }
+
+        {
+            let mut submitted_rounds = hot.submitted_action_rounds.lock().await;
+            if !submitted_rounds.insert(expected_round) {
+                return Err(AppError::bad_request("这一轮行动正在提交，请勿重复选择。"));
+            }
+        }
+
+        if let Err(error) = hot
+            .engine
+            .submit_player_action_for_turn(expected_round, SessionActionInput { actions })
+            .await
+        {
+            hot.submitted_action_rounds
+                .lock()
+                .await
+                .remove(&expected_round);
+            return Err(AppError::bad_request(error));
+        }
 
         Ok(ControlGameSessionData {
             action: "submit_action".to_string(),
@@ -588,40 +622,62 @@ impl AppState {
         session_id: &str,
         register_stream: bool,
     ) -> Result<HotSessionAccess, AppError> {
+        enum HotSessionLookup {
+            Cold(String),
+            Cooling,
+            Missing,
+        }
+
         loop {
             // 先在 registry 锁内快速判定状态；真正的恢复会 await 读库和建
             // engine，所以必须在释放 `sessions` 锁之后做。
-            let cold_session_id = {
+            let lookup = {
                 let mut sessions = self.sessions.lock().await;
-                let record = sessions
-                    .get_mut(session_id)
-                    .ok_or_else(|| AppError::not_found(format!("未找到会话 `{session_id}`")))?;
-                record.touch(Utc::now());
-                match &record.slot {
-                    SessionSlot::Hot(hot) => {
-                        let engine = hot.engine.clone();
-                        let events_tx = hot.events_tx.clone();
-                        let live_events = Arc::clone(&hot.live_events);
-                        if register_stream {
-                            record.active_streams += 1;
+                match sessions.get_mut(session_id) {
+                    Some(record) => {
+                        record.touch(Utc::now());
+                        match &record.slot {
+                            SessionSlot::Hot(hot) => {
+                                let engine = hot.engine.clone();
+                                let events_tx = hot.events_tx.clone();
+                                let live_events = Arc::clone(&hot.live_events);
+                                let submitted_action_rounds =
+                                    Arc::clone(&hot.submitted_action_rounds);
+                                if register_stream {
+                                    record.active_streams += 1;
+                                }
+                                return Ok(HotSessionAccess {
+                                    session_id: record.session_id.clone(),
+                                    engine,
+                                    events_tx,
+                                    live_events,
+                                    submitted_action_rounds,
+                                });
+                            }
+                            SessionSlot::Cooling { .. } => HotSessionLookup::Cooling,
+                            SessionSlot::Cold { .. } => {
+                                HotSessionLookup::Cold(record.session_id.clone())
+                            }
                         }
-                        return Ok(HotSessionAccess {
-                            session_id: record.session_id.clone(),
-                            engine,
-                            events_tx,
-                            live_events,
-                        });
                     }
-                    SessionSlot::Cooling { .. } => None,
-                    SessionSlot::Cold { .. } => Some(record.session_id.clone()),
+                    None => HotSessionLookup::Missing,
                 }
             };
 
-            let Some(cold_session_id) = cold_session_id else {
-                // reaper 正在 Cooling。等它回到 Hot（冷却失败）或落到 Cold
-                //（冷却成功）后再继续。
-                tokio::time::sleep(Duration::from_millis(25)).await;
-                continue;
+            let cold_session_id = match lookup {
+                HotSessionLookup::Cold(session_id) => session_id,
+                HotSessionLookup::Cooling => {
+                    // reaper 正在 Cooling。等它回到 Hot（冷却失败）或落到 Cold
+                    //（冷却成功）后再继续。
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                    continue;
+                }
+                HotSessionLookup::Missing => {
+                    if self.register_cold_session_from_database(session_id).await? {
+                        continue;
+                    }
+                    return Err(AppError::not_found(format!("未找到会话 `{session_id}`")));
+                }
             };
 
             let _restore_guard = self.restore_lock.lock().await;
@@ -635,7 +691,7 @@ impl AppState {
             }
 
             let payload = self
-                .archive_payload_for_session(&cold_session_id, None)
+                .archive_payload_for_session(&cold_session_id, None, None)
                 .await?;
             archive::validate_archive_payload(&payload).map_err(AppError::internal)?;
             let restored_phase = payload.turn_state.phase;
@@ -667,9 +723,39 @@ impl AppState {
                     engine: hot.engine.clone(),
                     events_tx: hot.events_tx.clone(),
                     live_events: Arc::clone(&hot.live_events),
+                    submitted_action_rounds: Arc::clone(&hot.submitted_action_rounds),
                 });
             }
         }
+    }
+
+    async fn register_cold_session_from_database(
+        &self,
+        session_id: &str,
+    ) -> Result<bool, AppError> {
+        let Some(metadata) = self
+            .session_archive_repo
+            .load_session_metadata(session_id)
+            .await
+            .map_err(|err| AppError::internal(format!("读取会话元数据失败：{err:#}")))?
+        else {
+            return Ok(false);
+        };
+
+        let now = Utc::now();
+        let mut sessions = self.sessions.lock().await;
+        sessions.entry(metadata.session_id.clone()).or_insert(SessionRecord {
+            session_id: metadata.session_id,
+            _created_at: now,
+            last_accessed_at: now,
+            active_streams: 0,
+            last_phase: metadata.phase,
+            slot: SessionSlot::Cold {
+                _saved_at: now,
+                _summary: None,
+            },
+        });
+        Ok(true)
     }
 
     async fn hot_session_access_if_available(
@@ -688,6 +774,7 @@ impl AppState {
         let engine = hot.engine.clone();
         let events_tx = hot.events_tx.clone();
         let live_events = Arc::clone(&hot.live_events);
+        let submitted_action_rounds = Arc::clone(&hot.submitted_action_rounds);
         if register_stream {
             record.active_streams += 1;
         }
@@ -696,6 +783,7 @@ impl AppState {
             engine,
             events_tx,
             live_events,
+            submitted_action_rounds,
         }))
     }
 
@@ -703,6 +791,7 @@ impl AppState {
         &self,
         session_id: &str,
         title: Option<&str>,
+        completed_round: Option<u64>,
     ) -> Result<archive::SessionArchivePayload, AppError> {
         self.touch_session(session_id).await?;
         let mut payload = self
@@ -710,7 +799,7 @@ impl AppState {
             .await?;
         // 数据库可能记录了生成中的中间阶段；导出/克隆需要稳定可玩的状态，
         // 所以从完整历史里回退到最近完成的轮次。
-        stabilize_archive_payload_from_history(&mut payload, title)
+        stabilize_archive_payload_from_history(&mut payload, title, completed_round)
             .map_err(AppError::bad_request)?;
         Ok(payload)
     }
@@ -929,7 +1018,10 @@ impl AppState {
 
         // 快照和关闭 engine 都在 registry 锁外执行。任何一步失败，都把原来的
         // hot runtime 放回去，保证调用方仍能继续使用当前会话。
-        let payload = match self.archive_payload_for_session(session_id, None).await {
+        let payload = match self
+            .archive_payload_for_session(session_id, None, None)
+            .await
+        {
             Ok(payload) => payload,
             Err(error) => {
                 self.restore_failed_cooling_session(session_id, hot).await;
@@ -1064,6 +1156,7 @@ fn build_hot_session(
     let live_events = Arc::new(Mutex::new(LiveEventLog::with_capacity(
         live_event_history_capacity,
     )));
+    let submitted_action_rounds = Arc::new(Mutex::new(HashSet::new()));
     let events_tx_for_task = events_tx.clone();
     let live_events_for_task = Arc::clone(&live_events);
     let session_id_for_event_task = session_id.to_string();
@@ -1238,6 +1331,7 @@ fn build_hot_session(
         engine,
         events_tx,
         live_events,
+        submitted_action_rounds,
     }
 }
 
@@ -1443,8 +1537,9 @@ fn summarize_actions(actions: &[PlayerActionItem]) -> String {
 fn stabilize_archive_payload_from_history(
     payload: &mut archive::SessionArchivePayload,
     requested_title: Option<&str>,
+    requested_completed_round: Option<u64>,
 ) -> Result<(), String> {
-    if is_archive_stable_phase(payload.turn_state.phase) {
+    if requested_completed_round.is_none() && is_archive_stable_phase(payload.turn_state.phase) {
         return Ok(());
     }
 
@@ -1453,9 +1548,16 @@ fn stabilize_archive_payload_from_history(
         .rounds
         .iter()
         .rev()
-        .find(|entry| is_completed_dialogue_round(entry))
+        .find(|entry| {
+            requested_completed_round.is_none_or(|round| entry.round == round)
+                && is_completed_dialogue_round(entry)
+        })
         .cloned()
-        .ok_or_else(|| "当前会话还没有已完成的对话可用于创建存档".to_string())?;
+        .ok_or_else(|| {
+            requested_completed_round
+                .map(|round| format!("第 {round} 章还没有可继续的已完成记录。"))
+                .unwrap_or_else(|| "当前会话还没有已完成的对话可用于创建存档".to_string())
+        })?;
     let completed_round_id = completed_round.round;
     let world_snapshot = completed_round
         .world_snapshot
@@ -1639,6 +1741,20 @@ mod tests {
         )
     }
 
+    fn test_state_at_path(path: PathBuf) -> AppState {
+        AppState::with_lifecycle_config(
+            path,
+            SessionLifecycleConfig {
+                idle_ttl: Duration::from_secs(30 * 60),
+                ended_ttl: Duration::from_secs(5 * 60),
+                max_hot_sessions: 200,
+                reaper_interval: Duration::from_secs(60),
+                live_event_history_capacity: DEFAULT_EVENT_HISTORY_CAPACITY,
+            },
+            false,
+        )
+    }
+
     #[tokio::test]
     async fn load_game_session_from_archive_restores_runtime_into_registry() {
         let state = test_state();
@@ -1740,7 +1856,7 @@ mod tests {
             ..WorldSnapshot::default()
         };
 
-        stabilize_archive_payload_from_history(&mut payload, None)
+        stabilize_archive_payload_from_history(&mut payload, None, None)
             .expect("nonstable payload should use latest completed round");
 
         assert_eq!(payload.turn_state.phase, TurnPhase::AwaitingPlayer);
@@ -1758,6 +1874,31 @@ mod tests {
         assert_eq!(payload.history_log.rounds.len(), 3);
         assert!(payload.history_log.rounds[2].committed_actions.is_empty());
         assert_eq!(payload.title, "第3轮：第3轮");
+    }
+
+    #[test]
+    fn archive_payload_can_stabilize_to_requested_completed_round() {
+        let mut payload = sample_payload_with_rounds(4);
+        payload.turn_state.phase = TurnPhase::AwaitingPlayer;
+        payload.turn_state.turn_index = 4;
+        payload.turn_state.active_turn_id = 4;
+
+        stabilize_archive_payload_from_history(&mut payload, None, Some(2))
+            .expect("requested completed round should be shareable");
+
+        assert_eq!(payload.turn_state.phase, TurnPhase::AwaitingPlayer);
+        assert_eq!(payload.turn_state.turn_index, 2);
+        assert_eq!(payload.turn_state.active_turn_id, 2);
+        assert_eq!(payload.history_log.rounds.len(), 2);
+        assert_eq!(payload.world_snapshot.scene_title, "第2轮");
+        assert_eq!(
+            summarize_actions(&payload.character_decision.committed_actions),
+            "行动-1"
+        );
+        assert_eq!(
+            payload.character_decision.choices[0].option.action,
+            "行动-2"
+        );
     }
 
     #[test]
@@ -1862,6 +2003,36 @@ mod tests {
             .get("session-from-slot")
             .expect("session should remain registered");
         assert!(matches!(record.slot, SessionSlot::Cold { .. }));
+    }
+
+    #[tokio::test]
+    async fn ensure_hot_session_lazily_registers_database_session_after_restart() {
+        let db_path = std::env::temp_dir().join(format!(
+            "akasa-state-restart-{}.sqlite3",
+            Uuid::new_v4().simple()
+        ));
+        let state = test_state_at_path(db_path.clone());
+        let compressed =
+            archive::compress_archive_payload(&sample_payload()).expect("archive compresses");
+        state
+            .load_game_session_from_archive(compressed)
+            .await
+            .expect("archive should restore into the original process");
+
+        let restarted = test_state_at_path(db_path);
+        assert!(restarted.sessions.lock().await.is_empty());
+
+        let access = restarted
+            .ensure_hot_session("session-from-slot", false)
+            .await
+            .expect("database session should lazy-register as cold and restore hot");
+        assert_eq!(access.session_id, "session-from-slot");
+
+        let sessions = restarted.sessions.lock().await;
+        let record = sessions
+            .get("session-from-slot")
+            .expect("session should be registered after lazy restore");
+        assert!(matches!(record.slot, SessionSlot::Hot(_)));
     }
 
     #[tokio::test]
@@ -2019,7 +2190,7 @@ mod tests {
             .expect("source session should restore");
 
         let cloned = state
-            .clone_game_session("session-from-slot")
+            .clone_game_session("session-from-slot", None)
             .await
             .expect("stable source session should clone");
 

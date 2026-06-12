@@ -226,8 +226,8 @@ export interface GetSessionRoundsOptions {
 }
 
 export type GameSessionControlInput =
-  | { control: { type: 'continue' }; action?: undefined }
-  | { control?: undefined; action: PlayerActionInput };
+  | { control: { type: 'continue' }; action?: undefined; expectedRound?: undefined }
+  | { control?: undefined; action: PlayerActionInput; expectedRound: number };
 
 export type EngineEvent =
   | {
@@ -423,9 +423,15 @@ export function getGameSessionRounds(
   );
 }
 
-export function cloneGameSession(sessionId: string) {
+export function cloneGameSession(sessionId: string, sourceRound?: number | null) {
+  const params = new URLSearchParams();
+  if (sourceRound != null) {
+    params.set('round', String(sourceRound));
+  }
+  const search = params.size > 0 ? `?${params.toString()}` : '';
+
   return requestJson<GameSessionWorldStateData>(
-    withApiOrigin(`/api/game-sessions/${encodeURIComponent(sessionId)}/clone`),
+    withApiOrigin(`/api/game-sessions/${encodeURIComponent(sessionId)}/clone${search}`),
     {
       method: 'POST',
     },

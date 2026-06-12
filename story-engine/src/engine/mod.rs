@@ -149,6 +149,24 @@ impl AkashicSessionEngine {
             .map_err(|_| "故事引擎运行时已停止，无法提交行动".to_string())
     }
 
+    pub async fn submit_player_action_for_turn(
+        &self,
+        expected_turn_id: u64,
+        input: PlayerActionInput,
+    ) -> Result<(), String> {
+        let (tx, rx) = oneshot::channel();
+        self.runtime_handle
+            .send(EngineCommand::SubmitPlayerActionForTurn {
+                session_id: self.session_id.clone(),
+                expected_turn_id,
+                input,
+                tx,
+            })
+            .map_err(|_| "故事引擎运行时已停止，无法提交行动".to_string())?;
+        rx.await
+            .map_err(|_| "故事引擎运行时已停止，无法接收行动提交结果".to_string())?
+    }
+
     pub async fn add_simulator(&self, simulator: Agent) -> Result<(), String> {
         let (tx, rx) = oneshot::channel();
         self.runtime_handle

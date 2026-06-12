@@ -14,6 +14,8 @@ import {
 } from './submissionPlan';
 import type { GameUIStoreState } from '../gameUIStore';
 
+const submittingChoiceKeys = new Set<string>();
+
 export async function submitGameChoice(
   set: StoreApi<GameUIStoreState>['setState'],
   submission: { input: PlayerActionInput; displayText: string },
@@ -40,6 +42,11 @@ export async function submitGameChoice(
     useObsession,
     obsessionPoints,
   });
+  const submissionKey = `${submissionPlan.sessionId}:${submissionPlan.activeRound}`;
+  if (submittingChoiceKeys.has(submissionKey)) {
+    throw new Error('这一轮选择正在写入，请稍候。');
+  }
+  submittingChoiceKeys.add(submissionKey);
 
   set({
     isLoading: true,
@@ -53,6 +60,7 @@ export async function submitGameChoice(
   try {
     await submitGameSessionControl(submissionPlan.sessionId, {
       action: submissionPlan.input,
+      expectedRound: submissionPlan.activeRound,
     });
     const primaryAction = submissionPlan.input.actions[0];
     track(
@@ -79,5 +87,7 @@ export async function submitGameChoice(
       rollbackChoiceSubmissionOptimisticUpdate(state, submissionPlan)
     ));
     throw error;
+  } finally {
+    submittingChoiceKeys.delete(submissionKey);
   }
 }

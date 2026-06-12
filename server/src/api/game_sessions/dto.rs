@@ -78,6 +78,13 @@ pub enum GameSessionControlCommand {
 pub struct ControlGameSessionRequest {
     pub control: Option<GameSessionControlCommand>,
     pub action: Option<SessionActionInput>,
+    pub expected_round: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloneGameSessionQuery {
+    pub round: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

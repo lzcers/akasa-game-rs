@@ -153,6 +153,34 @@ impl SessionArchiveRepository {
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .context("failed to read story edge actions")
     }
+    pub async fn has_story_edge_action_for_round(
+        &self,
+        session_id: &str,
+        round: u64,
+    ) -> Result<bool> {
+        let session_id = session_id.trim();
+        if session_id.is_empty() || round == 0 {
+            return Ok(false);
+        }
+
+        let from_node_id = linear_node_id_for_depth(round);
+        let _guard = self.db.lock().await;
+        let conn = self.db.open_connection("story edge duplicate check")?;
+        schema::init(&conn)?;
+        let count = conn
+            .query_row(
+                r#"
+                SELECT COUNT(1)
+                FROM story_edge_actions
+                WHERE session_id = ?1
+                    AND from_node_id = ?2
+                "#,
+                params![session_id, from_node_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .context("failed to check story edge action duplicate")?;
+        Ok(count > 0)
+    }
     pub async fn replace_story_edges_from_rounds(
         &self,
         session_id: &str,

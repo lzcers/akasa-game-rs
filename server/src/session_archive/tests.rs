@@ -359,8 +359,18 @@ async fn story_edge_actions_store_choice_option_fields() {
         .load_story_edge_actions("session-choice-edge")
         .await
         .expect("story edge actions should load");
+    let has_round_one_action = repo
+        .has_story_edge_action_for_round("session-choice-edge", 1)
+        .await
+        .expect("round duplicate check should run");
+    let has_round_two_action = repo
+        .has_story_edge_action_for_round("session-choice-edge", 2)
+        .await
+        .expect("round duplicate check should run");
 
     assert_eq!(edge_count, 1);
+    assert!(has_round_one_action);
+    assert!(!has_round_two_action);
     assert_eq!(stored_action.0, "hero");
     assert_eq!(stored_action.1, None);
     assert_eq!(stored_action.2, "selected_option");

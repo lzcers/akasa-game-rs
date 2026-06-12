@@ -4,6 +4,7 @@ import {
   appRoutes,
   isCloneShareSearch,
   isStoryReviewSearch,
+  readShareRoundFromSearch,
   readSessionIdFromSearch,
   routeWithSession,
 } from '../lib/appRoutes';
@@ -55,14 +56,20 @@ function SessionRestoreGate({ sessionId }: { sessionId: string }) {
   );
 }
 
-function SessionCloneGate({ sourceSessionId }: { sourceSessionId: string }) {
+function SessionCloneGate({
+  sourceSessionId,
+  sourceRound,
+}: {
+  sourceSessionId: string;
+  sourceRound: number | null;
+}) {
   const cloneSharedSession = useGameUIStore((state) => state.cloneSharedSession);
   const isLoading = useGameUIStore((state) => state.isLoading);
   const error = useGameUIStore((state) => state.error);
   const navigate = useNavigate();
 
   useEffect(() => {
-    void cloneSharedSession(sourceSessionId)
+    void cloneSharedSession(sourceSessionId, sourceRound)
       .then((cloned) => {
         navigate(
           routeWithSession(
@@ -75,7 +82,7 @@ function SessionCloneGate({ sourceSessionId }: { sourceSessionId: string }) {
       .catch(() => {
         // The store keeps the user-facing error and navigates back to the lobby.
       });
-  }, [cloneSharedSession, navigate, sourceSessionId]);
+  }, [cloneSharedSession, navigate, sourceRound, sourceSessionId]);
 
   return (
     <div className="flex h-full w-full items-center justify-center px-6 text-center">
@@ -102,13 +109,19 @@ function SessionRouteGuard({
 }) {
   const location = useLocation();
   const requestedSessionId = readSessionIdFromSearch(location.search);
+  const requestedShareRound = readShareRoundFromSearch(location.search);
   const shouldCloneSession = isCloneShareSearch(location.search);
   const shouldReviewEndedStory = isStoryReviewSearch(location.search);
   const sessionId = useGameInternalStore((state) => state.sessionId);
   const stateView = useGameUIStore((state) => state.stateView);
 
   if (requestedSessionId && shouldCloneSession) {
-    return <SessionCloneGate sourceSessionId={requestedSessionId} />;
+    return (
+      <SessionCloneGate
+        sourceSessionId={requestedSessionId}
+        sourceRound={requestedShareRound}
+      />
+    );
   }
 
   if (isSessionRestoreSuppressed(requestedSessionId)) {

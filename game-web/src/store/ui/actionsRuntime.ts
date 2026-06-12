@@ -51,8 +51,8 @@ export function createGameUIActions(
     restoreSession: (sessionId) => (
       restoreExistingGameSession(createSessionRestoreRuntime(set, get), sessionId)
     ),
-    cloneSharedSession: (sourceSessionId) => (
-      cloneSharedGameSession(createSessionRestoreRuntime(set, get), sourceSessionId)
+    cloneSharedSession: (sourceSessionId, sourceRound = null) => (
+      cloneSharedGameSession(createSessionRestoreRuntime(set, get), sourceSessionId, sourceRound)
     ),
     resetGame: () => {
       const runtime = resetGameWithBindings(set);
