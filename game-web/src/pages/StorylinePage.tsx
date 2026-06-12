@@ -298,6 +298,11 @@ const StorylinePage: React.FC = () => {
             selected.isEnding ? appRoutes.ending : appRoutes.gameplay,
             selected.sessionId,
           ),
+          {
+            state: {
+              scrollNarrationToBottomKey: `${selected.sessionId}:${node.id}:${Date.now()}`,
+            },
+          },
         );
       } catch (error) {
         setFeedback(error instanceof Error ? error.message : "切换故事线失败。");

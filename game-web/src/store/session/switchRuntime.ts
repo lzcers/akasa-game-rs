@@ -16,6 +16,10 @@ type SetGameUIState = StoreApi<GameUIStoreState>['setState'];
 type CloseSessionStream = () => void;
 type ConnectSessionStream = (sessionId: string) => void;
 
+interface ActivateSessionSnapshotOptions {
+  replaceTimeline?: boolean;
+}
+
 export function resetInternalGameState() {
   useGameInternalStore.setState({
     ...initialInternalState,
@@ -52,9 +56,13 @@ export function activateSessionSnapshot(
   set: SetGameUIState,
   session: GameSessionWorldStateData,
   connectSessionStream: ConnectSessionStream,
+  options: ActivateSessionSnapshotOptions = {},
 ) {
   setAnalyticsGameSessionId(session.sessionId);
-  const stateView = applySessionSnapshotToStores(session, { resetValues: true });
+  const stateView = applySessionSnapshotToStores(session, {
+    resetValues: true,
+    replaceTimeline: options.replaceTimeline,
+  });
   set({
     stateView,
     isLoading: false,

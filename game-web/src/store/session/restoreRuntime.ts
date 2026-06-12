@@ -179,8 +179,12 @@ export async function selectStorylineNodeForSession(
       nodeId: targetNodeId,
     });
     runtime.closeSessionStream();
-    activateSessionSnapshot(runtime.set, selected, runtime.connectSessionStream);
-    await loadCompleteSessionRounds(selected.sessionId);
+    activateSessionSnapshot(runtime.set, selected, runtime.connectSessionStream, {
+      replaceTimeline: true,
+    });
+    await loadCompleteSessionRounds(selected.sessionId, {
+      replaceTimeline: true,
+    });
     return {
       sessionId: selected.sessionId,
       isEnding: selected.worldState.isEnding || selected.flowEnd,

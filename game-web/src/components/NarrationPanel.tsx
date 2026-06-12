@@ -27,6 +27,7 @@ interface NarrationPanelProps {
   isAwaitingNarration: boolean;
   skipRestoredNarrationAnimation: boolean;
   broadcastMessages: string[];
+  scrollToBottomKey?: string | null;
   onTypewriterComplete: () => void;
   activeBacktrackRound?: number | null;
   onBacktrackRound?: (round: number) => void;
@@ -82,6 +83,7 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
   isAwaitingNarration,
   skipRestoredNarrationAnimation,
   broadcastMessages,
+  scrollToBottomKey = null,
   onTypewriterComplete,
   activeBacktrackRound = null,
   onBacktrackRound,
@@ -254,6 +256,20 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
     narrationHistory,
     updateNarrationScrollbar,
   ]);
+
+  useLayoutEffect(() => {
+    if (!scrollToBottomKey) {
+      return;
+    }
+
+    const scrollElement = scrollContainerRef.current;
+    if (!scrollElement) {
+      return;
+    }
+
+    scrollElement.scrollTop = scrollElement.scrollHeight;
+    updateNarrationScrollbar();
+  }, [scrollToBottomKey, updateNarrationScrollbar]);
 
   const scrollByThumbDelta = useCallback(
     (deltaY: number) => {

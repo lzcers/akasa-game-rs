@@ -40,6 +40,10 @@ interface SubmittedChoiceState {
   sessionId: string | null;
 }
 
+interface GameplayLocationState {
+  scrollNarrationToBottomKey?: string;
+}
+
 const GameplayPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -126,6 +130,9 @@ const GameplayPage: React.FC = () => {
     () => readFocusRoundFromSearch(location.search),
     [location.search],
   );
+  const scrollNarrationToBottomKey =
+    (location.state as GameplayLocationState | null)
+      ?.scrollNarrationToBottomKey ?? null;
   const playableCharacterName = characterName.trim() || "玩家角色";
   const submittedChoices = useMemo(
     () =>
@@ -877,6 +884,7 @@ const GameplayPage: React.FC = () => {
                 skipRestoredNarrationAnimation || isEndingReviewMode
               }
               broadcastMessages={broadcastMessages}
+              scrollToBottomKey={scrollNarrationToBottomKey}
               onTypewriterComplete={handleTypewriterComplete}
               activeBacktrackRound={isBacktrackChoicePanel ? choicePanelRound : null}
               onBacktrackRound={
