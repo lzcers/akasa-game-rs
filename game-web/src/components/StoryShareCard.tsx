@@ -141,7 +141,7 @@ const StoryShareCard: React.FC<StoryShareCardProps> = ({
             <div className="absolute -left-1 top-0 h-10 w-10 rounded-full bg-[#d8c18f]/8 blur-2xl" />
             <div className="relative rounded-[1.1rem] border border-[rgba(116,103,80,0.42)] bg-[rgba(8,14,26,0.38)] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-sm sm:rounded-[1.35rem] sm:p-6">
               <div className="mb-2.5 flex items-center gap-3 sm:mb-4">
-                <div className="h-px flex-1 bg-gradient-to-r from-[#d8c18f]/70 to-transparent" />
+                <div className="h-px flex-1 bg-linear-to-r from-[#d8c18f]/70 to-transparent" />
                 <span className="text-[10px] tracking-[0.22em] text-[#e6d1a2]/85 uppercase sm:text-[11px] sm:tracking-[0.28em]">
                   回响摘录
                 </span>
