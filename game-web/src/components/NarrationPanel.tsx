@@ -389,6 +389,19 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
     [scrollThumb.height, updateNarrationScrollbar],
   );
 
+  const handleScrollbarLostPointerCapture = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const dragStart = scrollbarDragRef.current;
+      if (!dragStart || dragStart.pointerId !== event.pointerId) {
+        return;
+      }
+
+      scrollbarDragRef.current = null;
+      setIsScrollbarDragging(false);
+    },
+    [],
+  );
+
   const handleBacktrackRound = useCallback(
     (round: number) => {
       captureNarrationScrollAnchor(round);
@@ -519,6 +532,7 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
           onPointerDown={handleBroadcastPointerDown}
           onPointerUp={handleBroadcastPointerEnd}
           onPointerCancel={handleBroadcastPointerCancel}
+          onLostPointerCapture={releaseBroadcastPointer}
           onClick={handleBroadcastClick}
           onKeyDown={handleBroadcastKeyDown}
         >
@@ -589,6 +603,7 @@ const NarrationPanel: React.FC<NarrationPanelProps> = ({
               aria-valuemin={0}
               aria-valuemax={100}
               onPointerDown={handleScrollbarThumbPointerDown}
+              onLostPointerCapture={handleScrollbarLostPointerCapture}
             />
           </div>
         </div>

@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use story_engine::{
     components::{
         agent::{Agent as StoryAgent, AgentOutputType},
-        outcome::{PendingCharacterChoice, PlayerActionItem, PlayerActionType},
+        outcome::{CharacterOptions, PendingCharacterChoice, PlayerActionItem, PlayerActionType},
         world_snapshot::WorldSnapshot,
     },
     engine::{AkashicEngine, AkashicSessionEngine},
@@ -348,9 +348,14 @@ impl AppState {
         session_id: &str,
         title: Option<&str>,
     ) -> Result<SaveExportData, AppError> {
-        let archive = self
+        let mut archive = self
             .archive_payload_for_session(session_id, title, None)
             .await?;
+        archive.database_archive = self
+            .session_archive_repo
+            .export_session_database_archive(session_id)
+            .await
+            .map_err(|err| AppError::internal(format!("导出完整会话快照失败：{err:#}")))?;
         let exported_at = now_string();
         let compressed_archive =
             archive::compress_archive_payload(&archive).map_err(AppError::internal)?;
@@ -1112,6 +1117,7 @@ impl AppState {
         // 所以从完整历史里回退到最近完成的轮次。
         stabilize_archive_payload_from_history(&mut payload, title, completed_round)
             .map_err(AppError::bad_request)?;
+        payload.database_archive = database_archive_from_history(&payload)?;
         Ok(payload)
     }
 
@@ -1142,27 +1148,10 @@ impl AppState {
             })
             .await
             .map_err(|err| AppError::internal(format!("写入会话元数据失败：{err:#}")))?;
-        self.persist_rounds(&payload.session_id, &payload.history_log.rounds)
-            .await?;
         self.session_archive_repo
-            .replace_story_edges_from_rounds(&payload.session_id, &payload.history_log.rounds)
+            .restore_session_database_archive(&payload.session_id, &payload.database_archive)
             .await
-            .map_err(|err| AppError::internal(format!("写入故事边行动失败：{err:#}")))?;
-        self.session_archive_repo
-            .replace_entity_contexts_from_contexts(
-                &payload.session_id,
-                payload
-                    .turn_state
-                    .active_turn_id
-                    .max(payload.turn_state.turn_index),
-                &[
-                    ("FateWeaver", &payload.fate_weaver),
-                    ("UpperNarrator", &payload.upper_narrator),
-                    (payload.character_name.as_str(), &payload.character_agent),
-                ],
-            )
-            .await
-            .map_err(|err| AppError::internal(format!("写入 entity context 失败：{err:#}")))?;
+            .map_err(|err| AppError::internal(format!("恢复完整会话快照失败：{err:#}")))?;
         Ok(())
     }
 
@@ -1260,17 +1249,6 @@ impl AppState {
         }
         self.load_session_metadata(session_id).await?;
         Ok(())
-    }
-
-    async fn persist_rounds(
-        &self,
-        session_id: &str,
-        rounds: &[RoundHistoryEntry],
-    ) -> Result<(), AppError> {
-        self.session_archive_repo
-            .save_rounds(session_id, rounds)
-            .await
-            .map_err(|err| AppError::internal(format!("写入会话轮次历史失败：{err:#}")))
     }
 
     pub async fn reap_idle_sessions_once(&self) -> Result<usize, AppError> {
@@ -1920,6 +1898,214 @@ fn archive_payload_from_database(
             choices,
         },
         history_log: SessionHistoryLog { rounds },
+        database_archive: archive::SessionDatabaseArchive {
+            active_node_id: node_id_for_turn_state(
+                if metadata.flow_end {
+                    TurnPhase::Ended
+                } else {
+                    metadata.phase
+                },
+                metadata.turn_index,
+                metadata.active_turn_id,
+            ),
+            total_node_count: i64::try_from(metadata.active_turn_id.max(metadata.turn_index))
+                .unwrap_or(i64::MAX),
+            story_nodes: Vec::new(),
+            story_edges: Vec::new(),
+            story_edge_actions: Vec::new(),
+            entity_flow_outputs: Vec::new(),
+            entity_context_items: Vec::new(),
+        },
+    }
+}
+
+fn database_archive_from_history(
+    payload: &archive::SessionArchivePayload,
+) -> Result<archive::SessionDatabaseArchive, AppError> {
+    let now = now_string();
+    let active_node_id = node_id_for_turn_state(
+        payload.turn_state.phase,
+        payload.turn_state.turn_index,
+        payload.turn_state.active_turn_id,
+    );
+    let max_round = payload
+        .history_log
+        .rounds
+        .iter()
+        .map(|round| round.round)
+        .max()
+        .unwrap_or_else(|| {
+            payload
+                .turn_state
+                .active_turn_id
+                .max(payload.turn_state.turn_index)
+        });
+    let total_node_count = i64::try_from(max_round)
+        .map_err(|_| AppError::internal("存档轮次数超过 SQLite INTEGER 范围"))?;
+
+    let mut story_nodes = vec![archive::StoryNodeArchive {
+        node_id: "start".to_string(),
+        parent_node_id: None,
+        node_depth: 0,
+        sequence_index: 0,
+        phase: "start".to_string(),
+        flow_end: false,
+        created_at: now.clone(),
+        updated_at: now.clone(),
+        last_accessed_at: now.clone(),
+    }];
+    let mut entity_flow_outputs = Vec::new();
+    let mut story_edges = Vec::new();
+    let mut story_edge_actions = Vec::new();
+    let round_ids = payload
+        .history_log
+        .rounds
+        .iter()
+        .map(|round| round.round)
+        .collect::<HashSet<_>>();
+
+    for round in &payload.history_log.rounds {
+        let node_id = node_id_for_depth(round.round);
+        story_nodes.push(archive::StoryNodeArchive {
+            node_id: node_id.clone(),
+            parent_node_id: Some(node_id_for_depth(round.round.saturating_sub(1))),
+            node_depth: i64::try_from(round.round)
+                .map_err(|_| AppError::internal("存档轮次数超过 SQLite INTEGER 范围"))?,
+            sequence_index: i64::try_from(round.round)
+                .map_err(|_| AppError::internal("存档节点序号超过 SQLite INTEGER 范围"))?,
+            phase: if round.round
+                == payload
+                    .turn_state
+                    .active_turn_id
+                    .max(payload.turn_state.turn_index)
+            {
+                phase_archive_name(payload.turn_state.phase).to_string()
+            } else {
+                "awaiting_player".to_string()
+            },
+            flow_end: payload.turn_state.phase == TurnPhase::Ended
+                && round.round
+                    == payload
+                        .turn_state
+                        .active_turn_id
+                        .max(payload.turn_state.turn_index),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            last_accessed_at: now.clone(),
+        });
+
+        if let Some(world_snapshot) = &round.world_snapshot {
+            entity_flow_outputs.push(archive::EntityFlowOutputArchive {
+                node_id: node_id.clone(),
+                stage: "simulation".to_string(),
+                entity_name: "FateWeaver".to_string(),
+                output_type: "json".to_string(),
+                content: serde_json::to_string(world_snapshot)
+                    .map_err(|err| AppError::internal(format!("序列化世界快照失败：{err}")))?,
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            });
+        }
+
+        if let Some(narration) = round
+            .narration_text
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        {
+            entity_flow_outputs.push(archive::EntityFlowOutputArchive {
+                node_id: node_id.clone(),
+                stage: "application".to_string(),
+                entity_name: "UpperNarrator".to_string(),
+                output_type: "text".to_string(),
+                content: narration.to_string(),
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            });
+        }
+
+        if !round.choices.is_empty() {
+            let options = CharacterOptions {
+                options: round
+                    .choices
+                    .iter()
+                    .map(|choice| choice.option.clone())
+                    .collect(),
+            };
+            entity_flow_outputs.push(archive::EntityFlowOutputArchive {
+                node_id: node_id.clone(),
+                stage: "application".to_string(),
+                entity_name: "玩家角色".to_string(),
+                output_type: "json".to_string(),
+                content: serde_json::to_string(&options)
+                    .map_err(|err| AppError::internal(format!("序列化角色选项失败：{err}")))?,
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            });
+        }
+
+        if !round.committed_actions.is_empty() && round_ids.contains(&(round.round + 1)) {
+            let to_node_id = node_id_for_depth(round.round + 1);
+            story_edges.push(archive::StoryEdgeArchive {
+                from_node_id: node_id.clone(),
+                to_node_id: to_node_id.clone(),
+                created_at: now.clone(),
+            });
+            for action in &round.committed_actions {
+                let action = action.clone().normalized();
+                if action.action.is_empty() {
+                    continue;
+                }
+                story_edge_actions.push(archive::StoryEdgeActionArchive {
+                    from_node_id: node_id.clone(),
+                    to_node_id: to_node_id.clone(),
+                    character_name: action.character_name,
+                    player_id: action.player_id,
+                    action_type: player_action_type_archive_name(action.action_type).to_string(),
+                    title: action.title,
+                    action: action.action,
+                    motivation_and_risk: action.motivation_and_risk,
+                    submitted_at: now.clone(),
+                });
+            }
+        }
+    }
+
+    Ok(archive::SessionDatabaseArchive {
+        active_node_id,
+        total_node_count,
+        story_nodes,
+        story_edges,
+        story_edge_actions,
+        entity_flow_outputs,
+        entity_context_items: Vec::new(),
+    })
+}
+
+fn node_id_for_depth(depth: u64) -> String {
+    if depth == 0 {
+        "start".to_string()
+    } else {
+        format!("node-{depth}")
+    }
+}
+
+fn phase_archive_name(phase: TurnPhase) -> &'static str {
+    match phase {
+        TurnPhase::Start => "start",
+        TurnPhase::Simulation => "simulation",
+        TurnPhase::Application => "application",
+        TurnPhase::AwaitingPlayer => "awaiting_player",
+        TurnPhase::TurnCompleted => "turn_completed",
+        TurnPhase::Ended => "ended",
+        TurnPhase::Failed => "failed",
+    }
+}
+
+fn player_action_type_archive_name(action_type: PlayerActionType) -> &'static str {
+    match action_type {
+        PlayerActionType::SelectedOption => "selected_option",
+        PlayerActionType::FreeText => "free_text",
     }
 }
 
@@ -2658,6 +2844,8 @@ mod tests {
                 committed_actions: vec![],
             },
         ];
+        payload.database_archive = database_archive_from_history(&payload)
+            .expect("branch test payload should build snapshot");
         state
             .persist_payload_database_state(&payload)
             .await
@@ -2998,8 +3186,147 @@ mod tests {
 
         assert_eq!(payload.session_id, created.session_id);
         assert_eq!(payload.title, "测试存档");
+        assert!(!payload.database_archive.story_nodes.is_empty());
         assert_eq!(exported.title, "测试存档");
         assert!(!exported.compressed_archive.is_empty());
+    }
+
+    #[tokio::test]
+    async fn export_save_archive_preserves_full_storyline_database_snapshot() {
+        let db_path = std::env::temp_dir().join(format!(
+            "akasa-full-save-archive-{}.sqlite3",
+            Uuid::new_v4().simple()
+        ));
+        let state = AppState::with_lifecycle_config(
+            db_path,
+            SessionLifecycleConfig {
+                idle_ttl: Duration::from_secs(30 * 60),
+                ended_ttl: Duration::from_secs(5 * 60),
+                max_hot_sessions: 200,
+                reaper_interval: Duration::from_secs(60),
+                live_event_history_capacity: DEFAULT_EVENT_HISTORY_CAPACITY,
+            },
+            false,
+        );
+
+        let compressed = archive::compress_archive_payload(&sample_payload_with_rounds(2))
+            .expect("archive compresses");
+        state
+            .load_game_session_from_archive(compressed)
+            .await
+            .expect("linear archive should restore");
+
+        let branch_choice = CharacterOption {
+            title: "翻窗".to_string(),
+            action: "翻窗进入侧厅".to_string(),
+            motivation_and_risk: "绕开正门，但玻璃声会暴露位置".to_string(),
+        };
+        let branch = state
+            .session_archive_repo
+            .prepare_backtrack_branch(
+                "session-from-slot",
+                1,
+                &[PlayerActionItem::character_selected_option(&branch_choice)],
+            )
+            .await
+            .expect("branch should prepare");
+        state
+            .session_archive_repo
+            .save_flow_turn_update_for_node(
+                &FlowTurnUpdate {
+                    session_id: "session-from-slot".to_string(),
+                    round: 2,
+                    stage: TurnPhase::Simulation,
+                    entity_name: "FateWeaver".to_string(),
+                    output_type: AgentOutputType::Json,
+                    content: serde_json::to_string(&WorldSnapshot {
+                        round: 2,
+                        scene_title: "侧厅窗影".to_string(),
+                        ..WorldSnapshot::default()
+                    })
+                    .expect("world snapshot should serialize"),
+                },
+                &branch.branch_node_id,
+            )
+            .await
+            .expect("branch world snapshot should save");
+        state
+            .session_archive_repo
+            .save_flow_turn_update_for_node(
+                &FlowTurnUpdate {
+                    session_id: "session-from-slot".to_string(),
+                    round: 2,
+                    stage: TurnPhase::Application,
+                    entity_name: "UpperNarrator".to_string(),
+                    output_type: AgentOutputType::Text,
+                    content: "你翻进侧厅，旧窗框在身后轻轻回弹。".to_string(),
+                },
+                &branch.branch_node_id,
+            )
+            .await
+            .expect("branch narration should save");
+        state
+            .session_archive_repo
+            .update_session_turn_state_for_node(
+                "session-from-slot",
+                &branch.branch_node_id,
+                TurnPhase::AwaitingPlayer,
+            )
+            .await
+            .expect("branch node should be stable");
+
+        let original_choice = CharacterOption {
+            title: "选择-1".to_string(),
+            action: "行动-1".to_string(),
+            motivation_and_risk: "保持测试稳定".to_string(),
+        };
+        state
+            .session_archive_repo
+            .prepare_backtrack_branch(
+                "session-from-slot",
+                1,
+                &[PlayerActionItem::character_selected_option(
+                    &original_choice,
+                )],
+            )
+            .await
+            .expect("linear branch should reactivate");
+
+        let exported = state
+            .export_save_archive("session-from-slot", Some("完整存档"))
+            .await
+            .expect("save archive should export");
+        let payload = archive::decompress_archive_payload(&exported.compressed_archive)
+            .expect("exported archive should decode");
+        assert!(
+            payload
+                .database_archive
+                .story_nodes
+                .iter()
+                .any(|node| node.node_id == branch.branch_node_id)
+        );
+
+        state
+            .load_game_session_from_archive(exported.compressed_archive)
+            .await
+            .expect("full archive should restore");
+
+        let storyline = state
+            .get_game_session_storyline("session-from-slot")
+            .await
+            .expect("storyline should load after archive restore");
+        assert!(
+            storyline.nodes.iter().any(|node| {
+                node.node_id == branch.branch_node_id && node.title == "侧厅窗影"
+            })
+        );
+        assert!(storyline.edges.iter().any(|edge| {
+            edge.to_node_id == branch.branch_node_id
+                && edge
+                    .actions
+                    .iter()
+                    .any(|action| action.action == "翻窗进入侧厅")
+        }));
     }
 
     #[tokio::test]
@@ -3261,7 +3588,7 @@ mod tests {
     }
 
     fn sample_payload() -> SessionArchivePayload {
-        SessionArchivePayload {
+        let mut payload = SessionArchivePayload {
             session_id: "session-from-slot".to_string(),
             title: "第7轮：钟楼阴影".to_string(),
             character_name: "洛寒".to_string(),
@@ -3314,7 +3641,19 @@ mod tests {
                     committed_actions: vec![PlayerActionItem::character_free_text("绕到钟楼背面")],
                 }],
             },
-        }
+            database_archive: archive::SessionDatabaseArchive {
+                active_node_id: "start".to_string(),
+                total_node_count: 0,
+                story_nodes: Vec::new(),
+                story_edges: Vec::new(),
+                story_edge_actions: Vec::new(),
+                entity_flow_outputs: Vec::new(),
+                entity_context_items: Vec::new(),
+            },
+        };
+        payload.database_archive =
+            database_archive_from_history(&payload).expect("sample payload should build snapshot");
+        payload
     }
 
     fn sample_payload_with_rounds(total_rounds: u64) -> SessionArchivePayload {
@@ -3358,6 +3697,8 @@ mod tests {
                 })
                 .collect(),
         };
+        payload.database_archive =
+            database_archive_from_history(&payload).expect("sample payload should build snapshot");
         payload
     }
 }

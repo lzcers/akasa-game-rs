@@ -896,6 +896,55 @@ const GameplayPage: React.FC = () => {
     setFeedback(null);
   };
 
+  const handleChoiceOverlayWheel = useCallback(
+    (event: React.WheelEvent<HTMLDivElement>) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+
+      if (target.closest("textarea, input, select")) {
+        return;
+      }
+
+      const direction = Math.sign(event.deltaY);
+      const localScrollContainer = target.closest<HTMLElement>(
+        "[data-local-wheel-scroll]",
+      );
+      if (localScrollContainer && direction !== 0) {
+        const canScrollUp = localScrollContainer.scrollTop > 0;
+        const canScrollDown =
+          localScrollContainer.scrollTop + localScrollContainer.clientHeight <
+          localScrollContainer.scrollHeight - 1;
+        if ((direction < 0 && canScrollUp) || (direction > 0 && canScrollDown)) {
+          return;
+        }
+      }
+
+      const narrationScroll = document.getElementById("narration-scroll");
+      if (!narrationScroll) {
+        return;
+      }
+
+      const canScrollNarration =
+        narrationScroll.scrollHeight > narrationScroll.clientHeight + 1;
+      if (!canScrollNarration) {
+        return;
+      }
+
+      const deltaY =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? event.deltaY * 16
+          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? event.deltaY * narrationScroll.clientHeight
+            : event.deltaY;
+
+      event.preventDefault();
+      narrationScroll.scrollTop += deltaY;
+    },
+    [],
+  );
+
   return (
     <ScreenShell className="h-full min-h-0 items-stretch overflow-hidden py-2 sm:py-2 md:py-2">
       <StoryFrame className="relative flex h-full max-w-5xl flex-col overflow-hidden px-2.5 py-2.5 sm:px-3 sm:py-3">
@@ -929,71 +978,74 @@ const GameplayPage: React.FC = () => {
                       </p>
                     </div>
                   ) : null}
-                  <div className="pointer-events-auto">
-                  <ChoicePanel
-                    hasChoices={hasChoicePanelChoices}
-                    canContinue={
-                      !isBacktrackChoicePanel && canContinueWithoutChoice
-                    }
-                    choices={choicePanelChoices}
-                    branchExplorations={choicePanelObsessionBranches}
-                    previews={previews}
-                    remainingIntuitionPoints={intuitionPoints}
-                    activeObsession={activeObsession}
-                    isObsessionToggleDisabled={isObsessionToggleDisabled}
-                    obsessionInput={obsessionInput}
-                    autoChoiceEnabled={autoChoiceEnabled}
-                    showAutoChoiceToggle={import.meta.env.DEV}
-                    isCollapsed={isChoicePanelCollapsed}
-                    isChoiceInteractionDisabled={isChoicePanelInteractionDisabled}
-                    isObsessionSubmitDisabled={isObsessionSubmitDisabled}
-                    onToggleCollapsed={() => {
-                      if (isBacktrackChoicePanel) {
-                        setExpandedChoicePanelRound(null);
-                        return;
+                  <div
+                    className="pointer-events-auto"
+                    onWheel={handleChoiceOverlayWheel}
+                  >
+                    <ChoicePanel
+                      hasChoices={hasChoicePanelChoices}
+                      canContinue={
+                        !isBacktrackChoicePanel && canContinueWithoutChoice
                       }
-                      const isExpandingChoicePanel =
-                        expandedChoicePanelRound !== currentRound;
-                      setExpandedChoicePanelRound((prev) =>
-                        prev === currentRound ? null : currentRound,
-                      );
-                      if (isExpandingChoicePanel) {
+                      choices={choicePanelChoices}
+                      branchExplorations={choicePanelObsessionBranches}
+                      previews={previews}
+                      remainingIntuitionPoints={intuitionPoints}
+                      activeObsession={activeObsession}
+                      isObsessionToggleDisabled={isObsessionToggleDisabled}
+                      obsessionInput={obsessionInput}
+                      autoChoiceEnabled={autoChoiceEnabled}
+                      showAutoChoiceToggle={import.meta.env.DEV}
+                      isCollapsed={isChoicePanelCollapsed}
+                      isChoiceInteractionDisabled={isChoicePanelInteractionDisabled}
+                      isObsessionSubmitDisabled={isObsessionSubmitDisabled}
+                      onToggleCollapsed={() => {
+                        if (isBacktrackChoicePanel) {
+                          setExpandedChoicePanelRound(null);
+                          return;
+                        }
+                        const isExpandingChoicePanel =
+                          expandedChoicePanelRound !== currentRound;
+                        setExpandedChoicePanelRound((prev) =>
+                          prev === currentRound ? null : currentRound,
+                        );
+                        if (isExpandingChoicePanel) {
+                          setRoundControls((prev) => ({
+                            round: currentRound,
+                            activeObsession: false,
+                            obsessionInput:
+                              prev.round === currentRound
+                                ? prev.obsessionInput
+                                : "",
+                            previews:
+                              prev.round === currentRound ? prev.previews : {},
+                          }));
+                        }
+                      }}
+                      onChoiceClick={
+                        isBacktrackChoicePanel
+                          ? handleBacktrackChoiceClick
+                          : handleChoiceClick
+                      }
+                      onBranchClick={handleBacktrackBranchClick}
+                      onContinue={handleContinueClick}
+                      onAutoChoiceToggle={setAutoChoiceEnabled}
+                      onToggleObsession={handleToggleObsession}
+                      onPreview={handlePreview}
+                      onObsessionInputChange={(nextValue) => {
                         setRoundControls((prev) => ({
-                          round: currentRound,
-                          activeObsession: false,
-                          obsessionInput:
-                            prev.round === currentRound
-                              ? prev.obsessionInput
-                              : "",
+                          round: choicePanelRound,
+                          activeObsession:
+                            prev.round === choicePanelRound
+                              ? prev.activeObsession
+                              : false,
+                          obsessionInput: nextValue,
                           previews:
-                            prev.round === currentRound ? prev.previews : {},
+                            prev.round === choicePanelRound ? prev.previews : {},
                         }));
-                      }
-                    }}
-                    onChoiceClick={
-                      isBacktrackChoicePanel
-                        ? handleBacktrackChoiceClick
-                        : handleChoiceClick
-                    }
-                    onBranchClick={handleBacktrackBranchClick}
-                    onContinue={handleContinueClick}
-                    onAutoChoiceToggle={setAutoChoiceEnabled}
-                    onToggleObsession={handleToggleObsession}
-                    onPreview={handlePreview}
-                    onObsessionInputChange={(nextValue) => {
-                      setRoundControls((prev) => ({
-                        round: choicePanelRound,
-                        activeObsession:
-                          prev.round === choicePanelRound
-                            ? prev.activeObsession
-                            : false,
-                        obsessionInput: nextValue,
-                        previews:
-                          prev.round === choicePanelRound ? prev.previews : {},
-                      }));
-                    }}
-                    onObsessionSubmit={handleObsessionSubmit}
-                  />
+                      }}
+                      onObsessionSubmit={handleObsessionSubmit}
+                    />
                   </div>
                 </div>
               </div>

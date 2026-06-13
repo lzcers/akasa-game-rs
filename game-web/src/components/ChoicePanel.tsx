@@ -169,6 +169,7 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
           onPointerMove={handleCollapsedPointerMove}
           onPointerUp={handleCollapsedPointerUp}
           onPointerCancel={releaseCollapsedPointer}
+          onLostPointerCapture={releaseCollapsedPointer}
           onClick={handleCollapsedClick}
           className={`inline-flex h-9 touch-none items-center gap-1.5 rounded-full border border-[rgba(116,103,80,0.45)] bg-[rgba(5,11,22,0.84)] px-3 text-[0.72rem] font-semibold text-[#f3ead8] shadow-[0_10px_28px_rgba(0,0,0,0.38)] backdrop-blur-md transition-colors hover:border-[rgba(215,188,146,0.72)] hover:bg-[rgba(18,26,41,0.9)] sm:text-xs ${isCollapsedDragging ? "cursor-grabbing" : "cursor-grab"}`}
           style={{
@@ -246,7 +247,10 @@ const ChoicePanel: React.FC<ChoicePanelProps> = ({
         </div>
 
         {!activeObsession ? (
-          <div className="scrollbar-none max-h-[24dvh] touch-pan-y space-y-1 overflow-y-auto pr-0.5 py-0.5">
+          <div
+            className="scrollbar-none max-h-[24dvh] touch-pan-y space-y-1 overflow-y-auto pr-0.5 py-0.5"
+            data-local-wheel-scroll
+          >
             {hasChoices ? (
               choices.map((choice) => (
                 <div key={choice.id} className="space-y-1.5">

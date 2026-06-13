@@ -142,11 +142,8 @@ impl SessionRuntime {
                 input,
                 tx,
             } => {
-                let result = self.submit_player_action_for_turn(
-                    &session_id,
-                    expected_turn_id,
-                    input,
-                );
+                let result =
+                    self.submit_player_action_for_turn(&session_id, expected_turn_id, input);
                 let _ = tx.send(result);
             }
             EngineCommand::AddSimulator {

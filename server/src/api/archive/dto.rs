@@ -59,6 +59,81 @@ pub struct SessionArchivePayload {
 
     /// 每轮结构化历史，保证前端可恢复完整时间线
     pub history_log: SessionHistoryLog,
+
+    /// 完整 session 数据库快照，用于保留故事线上的全部分支。
+    pub database_archive: SessionDatabaseArchive,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionDatabaseArchive {
+    pub active_node_id: String,
+    pub total_node_count: i64,
+    pub story_nodes: Vec<StoryNodeArchive>,
+    pub story_edges: Vec<StoryEdgeArchive>,
+    pub story_edge_actions: Vec<StoryEdgeActionArchive>,
+    pub entity_flow_outputs: Vec<EntityFlowOutputArchive>,
+    pub entity_context_items: Vec<EntityContextItemArchive>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct StoryNodeArchive {
+    pub node_id: String,
+    pub parent_node_id: Option<String>,
+    pub node_depth: i64,
+    pub sequence_index: i64,
+    pub phase: String,
+    pub flow_end: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_accessed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct StoryEdgeArchive {
+    pub from_node_id: String,
+    pub to_node_id: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct StoryEdgeActionArchive {
+    pub from_node_id: String,
+    pub to_node_id: String,
+    pub character_name: String,
+    pub player_id: Option<String>,
+    pub action_type: String,
+    pub title: String,
+    pub action: String,
+    pub motivation_and_risk: String,
+    pub submitted_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct EntityFlowOutputArchive {
+    pub node_id: String,
+    pub stage: String,
+    pub entity_name: String,
+    pub output_type: String,
+    pub content: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct EntityContextItemArchive {
+    pub node_id: String,
+    pub entity_name: String,
+    pub item_index: i64,
+    pub item_kind: String,
+    pub message_role: Option<String>,
+    pub content: Option<String>,
+    pub created_at: String,
 }
 
 fn default_character_name() -> String {

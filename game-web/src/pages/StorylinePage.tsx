@@ -5,6 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { useShallow } from "zustand/react/shallow";
 import {
   ArrowLeft,
   GitBranch,
@@ -318,9 +319,19 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
   } | null>(null);
   const activePointersRef = useRef(new Map<number, PointerPoint>());
   const previousPinchDistanceRef = useRef<number | null>(null);
-  const sessionId = useGameInternalStore((state) => state.sessionId);
-  const selectStorylineNode = useGameUIStore(
-    (state) => state.selectStorylineNode,
+  const { sessionId, displayRound, roundStates } = useGameInternalStore(
+    useShallow((state) => ({
+      sessionId: state.sessionId,
+      displayRound: state.displayRound,
+      roundStates: state.roundStates,
+    })),
+  );
+  const { activeTurnId, isGameLoading, selectStorylineNode } = useGameUIStore(
+    useShallow((state) => ({
+      activeTurnId: state.stateView?.activeTurnId,
+      isGameLoading: state.isLoading,
+      selectStorylineNode: state.selectStorylineNode,
+    })),
   );
   const [storyline, setStoryline] = useState<StorylineData | null>(null);
   const visibleStoryline = storyline?.sessionId === sessionId ? storyline : null;
@@ -334,6 +345,18 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
   const [view, setView] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const zoomRef = useRef(1);
+  const activeRound = displayRound || activeTurnId || 1;
+  const activeRoundState = roundStates[activeRound];
+  const isStoryGenerationLocked =
+    isGameLoading ||
+    Boolean(activeRoundState?.isAwaitingNarration) ||
+    activeRoundState?.narrationStatus === "running";
+  const isNodeSelectionDisabled =
+    selectingNodeId !== null || isStoryGenerationLocked;
+  const statusMessage = isLoadingStoryline
+    ? "正在读取完整故事线..."
+    : feedback ??
+      (isStoryGenerationLocked ? "故事生成中，暂不能切换节点。" : null);
 
   const nodeById = useMemo(() => {
     const map = new Map<string, StorylineNode>();
@@ -476,6 +499,12 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
       if (!sessionId) {
         return;
       }
+      if (isNodeSelectionDisabled) {
+        if (isStoryGenerationLocked) {
+          setFeedback("故事生成中，暂不能切换节点。");
+        }
+        return;
+      }
 
       setSelectingNodeId(node.id);
       setFeedback("正在切换故事线...");
@@ -499,7 +528,14 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
         setSelectingNodeId(null);
       }
     },
-    [navigate, onClose, selectStorylineNode, sessionId],
+    [
+      isNodeSelectionDisabled,
+      isStoryGenerationLocked,
+      navigate,
+      onClose,
+      selectStorylineNode,
+      sessionId,
+    ],
   );
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -641,9 +677,9 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
             </div>
           </header>
 
-          {feedback || isLoadingStoryline ? (
+          {statusMessage ? (
             <div className="rounded-[0.95rem] border border-[#d6c3a0]/20 bg-[#121927]/82 px-3 py-2 text-xs leading-5 text-[#d9cbb1]">
-              {isLoadingStoryline ? "正在读取完整故事线..." : feedback}
+              {statusMessage}
             </div>
           ) : null}
 
@@ -781,7 +817,7 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
                     onClick={() => {
                       void openNode(node);
                     }}
-                    disabled={selectingNodeId !== null}
+                    disabled={isNodeSelectionDisabled}
                     className={cn(
                       "absolute flex flex-col items-center justify-center overflow-hidden rounded-[0.6rem] border border-[#d8c18f]/42 bg-[linear-gradient(180deg,rgba(18,30,51,0.96),rgba(10,17,31,0.94))] px-2 py-1.5 text-center shadow-[0_6px_14px_rgba(0,0,0,0.2)] transition-transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#d8c18f]/45",
                       node.isObsession &&
@@ -794,6 +830,8 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
                       selectingNodeId === node.id &&
                         "border-[#8fa4ca]/70 text-[#8fa4ca]",
                       selectingNodeId !== null && "cursor-wait hover:translate-y-0",
+                      isStoryGenerationLocked &&
+                        "cursor-not-allowed opacity-60 hover:translate-y-0",
                     )}
                     style={{
                       left: node.x,
@@ -802,7 +840,9 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
                       height: node.height,
                     }}
                     title={
-                      node.isActive
+                      isStoryGenerationLocked
+                        ? "故事生成中，暂不能切换节点"
+                        : node.isActive
                         ? `当前故事线：第 ${node.round} 章`
                         : node.isObsession
                           ? `切换到第 ${node.round} 章（执念分支）`

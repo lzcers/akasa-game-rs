@@ -8,7 +8,7 @@ use story_engine::{
     resources::session_events::PlayerInput,
 };
 
-use crate::session_history::{RoundHistoryEntry, TurnPhase};
+use crate::session_history::TurnPhase;
 
 use super::codec::{
     deserialize_player_action_type, serialize_agent_output_type, serialize_phase,
@@ -16,8 +16,7 @@ use super::codec::{
 };
 use super::story_path::{
     activate_story_node, active_or_linear_node_id_for_depth, create_branch_story_node,
-    ensure_linear_story_path, linear_node_id_for_depth, story_node_id_for_active_path_depth,
-    update_story_node_state,
+    story_node_id_for_active_path_depth, update_story_node_state,
 };
 use super::{
     PreparedBacktrackBranch, SessionArchiveRepository, StoredBranchExploration,
@@ -382,82 +381,6 @@ impl SessionArchiveRepository {
             requires_generation: true,
         })
     }
-    pub async fn replace_story_edges_from_rounds(
-        &self,
-        session_id: &str,
-        rounds: &[RoundHistoryEntry],
-    ) -> Result<()> {
-        let session_id = session_id.trim();
-        if session_id.is_empty() {
-            return Ok(());
-        }
-
-        let _guard = self.db.lock().await;
-        let mut conn = self.db.open_connection("story edges")?;
-        schema::init(&conn)?;
-        let tx = conn
-            .transaction()
-            .context("failed to start story edges replacement transaction")?;
-        let session_character_name = session_character_name(&tx, session_id)?;
-        tx.execute(
-            "DELETE FROM story_edge_actions WHERE session_id = ?1",
-            params![session_id],
-        )
-        .context("failed to clear existing story edge actions")?;
-        tx.execute(
-            "DELETE FROM story_edges WHERE session_id = ?1",
-            params![session_id],
-        )
-        .context("failed to clear existing story edges")?;
-
-        let now = chrono::Utc::now().to_rfc3339();
-        for round in rounds {
-            let actions = round
-                .committed_actions
-                .iter()
-                .cloned()
-                .map(PlayerActionItem::normalized)
-                .map(|action| normalize_action_character_name(action, &session_character_name))
-                .filter(|action| !action.action.is_empty())
-                .collect::<Vec<_>>();
-            if actions.is_empty() {
-                continue;
-            }
-            ensure_linear_story_path(&tx, session_id, round.round + 1, &now)?;
-            let from_node_id = linear_node_id_for_depth(round.round);
-            let to_node_id = linear_node_id_for_depth(round.round + 1);
-            tx.execute(
-                r#"
-                INSERT INTO story_edges (
-                    session_id,
-                    from_node_id,
-                    to_node_id,
-                    created_at
-                ) VALUES (?1, ?2, ?3, ?4)
-                "#,
-                params![session_id, from_node_id, to_node_id, now,],
-            )
-            .context("failed to insert archived story edge")?;
-            for action in &actions {
-                let choice_option = choice_option_from_round_action(round, action);
-                upsert_story_edge_action(
-                    &tx,
-                    StoryEdgeActionRecord {
-                        session_id,
-                        from_node_id: &from_node_id,
-                        to_node_id: &to_node_id,
-                        action,
-                        choice_option: &choice_option,
-                        submitted_at: &now,
-                    },
-                )?;
-            }
-        }
-
-        tx.commit()
-            .context("failed to commit story edges replacement")?;
-        Ok(())
-    }
 }
 
 fn story_node_has_narration_output(
@@ -732,20 +655,6 @@ fn choice_option_from_action(action: &PlayerActionItem) -> CharacterOption {
         action: action.action.clone(),
         motivation_and_risk: action.motivation_and_risk.clone(),
     }
-}
-fn choice_option_from_round_action(
-    round: &RoundHistoryEntry,
-    action: &PlayerActionItem,
-) -> CharacterOption {
-    if action.action_type == PlayerActionType::SelectedOption
-        && let Some(choice) = round
-            .choices
-            .iter()
-            .find(|choice| choice.option.action == action.action)
-    {
-        return choice.option.clone();
-    }
-    choice_option_from_action(action)
 }
 struct StoryEdgeActionRecord<'a> {
     session_id: &'a str,

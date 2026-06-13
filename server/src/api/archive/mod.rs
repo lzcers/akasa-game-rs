@@ -15,6 +15,11 @@ pub async fn load_archive_payload(
     if payload.history_log.rounds.is_empty() {
         return Err("存档缺少 history_log，当前只接受包含完整时间线的新格式存档".to_string());
     }
+    if payload.database_archive.story_nodes.is_empty() {
+        return Err(
+            "存档缺少 database_archive，当前只接受包含完整 session 快照的新格式存档".to_string(),
+        );
+    }
 
     let session_id = payload.session_id.clone();
     engine
@@ -59,6 +64,11 @@ pub fn validate_archive_payload(payload: &SessionArchivePayload) -> Result<(), S
     }
     if payload.history_log.rounds.is_empty() {
         return Err("存档缺少 history_log，当前只接受包含完整时间线的新格式存档".to_string());
+    }
+    if payload.database_archive.story_nodes.is_empty() {
+        return Err(
+            "存档缺少 database_archive，当前只接受包含完整 session 快照的新格式存档".to_string(),
+        );
     }
 
     Ok(())
@@ -145,6 +155,7 @@ mod tests {
                     committed_actions: vec![PlayerActionItem::character_free_text("推门")],
                 }],
             },
+            database_archive: sample_database_archive(),
         };
 
         let compressed = compress_archive_payload(&payload).expect("compression should succeed");
@@ -192,6 +203,7 @@ mod tests {
                     committed_actions: vec![PlayerActionItem::character_free_text("开门")],
                 }],
             },
+            database_archive: sample_database_archive(),
         };
 
         let compressed = compress_archive_payload(&payload).expect("compression should succeed");
@@ -226,5 +238,27 @@ mod tests {
         };
 
         assert_eq!(engine_turn_index_for_archive_state(&turn_state), 4);
+    }
+
+    fn sample_database_archive() -> SessionDatabaseArchive {
+        SessionDatabaseArchive {
+            active_node_id: "node-1".to_string(),
+            total_node_count: 1,
+            story_nodes: vec![StoryNodeArchive {
+                node_id: "node-1".to_string(),
+                parent_node_id: Some("start".to_string()),
+                node_depth: 1,
+                sequence_index: 1,
+                phase: "awaiting_player".to_string(),
+                flow_end: false,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                last_accessed_at: "2026-01-01T00:00:00Z".to_string(),
+            }],
+            story_edges: Vec::new(),
+            story_edge_actions: Vec::new(),
+            entity_flow_outputs: Vec::new(),
+            entity_context_items: Vec::new(),
+        }
     }
 }

@@ -11,6 +11,7 @@ mod entity_contexts;
 mod rounds;
 mod schema;
 mod sessions;
+mod snapshot;
 mod story_edges;
 mod story_path;
 mod storyline;
