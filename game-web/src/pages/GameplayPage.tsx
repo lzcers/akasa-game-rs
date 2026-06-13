@@ -320,7 +320,7 @@ const GameplayPage: React.FC = () => {
 
     handledStorylineNavigationKeyRef.current = scrollNarrationToBottomKey;
 
-    setExpandedChoicePanelRound(currentRound);
+    setExpandedChoicePanelRound(null);
     setRoundControls({
       round: currentRound,
       activeObsession: false,

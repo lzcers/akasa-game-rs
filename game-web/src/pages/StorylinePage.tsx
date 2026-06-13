@@ -5,7 +5,15 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { ArrowLeft, GitBranch, LocateFixed, MousePointer2, X } from "lucide-react";
+import {
+  ArrowLeft,
+  GitBranch,
+  LocateFixed,
+  MousePointer2,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { ScreenShell, StoryFrame } from "../components/AkashicUI";
 import { appRoutes, routeWithSession } from "../lib/appRoutes";
@@ -46,12 +54,20 @@ interface StorylineGraph {
   height: number;
 }
 
-const ROUND_WIDTH = 164;
-const ROUND_HEIGHT = 58;
-const LEVEL_GAP = 108;
-const CANVAS_PADDING = 70;
-const SIBLING_GAP = 34;
+interface PointerPoint {
+  clientX: number;
+  clientY: number;
+}
+
+const ROUND_WIDTH = 156;
+const ROUND_HEIGHT = 54;
+const LEVEL_GAP = 86;
+const CANVAS_PADDING = 48;
+const SIBLING_GAP = 18;
 const NODE_STEP = ROUND_WIDTH + SIBLING_GAP;
+const MIN_ZOOM = 0.2;
+const MAX_ZOOM = 1.8;
+const ZOOM_STEP = 0.2;
 
 interface StorylinePageProps {
   isOverlay?: boolean;
@@ -84,6 +100,21 @@ function edgePath(from: StorylineNode, to: StorylineNode): string {
     `${end.x} ${to.y - controlOffset}`,
     `${end.x} ${to.y}`,
   ].join(" ");
+}
+
+function clampZoom(value: number): number {
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number(value.toFixed(2))));
+}
+
+function pointerDistance(left: PointerPoint, right: PointerPoint): number {
+  return Math.hypot(left.clientX - right.clientX, left.clientY - right.clientY);
+}
+
+function pointerCenter(left: PointerPoint, right: PointerPoint): PointerPoint {
+  return {
+    clientX: (left.clientX + right.clientX) / 2,
+    clientY: (left.clientY + right.clientY) / 2,
+  };
 }
 
 function incomingChoiceTitle(edge: StorylineEdgeData | undefined): string | null {
@@ -269,6 +300,8 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
     originX: number;
     originY: number;
   } | null>(null);
+  const activePointersRef = useRef(new Map<number, PointerPoint>());
+  const previousPinchDistanceRef = useRef<number | null>(null);
   const sessionId = useGameInternalStore((state) => state.sessionId);
   const selectStorylineNode = useGameUIStore(
     (state) => state.selectStorylineNode,
@@ -283,6 +316,8 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
   const [selectingNodeId, setSelectingNodeId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [view, setView] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const zoomRef = useRef(1);
 
   const nodeById = useMemo(() => {
     const map = new Map<string, StorylineNode>();
@@ -334,22 +369,65 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
     };
   }, [sessionId]);
 
-  const focusGraph = useCallback(() => {
+  const focusGraph = useCallback((nextZoom = 1) => {
     const viewport = viewportRef.current;
+    const targetZoom = clampZoom(nextZoom);
     if (!viewport) {
       setView({ x: 0, y: 0 });
+      setZoom(targetZoom);
+      zoomRef.current = targetZoom;
       return;
     }
 
     setView({
-      x: (viewport.clientWidth - graph.width) / 2,
-      y: Math.max(12, (viewport.clientHeight - graph.height) / 2),
+      x: (viewport.clientWidth - graph.width * targetZoom) / 2,
+      y: Math.max(12, (viewport.clientHeight - graph.height * targetZoom) / 2),
     });
+    setZoom(targetZoom);
+    zoomRef.current = targetZoom;
   }, [graph.height, graph.width]);
 
   useEffect(() => {
     focusGraph();
   }, [focusGraph]);
+
+  const updateZoom = useCallback((nextZoom: number, anchor?: PointerPoint) => {
+    const viewport = viewportRef.current;
+    setZoom((previousZoom) => {
+      const targetZoom = clampZoom(nextZoom);
+      if (targetZoom === previousZoom) {
+        return previousZoom;
+      }
+      zoomRef.current = targetZoom;
+
+      if (!viewport) {
+        return targetZoom;
+      }
+
+      const viewportRect = viewport.getBoundingClientRect();
+      const viewportCenterX = anchor
+        ? anchor.clientX - viewportRect.left
+        : viewport.clientWidth / 2;
+      const viewportCenterY = anchor
+        ? anchor.clientY - viewportRect.top
+        : viewport.clientHeight / 2;
+      setView((previousView) => ({
+        x: viewportCenterX - ((viewportCenterX - previousView.x) / previousZoom) * targetZoom,
+        y: viewportCenterY - ((viewportCenterY - previousView.y) / previousZoom) * targetZoom,
+      }));
+
+      return targetZoom;
+    });
+  }, []);
+
+  const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const zoomDelta = event.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+    updateZoom(zoomRef.current + zoomDelta, {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
+  }, [updateZoom]);
 
   useEffect(() => {
     if (!isOverlay || !onClose) {
@@ -414,6 +492,22 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
     }
 
     event.currentTarget.setPointerCapture(event.pointerId);
+    activePointersRef.current.set(event.pointerId, {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
+
+    if (activePointersRef.current.size >= 2) {
+      const [firstPointer, secondPointer] = [...activePointersRef.current.values()];
+      previousPinchDistanceRef.current = pointerDistance(
+        firstPointer,
+        secondPointer,
+      );
+      dragRef.current = null;
+      return;
+    }
+
+    previousPinchDistanceRef.current = null;
     dragRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -424,6 +518,27 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (activePointersRef.current.has(event.pointerId)) {
+      activePointersRef.current.set(event.pointerId, {
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
+    }
+
+    if (activePointersRef.current.size >= 2) {
+      const [firstPointer, secondPointer] = [...activePointersRef.current.values()];
+      const nextPinchDistance = pointerDistance(firstPointer, secondPointer);
+      const previousPinchDistance = previousPinchDistanceRef.current;
+      if (previousPinchDistance && nextPinchDistance > 0) {
+        updateZoom(zoomRef.current * (nextPinchDistance / previousPinchDistance), pointerCenter(
+          firstPointer,
+          secondPointer,
+        ));
+      }
+      previousPinchDistanceRef.current = nextPinchDistance;
+      return;
+    }
+
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) {
       return;
@@ -437,8 +552,24 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
   };
 
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    activePointersRef.current.delete(event.pointerId);
+    previousPinchDistanceRef.current = null;
+
     if (dragRef.current?.pointerId === event.pointerId) {
       dragRef.current = null;
+    }
+
+    if (activePointersRef.current.size === 1) {
+      const [remainingPointerId, remainingPointer] = [
+        ...activePointersRef.current.entries(),
+      ][0];
+      dragRef.current = {
+        pointerId: remainingPointerId,
+        startX: remainingPointer.clientX,
+        startY: remainingPointer.clientY,
+        originX: view.x,
+        originY: view.y,
+      };
     }
   };
 
@@ -504,12 +635,39 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
             <div className="absolute left-2 top-2 z-20 flex items-center gap-1 rounded-full border border-[rgba(116,103,80,0.38)] bg-[rgba(7,13,24,0.88)] p-1 shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-md">
               <button
                 type="button"
-                onClick={focusGraph}
+                onClick={() => focusGraph()}
                 className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)]"
                 aria-label="重置故事线视图"
                 title="重置视图"
               >
                 <LocateFixed className="h-3.5 w-3.5" />
+              </button>
+              <span className="h-5 w-px bg-[rgba(116,103,80,0.36)]" />
+              <button
+                type="button"
+                onClick={() => updateZoom(zoom - ZOOM_STEP)}
+                disabled={zoom <= MIN_ZOOM}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] disabled:cursor-not-allowed disabled:opacity-45"
+                aria-label="缩小故事线"
+                title="缩小"
+              >
+                <ZoomOut className="h-3.5 w-3.5" />
+              </button>
+              <span
+                className="min-w-10 text-center font-mono text-[0.68rem] text-[#d9cbb1]"
+                aria-label={`当前缩放 ${Math.round(zoom * 100)}%`}
+              >
+                {Math.round(zoom * 100)}%
+              </span>
+              <button
+                type="button"
+                onClick={() => updateZoom(zoom + ZOOM_STEP)}
+                disabled={zoom >= MAX_ZOOM}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] disabled:cursor-not-allowed disabled:opacity-45"
+                aria-label="放大故事线"
+                title="放大"
+              >
+                <ZoomIn className="h-3.5 w-3.5" />
               </button>
             </div>
 
@@ -520,13 +678,14 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
               onPointerCancel={handlePointerUp}
+              onWheel={handleWheel}
             >
               <div
                 className="relative origin-top-left"
                 style={{
                   width: graph.width,
                   height: graph.height,
-                  transform: `translate(${view.x}px, ${view.y}px)`,
+                  transform: `matrix(${zoom}, 0, 0, ${zoom}, ${view.x}, ${view.y})`,
                 }}
               >
                 <div
