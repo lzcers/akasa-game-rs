@@ -26,7 +26,7 @@ use super::{
 };
 
 impl SessionArchiveRepository {
-    pub async fn save_player_input(&self, input: &PlayerInput) -> Result<()> {
+    pub async fn save_player_input(&self, input: &PlayerInput) -> Result<Option<String>> {
         let session_id = input.session_id.trim();
         let actions = input
             .actions
@@ -36,7 +36,7 @@ impl SessionArchiveRepository {
             .filter(|action| !action.action.is_empty())
             .collect::<Vec<_>>();
         if session_id.is_empty() || actions.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
 
         let _guard = self.db.lock().await;
@@ -87,7 +87,7 @@ impl SessionArchiveRepository {
                 },
             )?;
         }
-        Ok(())
+        Ok(Some(to_node_id))
     }
     pub async fn load_story_edge_actions(
         &self,

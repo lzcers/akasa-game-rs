@@ -5,9 +5,6 @@ import { track } from '../../lib/analytics';
 import { useGameInternalStore } from '../gameStore';
 import { useGameValueStore } from '../gameValueStore';
 import {
-  isSessionStreamActive,
-} from '../session/streamRuntime';
-import {
   applyChoiceSubmissionOptimisticUpdate,
   planChoiceSubmission,
   rollbackChoiceSubmissionOptimisticUpdate,
@@ -18,6 +15,7 @@ const submittingChoiceKeys = new Set<string>();
 
 export async function submitGameChoice(
   set: StoreApi<GameUIStoreState>['setState'],
+  materializeStoryNode: (sessionId: string, nodeId?: string) => void,
   submission: { input: PlayerActionInput; displayText: string },
   useObsession = false,
 ): Promise<void> {
@@ -30,10 +28,6 @@ export async function submitGameChoice(
 
   if (!internalState.sessionId) {
     throw new Error('当前还没有进行中的记录。');
-  }
-
-  if (!isSessionStreamActive(internalState.sessionId)) {
-    throw new Error('记录还在铺展中，请稍后再选择。');
   }
 
   const submissionPlan = planChoiceSubmission({
@@ -58,10 +52,11 @@ export async function submitGameChoice(
   ));
 
   try {
-    await submitGameSessionControl(submissionPlan.sessionId, {
+    const result = await submitGameSessionControl(submissionPlan.sessionId, {
       action: submissionPlan.input,
       expectedRound: submissionPlan.activeRound,
     });
+    materializeStoryNode(submissionPlan.sessionId, result.targetNodeId);
     const primaryAction = submissionPlan.input.actions[0];
     track(
       'choice_submitted',

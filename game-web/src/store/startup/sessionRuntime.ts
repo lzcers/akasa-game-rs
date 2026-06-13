@@ -32,8 +32,8 @@ const MIN_CREATING_SESSION_STAGE_MS = 450;
 
 interface StartupSessionRuntime {
   set: StoreApi<GameUIStoreState>['setState'];
-  closeSessionStream: () => void;
-  connectSessionStream: (sessionId: string) => void;
+  closeStoryNodeStream: () => void;
+  materializeStoryNode: (sessionId: string, nodeId?: string) => void;
 }
 
 function errorAnalyticsType(error: unknown) {
@@ -71,13 +71,16 @@ export function activateStartupGameSession(
     error: null,
     isLoading: true,
   });
-  runtime.connectSessionStream(sessionId);
 }
 
-export async function requestStartupOpeningNarration(sessionId: string) {
-  await submitGameSessionControl(sessionId, {
+export async function requestStartupOpeningNarration(
+  runtime: StartupSessionRuntime,
+  sessionId: string,
+) {
+  const result = await submitGameSessionControl(sessionId, {
     control: { type: 'continue' },
   });
+  runtime.materializeStoryNode(sessionId, result.targetNodeId);
   await waitForRoundNarrationStarted(sessionId, 1);
 }
 
@@ -114,7 +117,7 @@ export function failStartupGameSession(
   track('game_session_create_failed', {
     errorType: errorAnalyticsType(error),
   });
-  runtime.closeSessionStream();
+  runtime.closeStoryNodeStream();
   useGameInternalStore.setState({
     ...initialInternalState,
   });

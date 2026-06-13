@@ -11,7 +11,6 @@ import {
 import { useGameValueStore } from '../gameValueStore';
 import { loadCompleteSessionRounds } from '../session/roundHistoryRuntime';
 import { applySessionSnapshotToStores } from '../session/stateSync';
-import { isSessionStreamActive } from '../session/streamRuntime';
 import type { GameUIStoreState } from '../gameUIStore';
 
 interface ChoiceBacktrackSubmission {
@@ -137,6 +136,7 @@ function rollbackBacktrackOptimisticUpdate(plan: BacktrackOptimisticPlan) {
 
 export async function backtrackGameChoice(
   set: StoreApi<GameUIStoreState>['setState'],
+  materializeStoryNode: (sessionId: string, nodeId?: string) => void,
   sourceRound: number,
   submission: ChoiceBacktrackSubmission,
 ): Promise<void> {
@@ -146,10 +146,6 @@ export async function backtrackGameChoice(
     sourceRound,
     submission,
   );
-
-  if (!isSessionStreamActive(plan.sessionId)) {
-    throw new Error('记录还在铺展中，请稍后再回溯。');
-  }
 
   set({
     isLoading: true,
@@ -174,6 +170,7 @@ export async function backtrackGameChoice(
       useGameInternalStore.setState((state) => (
         pendingBacktrackPatch(state, plan, { preserveResolvedBranch: true })
       ));
+      materializeStoryNode(result.session.sessionId, result.branchNodeId);
     }
     set({
       stateView,

@@ -14,6 +14,12 @@ pub struct SessionPath {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct StoryNodePath {
+    pub session_id: String,
+    pub node_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRoundsQuery {
     pub before_round: Option<u64>,
@@ -96,6 +102,7 @@ pub struct BacktrackGameSessionData {
     pub session: GameSessionWorldStateData,
     pub source_round: u64,
     pub branch_round: u64,
+    pub branch_node_id: String,
     pub reused_existing_branch: bool,
 }
 
@@ -115,6 +122,7 @@ pub struct CloneGameSessionQuery {
 #[serde(rename_all = "camelCase")]
 pub struct GameSessionWorldStateData {
     pub session_id: String,
+    pub active_node_id: String,
     pub generated_profiles: GeneratedProfilesData,
     pub status: String,
     pub phase: TurnPhase,
@@ -155,6 +163,7 @@ pub struct GeneratedProfilesData {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RoundHistoryData {
+    pub node_id: String,
     pub round: u64,
     pub world_state: Option<WorldStateData>,
     pub narration_text: String,
@@ -172,6 +181,17 @@ pub struct SessionRoundsPageData {
     pub rounds: Vec<RoundHistoryData>,
     pub next_before_round: Option<u64>,
     pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoryNodeMaterializationData {
+    pub session_id: String,
+    pub node_id: String,
+    pub status: String,
+    pub round: u64,
+    pub stream_url: Option<String>,
+    pub data: Option<RoundHistoryData>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -317,6 +337,7 @@ impl From<RoundHistoryEntry> for RoundHistoryData {
             .collect();
 
         Self {
+            node_id: String::new(),
             round: value.round,
             world_state: value.world_snapshot.map(Into::into),
             narration_text: value.narration_text.unwrap_or_default(),
@@ -396,6 +417,8 @@ impl From<OngoingEvent> for OngoingEventData {
 #[serde(rename_all = "camelCase")]
 pub struct ControlGameSessionData {
     pub action: String,
+    pub target_node_id: String,
+    pub target_round: u64,
 }
 
 #[cfg(test)]

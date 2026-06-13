@@ -6,25 +6,31 @@ import {
   clearSessionRestoreState,
 } from '../session/restoreRuntime';
 import {
-  closeSessionStream,
-  connectGameSessionStream,
+  closeStoryNodeStream,
+  materializeActiveStoryNode,
+  materializeStoryNode as materializeSpecificStoryNode,
 } from '../session/streamRuntime';
 import type { GameUIStoreState } from '../gameUIStore';
 
 type SetGameUIState = StoreApi<GameUIStoreState>['setState'];
 type GetGameUIState = StoreApi<GameUIStoreState>['getState'];
 
-function closeActiveSessionStream() {
-  closeSessionStream();
+function closeActiveStoryNodeStream() {
+  closeStoryNodeStream();
   clearSessionBootstrapState();
   clearSessionRestoreState();
 }
 
-function connectSessionStream(sessionId: string) {
-  connectGameSessionStream(sessionId, {
+function requestStoryNodeMaterialization(sessionId: string, nodeId?: string) {
+  const runtime = {
     set: useGameUIStoreAccess.set,
     get: useGameUIStoreAccess.get,
-  });
+  };
+  if (nodeId) {
+    void materializeSpecificStoryNode(sessionId, nodeId, runtime);
+    return;
+  }
+  materializeActiveStoryNode(sessionId, runtime);
 }
 
 const useGameUIStoreAccess: {
@@ -52,8 +58,8 @@ export function createSessionRestoreRuntime(
   return {
     set,
     get,
-    closeSessionStream: closeActiveSessionStream,
-    connectSessionStream,
+    closeStoryNodeStream: closeActiveStoryNodeStream,
+    materializeStoryNode: requestStoryNodeMaterialization,
   };
 }
 
@@ -64,7 +70,7 @@ export function createSessionBootstrapRuntime(
   return {
     set,
     get,
-    connectSessionStream,
+    materializeStoryNode: requestStoryNodeMaterialization,
   };
 }
 
@@ -75,8 +81,8 @@ export function createStartupFlowRuntime(
   return {
     set,
     get,
-    closeSessionStream: closeActiveSessionStream,
-    connectSessionStream,
+    closeStoryNodeStream: closeActiveStoryNodeStream,
+    materializeStoryNode: requestStoryNodeMaterialization,
     enterWorld: () => get().enterWorld(),
   };
 }
@@ -84,6 +90,6 @@ export function createStartupFlowRuntime(
 export function resetGameWithBindings(set: SetGameUIState) {
   return {
     set,
-    closeSessionStream: closeActiveSessionStream,
+    closeStoryNodeStream: closeActiveStoryNodeStream,
   };
 }

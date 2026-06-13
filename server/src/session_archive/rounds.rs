@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use story_engine::{
     components::{
         agent::AgentOutputType, outcome::CharacterOptions, world_snapshot::WorldSnapshot,
@@ -17,10 +17,82 @@ use super::story_path::{
     linear_node_id_for_depth, select_story_path_nodes,
 };
 use super::{
-    DEFAULT_PLAYER_CHARACTER_NAME, SessionArchiveRepository, StoredSessionRoundPage, schema,
+    DEFAULT_PLAYER_CHARACTER_NAME, SessionArchiveRepository, StoredSessionRoundPage,
+    StoredStoryNodeRound, schema,
 };
 
 impl SessionArchiveRepository {
+    pub async fn resolve_story_node_for_round(
+        &self,
+        session_id: &str,
+        round: u64,
+    ) -> Result<String> {
+        let session_id = session_id.trim();
+        let _guard = self.db.lock().await;
+        let conn = self.db.open_connection("story node target")?;
+        schema::init(&conn)?;
+        let now = chrono::Utc::now().to_rfc3339();
+        active_or_linear_node_id_for_depth(&conn, session_id, round, &now)
+    }
+
+    pub async fn load_story_node_round(
+        &self,
+        session_id: &str,
+        node_id: &str,
+    ) -> Result<Option<StoredStoryNodeRound>> {
+        let session_id = session_id.trim();
+        let node_id = node_id.trim();
+        if session_id.is_empty() || node_id.is_empty() {
+            return Ok(None);
+        }
+
+        let _guard = self.db.lock().await;
+        let conn = self.db.open_connection("story node round")?;
+        schema::init(&conn)?;
+        let Some((node_depth, phase, flow_end)) = conn
+            .query_row(
+                r#"
+                SELECT node_depth, phase, flow_end
+                FROM story_nodes
+                WHERE session_id = ?1
+                    AND node_id = ?2
+                "#,
+                params![session_id, node_id],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, bool>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .context("failed to load story node metadata")?
+        else {
+            return Ok(None);
+        };
+        let round = node_depth
+            .try_into()
+            .context("story node depth is negative")?;
+        let phase = deserialize_phase(&phase).map_err(invalid_flow_turn_value)?;
+        let entry = load_round_by_node(
+            &conn,
+            session_id,
+            &StoryPathNode {
+                node_id: node_id.to_string(),
+                node_depth: round,
+            },
+        )?;
+
+        Ok(Some(StoredStoryNodeRound {
+            node_id: node_id.to_string(),
+            round,
+            phase,
+            flow_end,
+            entry,
+        }))
+    }
+
     pub async fn save_flow_turn_update(&self, update: &FlowTurnUpdate) -> Result<()> {
         self.save_flow_turn_update_with_node(update, None).await
     }

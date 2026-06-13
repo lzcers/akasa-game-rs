@@ -36,14 +36,14 @@ type StorySseResult = Result<Response, AppError>;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct StreamDoneData {
+struct StreamDoneEventData {
     route: &'static str,
     session_id: Option<String>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct StreamWarningData {
+struct StreamWarningEventData {
     session_id: String,
     reason: &'static str,
     skipped: u64,
@@ -51,22 +51,14 @@ struct StreamWarningData {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct StreamHandshakeData {
-    session_id: String,
-    protocol: &'static str,
-    note: &'static str,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct StreamLiveEngineEvent {
+struct StreamEngineEventData {
     event_id: u64,
     event: Value,
 }
 
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct StreamQuery {
+pub struct NodeStreamQuery {
     since: Option<u64>,
 }
 
@@ -127,6 +119,16 @@ pub async fn get_game_session_rounds(
         )
         .await?;
     Ok(Json(ApiResponse::ok(page)))
+}
+
+pub async fn get_game_session_story_node(
+    State(state): State<AppState>,
+    Path(path): Path<StoryNodePath>,
+) -> ApiResult<StoryNodeMaterializationData> {
+    let node = state
+        .get_game_session_story_node(&path.session_id, &path.node_id)
+        .await?;
+    Ok(Json(ApiResponse::ok(node)))
 }
 
 pub async fn get_game_session_storyline(
@@ -246,62 +248,75 @@ pub async fn backtrack_game_session(
     Ok(Json(ApiResponse::ok(result)))
 }
 
-pub async fn stream_game_session(
+pub async fn stream_story_node_materialization(
     State(state): State<AppState>,
-    Path(path): Path<SessionPath>,
-    Query(query): Query<StreamQuery>,
+    Path(path): Path<StoryNodePath>,
+    Query(query): Query<NodeStreamQuery>,
     headers: HeaderMap,
 ) -> StorySseResult {
     let since = query.since.or_else(|| last_event_id_from_headers(&headers));
     let live_stream = state
-        .open_game_session_stream(&path.session_id, since)
+        .open_live_event_stream(&path.session_id, since)
         .await?;
     let session_id = live_stream.session_id.clone();
+    let node_id = path.node_id;
     let lease = live_stream.lease;
+    let replay_node_id = node_id.clone();
 
-    let handshake_stream = stream::iter([Ok::<_, Infallible>(sse_json_event(
-        "stream.handshake",
-        StreamHandshakeData {
-            session_id: session_id.clone(),
-            protocol: "sse",
-            note: "subscribed",
-        },
-    ))]);
     let replay_stream = stream::iter(
         live_stream
             .replayed_events
             .into_iter()
+            .filter(move |event| event.node_id.as_deref() == Some(replay_node_id.as_str()))
             .filter_map(engine_event_sse)
             .map(Ok::<_, Infallible>),
     );
     let live_stream = stream::unfold(
-        Some((live_stream.event_rx, session_id, lease)),
+        Some((live_stream.event_rx, session_id, node_id, lease)),
         |state| async move {
-            let (mut event_rx, session_id, lease) = state?;
+            let (mut event_rx, session_id, node_id, lease) = state?;
 
             loop {
                 match event_rx.recv().await {
                     Ok(event) => {
+                        if event.node_id.as_deref() != Some(node_id.as_str()) {
+                            continue;
+                        }
+                        let should_close = is_terminal_node_event(&event.event);
                         if let Some(event) = engine_event_sse(event) {
-                            return Some((Ok(event), Some((event_rx, session_id, lease))));
+                            let next_state =
+                                (!should_close).then_some((event_rx, session_id, node_id, lease));
+                            return Some((Ok(event), next_state));
+                        }
+                        if should_close {
+                            return Some((
+                                Ok(sse_done_event(
+                                    "stream_story_node_materialization.done",
+                                    Some(session_id),
+                                )),
+                                None,
+                            ));
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
                         return Some((
                             Ok(sse_json_event(
                                 "stream.warning",
-                                StreamWarningData {
+                                StreamWarningEventData {
                                     session_id: session_id.clone(),
                                     reason: "lagged",
                                     skipped,
                                 },
                             )),
-                            Some((event_rx, session_id, lease)),
+                            Some((event_rx, session_id, node_id, lease)),
                         ));
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         return Some((
-                            Ok(sse_done_event("stream_game_session.done", Some(session_id))),
+                            Ok(sse_done_event(
+                                "stream_story_node_materialization.done",
+                                Some(session_id),
+                            )),
                             None,
                         ));
                     }
@@ -310,15 +325,13 @@ pub async fn stream_game_session(
         },
     );
 
-    Ok(
-        Sse::new(handshake_stream.chain(replay_stream).chain(live_stream))
-            .keep_alive(
-                KeepAlive::new()
-                    .interval(Duration::from_secs(15))
-                    .text("keep-alive"),
-            )
-            .into_response(),
-    )
+    Ok(Sse::new(replay_stream.chain(live_stream))
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("keep-alive"),
+        )
+        .into_response())
 }
 
 fn sse_json_event<T>(name: &str, data: T) -> Event
@@ -332,7 +345,7 @@ where
 }
 
 fn sse_done_event(route: &'static str, session_id: Option<String>) -> Event {
-    sse_json_event(route, StreamDoneData { route, session_id })
+    sse_json_event(route, StreamDoneEventData { route, session_id })
 }
 
 fn last_event_id_from_headers(headers: &HeaderMap) -> Option<u64> {
@@ -342,15 +355,24 @@ fn last_event_id_from_headers(headers: &HeaderMap) -> Option<u64> {
         .and_then(|value| value.parse().ok())
 }
 
+fn is_terminal_node_event(event: &EngineEvent) -> bool {
+    matches!(
+        event,
+        EngineEvent::FlowTurnCompleted(_)
+            | EngineEvent::FlowTurnEnd(_)
+            | EngineEvent::FlowTurnError(_)
+    )
+}
+
 fn engine_event_sse(update: LiveEngineEvent) -> Option<Event> {
     let event_id = update.event_id;
     compact_live_engine_event(update)
         .map(|event| sse_json_event("engine.event", event).id(event_id.to_string()))
 }
 
-fn compact_live_engine_event(update: LiveEngineEvent) -> Option<StreamLiveEngineEvent> {
+fn compact_live_engine_event(update: LiveEngineEvent) -> Option<StreamEngineEventData> {
     let event = compact_engine_event(update.event)?;
-    Some(StreamLiveEngineEvent {
+    Some(StreamEngineEventData {
         event_id: update.event_id,
         event,
     })

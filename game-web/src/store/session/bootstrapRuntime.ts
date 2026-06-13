@@ -6,7 +6,7 @@ import type { GameUIStoreState } from '../gameUIStore';
 export interface SessionBootstrapRuntime {
   set: StoreApi<GameUIStoreState>['setState'];
   get: StoreApi<GameUIStoreState>['getState'];
-  connectSessionStream: (sessionId: string) => void;
+  materializeStoryNode: (sessionId: string, nodeId?: string) => void;
 }
 
 let bootstrappingSessionId: string | null = null;
@@ -32,10 +32,10 @@ export async function bootstrapOpeningSession(
   bootstrappingSessionId = sessionId;
 
   try {
-    runtime.connectSessionStream(sessionId);
-    await submitGameSessionControl(sessionId, {
+    const result = await submitGameSessionControl(sessionId, {
       control: { type: 'continue' },
     });
+    runtime.materializeStoryNode(sessionId, result.targetNodeId);
   } catch (error) {
     if (bootstrappingSessionId === sessionId) {
       bootstrappingSessionId = null;

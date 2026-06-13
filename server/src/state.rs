@@ -15,7 +15,7 @@ use story_engine::{
     },
     engine::{AkashicEngine, AkashicSessionEngine},
     profile::DEFAULT_KEY_STORY_BEATS,
-    resources::session_events::{EngineEvent, FlowTurnUpdate, SessionCreated},
+    resources::session_events::{EngineEvent, FlowTurnUpdate, PlayerInput, SessionCreated},
 };
 use tokio::sync::{Mutex, broadcast};
 use uuid::Uuid;
@@ -29,7 +29,8 @@ use crate::{
         ControlGameSessionRequest, CreateGameSessionData, CreateGameSessionRequest,
         GameSessionControlCommand, GameSessionWorldStateData, GeneratedProfilesData,
         RoundHistoryData, SaveExportData, SelectStorylineNodeRequest, SessionActionInput,
-        SessionRoundsPageData, StorylineData, StorylineEdgeData, StorylineNodeData, WorldStateData,
+        SessionRoundsPageData, StoryNodeMaterializationData, StorylineData, StorylineEdgeData,
+        StorylineNodeData, WorldStateData,
     },
     api::site::{AnalyticsBatchRequest, SubmitFeedbackData, ValidatedFeedbackRequest},
     database::AppDatabase,
@@ -37,7 +38,7 @@ use crate::{
     error::AppError,
     session_archive::{
         SessionArchiveRepository, StoredBranchExploration, StoredChoiceExploration,
-        StoredSessionMetadata, StoredStoryEdgeAction,
+        StoredSessionMetadata, StoredStoryEdgeAction, StoredStoryNodeRound,
     },
     session_history::{RoundHistoryEntry, SessionHistoryLog, TurnPhase},
 };
@@ -62,7 +63,7 @@ struct SessionRecord {
     session_id: String,
     _created_at: DateTime<Utc>,
     last_accessed_at: DateTime<Utc>,
-    active_streams: usize,
+    active_event_streams: usize,
     last_phase: TurnPhase,
     slot: SessionSlot,
 }
@@ -100,14 +101,14 @@ struct HotSessionAccess {
     output_node_targets: Arc<Mutex<HashMap<u64, String>>>,
 }
 
-pub struct LiveSessionStream {
+pub struct LiveEventStream {
     pub session_id: String,
     pub replayed_events: Vec<LiveEngineEvent>,
     pub event_rx: broadcast::Receiver<LiveEngineEvent>,
-    pub lease: LiveSessionLease,
+    pub lease: LiveEventStreamLease,
 }
 
-pub struct LiveSessionLease {
+pub struct LiveEventStreamLease {
     session_id: String,
     sessions: Arc<Mutex<HashMap<String, SessionRecord>>>,
 }
@@ -116,6 +117,7 @@ pub struct LiveSessionLease {
 #[serde(rename_all = "camelCase")]
 pub struct LiveEngineEvent {
     pub event_id: u64,
+    pub node_id: Option<String>,
     pub event: EngineEvent,
 }
 
@@ -458,6 +460,21 @@ impl AppState {
         })
     }
 
+    pub async fn get_game_session_story_node(
+        &self,
+        session_id: &str,
+        node_id: &str,
+    ) -> Result<StoryNodeMaterializationData, AppError> {
+        self.touch_session(session_id).await?;
+        let node = self
+            .session_archive_repo
+            .load_story_node_round(session_id, node_id)
+            .await
+            .map_err(|err| AppError::internal(format!("读取故事节点失败：{err:#}")))?
+            .ok_or_else(|| AppError::not_found(format!("未找到故事节点 `{node_id}`")))?;
+        Ok(story_node_materialization_data(session_id, node))
+    }
+
     pub async fn get_game_session_storyline(
         &self,
         session_id: &str,
@@ -649,6 +666,7 @@ impl AppState {
             session,
             source_round: branch.source_round,
             branch_round: branch.branch_round,
+            branch_node_id: branch.branch_node_id,
             reused_existing_branch: branch.reused_existing_branch,
         })
     }
@@ -670,7 +688,10 @@ impl AppState {
     ) -> Result<ControlGameSessionData, AppError> {
         let hot = self.ensure_hot_session(session_id, false).await?;
         let result = match (request.control, request.action) {
-            (Some(control), None) => apply_control(&hot.engine, control),
+            (Some(control), None) => {
+                self.apply_control_from_database(session_id, &hot, control)
+                    .await
+            }
             (None, Some(action)) => {
                 self.apply_action_from_database(&hot, session_id, action, request.expected_round)
                     .await
@@ -685,11 +706,11 @@ impl AppState {
         Ok(result)
     }
 
-    pub async fn open_game_session_stream(
+    pub async fn open_live_event_stream(
         &self,
         session_id: &str,
         since: Option<u64>,
-    ) -> Result<LiveSessionStream, AppError> {
+    ) -> Result<LiveEventStream, AppError> {
         let hot = self.ensure_hot_session(session_id, true).await?;
         let live_events = hot.live_events.lock().await;
         let event_rx = hot.events_tx.subscribe();
@@ -701,11 +722,11 @@ impl AppState {
             .cloned()
             .collect();
 
-        Ok(LiveSessionStream {
+        Ok(LiveEventStream {
             session_id: hot.session_id.clone(),
             replayed_events,
             event_rx,
-            lease: LiveSessionLease {
+            lease: LiveEventStreamLease {
                 session_id: hot.session_id,
                 sessions: Arc::clone(&self.sessions),
             },
@@ -741,10 +762,61 @@ impl AppState {
             return Err(AppError::bad_request("这一轮行动已经提交过。"));
         }
 
-        submit_prepared_action(hot, expected_round, actions).await?;
+        let target_round = expected_round + 1;
+        let target_node_id = self
+            .session_archive_repo
+            .save_player_input(&PlayerInput {
+                session_id: session_id.to_string(),
+                round: expected_round,
+                actions: actions.clone(),
+            })
+            .await
+            .map_err(|err| AppError::internal(format!("准备故事节点失败：{err:#}")))?
+            .ok_or_else(|| AppError::internal("未能准备下一故事节点。"))?;
+        hot.output_node_targets
+            .lock()
+            .await
+            .insert(target_round, target_node_id.clone());
+
+        if let Err(error) = submit_prepared_action(hot, expected_round, actions).await {
+            hot.output_node_targets.lock().await.remove(&target_round);
+            return Err(error);
+        }
 
         Ok(ControlGameSessionData {
             action: "submit_action".to_string(),
+            target_node_id,
+            target_round,
+        })
+    }
+
+    async fn apply_control_from_database(
+        &self,
+        session_id: &str,
+        hot: &HotSessionAccess,
+        control: GameSessionControlCommand,
+    ) -> Result<ControlGameSessionData, AppError> {
+        let metadata = self.load_session_metadata(session_id).await?;
+        let target_round = next_control_target_round(metadata.phase, metadata.turn_index);
+        let target_node_id = self
+            .session_archive_repo
+            .resolve_story_node_for_round(session_id, target_round)
+            .await
+            .map_err(|err| AppError::internal(format!("准备故事节点失败：{err:#}")))?;
+        hot.output_node_targets
+            .lock()
+            .await
+            .insert(target_round, target_node_id.clone());
+
+        if let Err(error) = apply_control(&hot.engine, control) {
+            hot.output_node_targets.lock().await.remove(&target_round);
+            return Err(error);
+        }
+
+        Ok(ControlGameSessionData {
+            action: "continue".to_string(),
+            target_node_id,
+            target_round,
         })
     }
 
@@ -768,7 +840,7 @@ impl AppState {
     async fn ensure_hot_session(
         &self,
         session_id: &str,
-        register_stream: bool,
+        register_event_stream: bool,
     ) -> Result<HotSessionAccess, AppError> {
         enum HotSessionLookup {
             Cold(String),
@@ -792,8 +864,8 @@ impl AppState {
                                 let submitted_action_rounds =
                                     Arc::clone(&hot.submitted_action_rounds);
                                 let output_node_targets = Arc::clone(&hot.output_node_targets);
-                                if register_stream {
-                                    record.active_streams += 1;
+                                if register_event_stream {
+                                    record.active_event_streams += 1;
                                 }
                                 return Ok(HotSessionAccess {
                                     session_id: record.session_id.clone(),
@@ -834,7 +906,7 @@ impl AppState {
             // 等恢复锁期间，可能已有别的请求把同一个会话恢复好了；这里做
             // 二次检查，避免重复构造 engine 或重复增加 stream 计数。
             if let Some(access) = self
-                .hot_session_access_if_available(session_id, register_stream)
+                .hot_session_access_if_available(session_id, register_event_stream)
                 .await?
             {
                 return Ok(access);
@@ -863,8 +935,8 @@ impl AppState {
             record.touch(Utc::now());
             record.last_phase = restored_phase;
             record.slot = SessionSlot::Hot(hot);
-            if register_stream {
-                record.active_streams += 1;
+            if register_event_stream {
+                record.active_event_streams += 1;
             }
 
             if let SessionSlot::Hot(hot) = &record.slot {
@@ -955,7 +1027,7 @@ impl AppState {
                 session_id: metadata.session_id,
                 _created_at: now,
                 last_accessed_at: now,
-                active_streams: 0,
+                active_event_streams: 0,
                 last_phase: metadata.phase,
                 slot: SessionSlot::Cold {
                     _saved_at: now,
@@ -968,7 +1040,7 @@ impl AppState {
     async fn hot_session_access_if_available(
         &self,
         session_id: &str,
-        register_stream: bool,
+        register_event_stream: bool,
     ) -> Result<Option<HotSessionAccess>, AppError> {
         let mut sessions = self.sessions.lock().await;
         let record = sessions
@@ -983,8 +1055,8 @@ impl AppState {
         let live_events = Arc::clone(&hot.live_events);
         let submitted_action_rounds = Arc::clone(&hot.submitted_action_rounds);
         let output_node_targets = Arc::clone(&hot.output_node_targets);
-        if register_stream {
-            record.active_streams += 1;
+        if register_event_stream {
+            record.active_event_streams += 1;
         }
         Ok(Some(HotSessionAccess {
             session_id: record.session_id.clone(),
@@ -1024,6 +1096,11 @@ impl AppState {
         self.session_archive_repo
             .save_session_metadata(&StoredSessionMetadata {
                 session_id: payload.session_id.clone(),
+                active_node_id: node_id_for_turn_state(
+                    payload.turn_state.phase,
+                    payload.turn_state.turn_index,
+                    payload.turn_state.active_turn_id,
+                ),
                 character_name: payload.character_name.clone(),
                 world_profile: payload.world_profile.clone(),
                 character_profile: payload.character_profile.clone(),
@@ -1193,7 +1270,7 @@ impl AppState {
             };
             // 活跃 SSE 流会把会话钉在内存里；非稳定阶段也不驱逐，避免下次
             // 控制请求从不可恢复的中间态继续。
-            if record.active_streams > 0 || !is_evictable_phase(record.last_phase) {
+            if record.active_event_streams > 0 || !is_evictable_phase(record.last_phase) {
                 continue;
             }
             let idle_for = elapsed_since(now, record.last_accessed_at);
@@ -1227,7 +1304,7 @@ impl AppState {
             let Some(record) = sessions.get_mut(session_id) else {
                 return Ok(false);
             };
-            if record.active_streams > 0 || !is_evictable_phase(record.last_phase) {
+            if record.active_event_streams > 0 || !is_evictable_phase(record.last_phase) {
                 return Ok(false);
             }
             match std::mem::replace(
@@ -1310,10 +1387,11 @@ impl LiveEventLog {
         }
     }
 
-    fn push(&mut self, event: EngineEvent) -> LiveEngineEvent {
+    fn push(&mut self, event: EngineEvent, node_id: Option<String>) -> LiveEngineEvent {
         self.next_event_id += 1;
         let event = LiveEngineEvent {
             event_id: self.next_event_id,
+            node_id,
             event,
         };
         self.history.push_back(event.clone());
@@ -1330,7 +1408,7 @@ impl SessionRecord {
     }
 }
 
-impl Drop for LiveSessionLease {
+impl Drop for LiveEventStreamLease {
     fn drop(&mut self) {
         let session_id = self.session_id.clone();
         let sessions = Arc::clone(&self.sessions);
@@ -1339,7 +1417,7 @@ impl Drop for LiveSessionLease {
         tokio::spawn(async move {
             let mut sessions = sessions.lock().await;
             if let Some(record) = sessions.get_mut(&session_id) {
-                record.active_streams = record.active_streams.saturating_sub(1);
+                record.active_event_streams = record.active_event_streams.saturating_sub(1);
                 record.touch(Utc::now());
             }
         });
@@ -1366,7 +1444,7 @@ fn build_session_record(
         session_id,
         _created_at: now,
         last_accessed_at: now,
-        active_streams: 0,
+        active_event_streams: 0,
         last_phase: initial_phase,
         slot: SessionSlot::Hot(hot),
     }
@@ -1419,9 +1497,12 @@ fn spawn_engine_event_bridge(
         loop {
             match event_rx.recv().await {
                 Ok(event) => {
+                    let node_id =
+                        live_node_id_for_event(&session_archive_repo, &output_node_targets, &event)
+                            .await;
                     let live_event = {
                         let mut live_events = live_events.lock().await;
-                        live_events.push(event.clone())
+                        live_events.push(event.clone(), node_id)
                     };
                     let _ = events_tx.send(live_event);
 
@@ -1601,6 +1682,38 @@ fn spawn_engine_event_bridge(
     });
 }
 
+async fn live_node_id_for_event(
+    session_archive_repo: &SessionArchiveRepository,
+    output_node_targets: &Arc<Mutex<HashMap<u64, String>>>,
+    event: &EngineEvent,
+) -> Option<String> {
+    let (session_id, round) = event_session_round(event)?;
+    if let Some(node_id) = output_node_targets.lock().await.get(&round).cloned() {
+        return Some(node_id);
+    }
+    session_archive_repo
+        .resolve_story_node_for_round(session_id, round)
+        .await
+        .ok()
+}
+
+fn event_session_round(event: &EngineEvent) -> Option<(&str, u64)> {
+    match event {
+        EngineEvent::TaskUpdate(update) => Some((&update.session_id, update.round)),
+        EngineEvent::TaskCompleted(completed) => Some((&completed.session_id, completed.round)),
+        EngineEvent::PlayerInput(input) => Some((&input.session_id, input.round)),
+        EngineEvent::EntityContextItemAppended(update) => Some((&update.session_id, update.round)),
+        EngineEvent::EntityContextRollback(rollback) => {
+            Some((&rollback.session_id, rollback.round))
+        }
+        EngineEvent::FlowTurnUpdate(update) => Some((&update.session_id, update.round)),
+        EngineEvent::FlowTurnCompleted(completed) => Some((&completed.session_id, completed.round)),
+        EngineEvent::FlowTurnEnd(end) => Some((&end.session_id, end.round)),
+        EngineEvent::FlowTurnError(error) => Some((&error.session_id, error.round)),
+        EngineEvent::SessionCreated(_) => None,
+    }
+}
+
 fn normalized_action_items(action: SessionActionInput) -> Result<Vec<PlayerActionItem>, AppError> {
     let actions = action
         .actions
@@ -1662,13 +1775,11 @@ async fn submit_prepared_action(
 fn apply_control(
     engine: &AkashicSessionEngine,
     control: GameSessionControlCommand,
-) -> Result<ControlGameSessionData, AppError> {
+) -> Result<(), AppError> {
     match control {
         GameSessionControlCommand::Continue => {
             engine.start_next_turn().map_err(AppError::bad_request)?;
-            Ok(ControlGameSessionData {
-                action: "continue".to_string(),
-            })
+            Ok(())
         }
     }
 }
@@ -1711,6 +1822,7 @@ fn world_state_from_database(
 
     GameSessionWorldStateData {
         session_id: metadata.session_id,
+        active_node_id: metadata.active_node_id,
         generated_profiles: GeneratedProfilesData {
             world: metadata.world_profile,
             character: metadata.character_profile,
@@ -1821,6 +1933,74 @@ fn round_history_data_from_entry(
     data.choice_explorations = choice_explorations_for_round(&entry, choice_explorations);
     data.branch_explorations = branch_explorations_for_round(entry.round, branch_explorations);
     data
+}
+
+fn story_node_materialization_data(
+    session_id: &str,
+    node: StoredStoryNodeRound,
+) -> StoryNodeMaterializationData {
+    let status = story_node_materialization_status(&node);
+    let is_complete = status == "complete" || status == "ended";
+    let mut data = is_complete.then(|| round_history_data_from_entry(node.entry, &[], &[]));
+    if let Some(data) = &mut data {
+        data.node_id = node.node_id.clone();
+    }
+
+    StoryNodeMaterializationData {
+        session_id: session_id.to_string(),
+        node_id: node.node_id.clone(),
+        status: status.to_string(),
+        round: node.round,
+        stream_url: (!is_complete && status != "failed").then(|| {
+            format!(
+                "/api/game-sessions/{}/story-nodes/{}/stream",
+                session_id, node.node_id
+            )
+        }),
+        data,
+    }
+}
+
+fn story_node_materialization_status(node: &StoredStoryNodeRound) -> &'static str {
+    if node.phase == TurnPhase::Failed {
+        return "failed";
+    }
+    if node.flow_end && has_world_and_narration(&node.entry) {
+        return "ended";
+    }
+    if matches!(node.phase, TurnPhase::AwaitingPlayer)
+        && has_world_and_narration(&node.entry)
+        && !node.entry.choices.is_empty()
+    {
+        return "complete";
+    }
+    if matches!(node.phase, TurnPhase::TurnCompleted | TurnPhase::Ended)
+        && has_world_and_narration(&node.entry)
+    {
+        return "complete";
+    }
+    if matches!(node.phase, TurnPhase::Simulation | TurnPhase::Application) {
+        return "running";
+    }
+    if node.entry.world_snapshot.is_some()
+        || node
+            .entry
+            .narration_text
+            .as_deref()
+            .is_some_and(|text| !text.trim().is_empty())
+        || !node.entry.choices.is_empty()
+    {
+        return "partial";
+    }
+    "missing"
+}
+
+fn has_world_and_narration(entry: &RoundHistoryEntry) -> bool {
+    entry.world_snapshot.is_some()
+        && entry
+            .narration_text
+            .as_deref()
+            .is_some_and(|text| !text.trim().is_empty())
 }
 
 fn choice_explorations_for_round(
@@ -2035,6 +2215,29 @@ fn visible_turn_index_from_parts(phase: TurnPhase, turn_index: u64, active_turn_
         turn_index.max(1)
     } else {
         active_turn_id.max(turn_index + 1)
+    }
+}
+
+fn next_control_target_round(phase: TurnPhase, turn_index: u64) -> u64 {
+    match phase {
+        TurnPhase::Start | TurnPhase::TurnCompleted => turn_index + 1,
+        _ => turn_index.max(1),
+    }
+}
+
+fn node_id_for_turn_state(phase: TurnPhase, turn_index: u64, active_turn_id: u64) -> String {
+    let depth = match phase {
+        TurnPhase::Start => 0,
+        TurnPhase::Simulation | TurnPhase::Application | TurnPhase::Failed => active_turn_id,
+        TurnPhase::AwaitingPlayer | TurnPhase::TurnCompleted | TurnPhase::Ended => {
+            active_turn_id.max(turn_index)
+        }
+    };
+
+    if depth == 0 {
+        "start".to_string()
+    } else {
+        format!("node-{depth}")
     }
 }
 
@@ -2900,6 +3103,7 @@ mod tests {
     fn game_session_world_state_serializes_world_state_as_camel_case() {
         let dto = GameSessionWorldStateData {
             session_id: "session-test".to_string(),
+            active_node_id: "node-2".to_string(),
             generated_profiles: GeneratedProfilesData {
                 world: "world".to_string(),
                 character: "character".to_string(),
@@ -2964,6 +3168,41 @@ mod tests {
         assert!(world_state.get("scene_title").is_none());
         assert!(world_state.get("new_info").is_none());
         assert!(value.get("history").is_none());
+    }
+
+    #[test]
+    fn story_node_materialization_requires_stable_complete_outputs() {
+        let complete = StoredStoryNodeRound {
+            node_id: "node-1".to_string(),
+            round: 1,
+            phase: TurnPhase::AwaitingPlayer,
+            flow_end: false,
+            entry: RoundHistoryEntry {
+                round: 1,
+                world_snapshot: Some(WorldSnapshot::default()),
+                narration_text: Some("雾中钟声渐近。".to_string()),
+                choices: vec![PendingCharacterChoice {
+                    id: "choice-1".to_string(),
+                    option: CharacterOption {
+                        title: "靠近钟楼".to_string(),
+                        action: "靠近钟楼".to_string(),
+                        motivation_and_risk: "线索更近，风险也更近".to_string(),
+                    },
+                }],
+                ..RoundHistoryEntry::default()
+            },
+        };
+        let partial = StoredStoryNodeRound {
+            phase: TurnPhase::Application,
+            entry: RoundHistoryEntry {
+                choices: Vec::new(),
+                ..complete.entry.clone()
+            },
+            ..complete.clone()
+        };
+
+        assert_eq!(story_node_materialization_status(&complete), "complete");
+        assert_eq!(story_node_materialization_status(&partial), "running");
     }
 
     fn sample_payload() -> SessionArchivePayload {

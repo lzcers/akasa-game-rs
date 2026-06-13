@@ -16,7 +16,7 @@ import {
   trackCloneRequest,
 } from './cloneRequestRuntime';
 import {
-  isSessionStreamActive,
+  isStoryNodeStreamActiveForSession,
 } from './streamRuntime';
 import { loadCompleteSessionRounds } from './roundHistoryRuntime';
 import {
@@ -29,8 +29,8 @@ import type { GameUIStoreState } from '../gameUIStore';
 export interface SessionRestoreRuntime {
   set: StoreApi<GameUIStoreState>['setState'];
   get: StoreApi<GameUIStoreState>['getState'];
-  closeSessionStream: () => void;
-  connectSessionStream: (sessionId: string) => void;
+  closeStoryNodeStream: () => void;
+  materializeStoryNode: (sessionId: string, nodeId?: string) => void;
 }
 
 let restoringSessionId: string | null = null;
@@ -48,7 +48,7 @@ export async function loadStoredGameSave(
     throw new Error('未找到要读取的记录。');
   }
 
-  beginSessionSwitch(runtime.set, runtime.closeSessionStream);
+  beginSessionSwitch(runtime.set, runtime.closeStoryNodeStream);
 
   try {
     const archive = readStoredSaveArchive(slotId);
@@ -59,13 +59,13 @@ export async function loadStoredGameSave(
     const loaded = await loadGameSessionFromArchive({
       compressedArchive: archive,
     });
-    activateSessionSnapshot(runtime.set, loaded, runtime.connectSessionStream);
+    activateSessionSnapshot(runtime.set, loaded, runtime.materializeStoryNode);
     await loadCompleteSessionRounds(loaded.sessionId);
     return {
       sessionId: loaded.sessionId,
     };
   } catch (error) {
-    failSessionSwitch(runtime.set, runtime.closeSessionStream, error, '读取记录失败。');
+    failSessionSwitch(runtime.set, runtime.closeStoryNodeStream, error, '读取记录失败。');
     throw error;
   }
 }
@@ -81,9 +81,9 @@ export async function restoreExistingGameSession(
 
   const currentSessionId = useGameInternalStore.getState().sessionId;
   if (currentSessionId === targetSessionId && runtime.get().stateView) {
-    if (!isSessionStreamActive(targetSessionId)) {
-      runtime.closeSessionStream();
-      runtime.connectSessionStream(targetSessionId);
+    if (!isStoryNodeStreamActiveForSession(targetSessionId)) {
+      runtime.closeStoryNodeStream();
+      runtime.materializeStoryNode(targetSessionId);
     }
     return;
   }
@@ -92,7 +92,7 @@ export async function restoreExistingGameSession(
     return;
   }
 
-  beginSessionSwitch(runtime.set, runtime.closeSessionStream, { invalidateStartup: true });
+  beginSessionSwitch(runtime.set, runtime.closeStoryNodeStream, { invalidateStartup: true });
   restoringSessionId = targetSessionId;
 
   try {
@@ -100,7 +100,7 @@ export async function restoreExistingGameSession(
     if (restoringSessionId !== targetSessionId) {
       return;
     }
-    activateSessionSnapshot(runtime.set, loaded, runtime.connectSessionStream);
+    activateSessionSnapshot(runtime.set, loaded, runtime.materializeStoryNode);
     await loadCompleteSessionRounds(loaded.sessionId);
     restoringSessionId = null;
   } catch (error) {
@@ -108,7 +108,7 @@ export async function restoreExistingGameSession(
       return;
     }
 
-    failSessionSwitch(runtime.set, runtime.closeSessionStream, error, '这段记录已经暂时无法续上。');
+    failSessionSwitch(runtime.set, runtime.closeStoryNodeStream, error, '这段记录已经暂时无法续上。');
     throw error;
   }
 }
@@ -129,7 +129,7 @@ export async function cloneSharedGameSession(
   }
 
   const clonePromise = (async () => {
-    beginSessionSwitch(runtime.set, runtime.closeSessionStream, { invalidateStartup: true });
+    beginSessionSwitch(runtime.set, runtime.closeStoryNodeStream, { invalidateStartup: true });
     restoringSessionId = null;
 
     try {
@@ -143,14 +143,14 @@ export async function cloneSharedGameSession(
         isEnding: cloned.worldState.isEnding,
       });
 
-      activateSessionSnapshot(runtime.set, cloned, runtime.connectSessionStream);
+      activateSessionSnapshot(runtime.set, cloned, runtime.materializeStoryNode);
       await loadCompleteSessionRounds(cloned.sessionId);
       return {
         sessionId: cloned.sessionId,
         isEnding: cloned.worldState.isEnding,
       };
     } catch (error) {
-      failSessionSwitch(runtime.set, runtime.closeSessionStream, error, '这段记录暂时无法复制。');
+      failSessionSwitch(runtime.set, runtime.closeStoryNodeStream, error, '这段记录暂时无法复制。');
       throw error;
     }
   })();
@@ -173,13 +173,13 @@ export async function selectStorylineNodeForSession(
     isLoading: true,
     error: null,
   });
-  runtime.closeSessionStream();
+  runtime.closeStoryNodeStream();
 
   try {
     const selected = await selectGameSessionStorylineNode(targetSessionId, {
       nodeId: targetNodeId,
     });
-    activateSessionSnapshot(runtime.set, selected, runtime.connectSessionStream, {
+    activateSessionSnapshot(runtime.set, selected, runtime.materializeStoryNode, {
       replaceTimeline: true,
     });
     await loadCompleteSessionRounds(selected.sessionId, {
@@ -191,7 +191,7 @@ export async function selectStorylineNodeForSession(
     };
   } catch (error) {
     if (useGameInternalStore.getState().sessionId === targetSessionId) {
-      runtime.connectSessionStream(targetSessionId);
+      runtime.materializeStoryNode(targetSessionId);
     }
     runtime.set({
       isLoading: false,

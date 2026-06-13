@@ -41,6 +41,10 @@ pub fn build_router(state: AppState) -> Router {
             get(game_sessions::get_game_session_rounds),
         )
         .route(
+            "/api/game-sessions/{session_id}/story-nodes/{node_id}",
+            get(game_sessions::get_game_session_story_node),
+        )
+        .route(
             "/api/game-sessions/{session_id}/storyline",
             get(game_sessions::get_game_session_storyline),
         )
@@ -73,8 +77,8 @@ pub fn build_router(state: AppState) -> Router {
             post(game_sessions::backtrack_game_session),
         )
         .route(
-            "/api/game-sessions/{session_id}/stream",
-            get(game_sessions::stream_game_session),
+            "/api/game-sessions/{session_id}/story-nodes/{node_id}/stream",
+            get(game_sessions::stream_story_node_materialization),
         )
         .route_layer(middleware::from_fn(log_api_request))
         .with_state(state)

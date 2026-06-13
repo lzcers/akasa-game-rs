@@ -27,11 +27,11 @@ const MIN_GENERATING_PAGE_MS = 1200;
 export interface StartupProfileRuntime {
   set: StoreApi<GameUIStoreState>['setState'];
   get: StoreApi<GameUIStoreState>['getState'];
-  closeSessionStream: () => void;
+  closeStoryNodeStream: () => void;
 }
 
 export function beginStartupProfileGeneration(runtime: StartupProfileRuntime) {
-  runtime.closeSessionStream();
+  runtime.closeStoryNodeStream();
   clearStartupStageTimer();
   useGameInternalStore.setState({
     ...initialInternalState,
@@ -81,7 +81,7 @@ export function failStartupProfileGeneration(
   error: unknown,
 ) {
   clearStartupStageTimer();
-  runtime.closeSessionStream();
+  runtime.closeStoryNodeStream();
   useGameInternalStore.setState({
     ...initialInternalState,
   });

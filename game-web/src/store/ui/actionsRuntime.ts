@@ -46,10 +46,10 @@ export function createGameUIActions(
     enterWorld: () => enterWorldFlow(createStartupFlowRuntime(set, get)),
     bootstrapSession: () => bootstrapOpeningSession(createSessionBootstrapRuntime(set, get)),
     submitChoice: (submission, useObsession = false) => (
-      submitGameChoice(set, submission, useObsession)
+      submitGameChoice(set, createSessionRestoreRuntime(set, get).materializeStoryNode, submission, useObsession)
     ),
     backtrackChoice: (sourceRound, submission) => (
-      backtrackGameChoice(set, sourceRound, submission)
+      backtrackGameChoice(set, createSessionRestoreRuntime(set, get).materializeStoryNode, sourceRound, submission)
     ),
     createSave: (title) => createGameSave(set, title),
     loadSave: (saveId) => loadStoredGameSave(createSessionRestoreRuntime(set, get), saveId),
@@ -64,7 +64,7 @@ export function createGameUIActions(
     ),
     resetGame: () => {
       const runtime = resetGameWithBindings(set);
-      resetGameRuntime(runtime.set, runtime.closeSessionStream);
+      resetGameRuntime(runtime.set, runtime.closeStoryNodeStream);
     },
   };
 }

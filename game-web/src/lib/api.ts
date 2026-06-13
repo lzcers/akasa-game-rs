@@ -205,6 +205,7 @@ export interface BranchExploration {
 
 export interface GameSessionWorldStateData {
   sessionId: string;
+  activeNodeId: string;
   generatedProfiles: GeneratedProfiles;
   status: string;
   phase: TurnPhase;
@@ -220,6 +221,7 @@ export interface GameSessionWorldStateData {
 }
 
 export interface SessionRoundHistoryData {
+  nodeId: string;
   round: number;
   worldState: SessionWorldState | null;
   narrationText: string;
@@ -235,6 +237,15 @@ export interface SessionRoundsPageData {
   rounds: SessionRoundHistoryData[];
   nextBeforeRound?: number | null;
   hasMore: boolean;
+}
+
+export interface StoryNodeMaterializationData {
+  sessionId: string;
+  nodeId: string;
+  status: 'missing' | 'partial' | 'running' | 'complete' | 'ended' | 'failed';
+  round: number;
+  streamUrl?: string | null;
+  data?: SessionRoundHistoryData | null;
 }
 
 export interface StorylineNodeData {
@@ -279,6 +290,12 @@ export type GameSessionControlInput =
   | { control: { type: 'continue' }; action?: undefined; expectedRound?: undefined }
   | { control?: undefined; action: PlayerActionInput; expectedRound: number };
 
+export interface ControlGameSessionData {
+  action: string;
+  targetNodeId: string;
+  targetRound: number;
+}
+
 export interface BacktrackGameSessionInput {
   sourceRound: number;
   action: PlayerActionInput;
@@ -288,6 +305,7 @@ export interface BacktrackGameSessionData {
   session: GameSessionWorldStateData;
   sourceRound: number;
   branchRound: number;
+  branchNodeId: string;
   reusedExistingBranch: boolean;
 }
 
@@ -358,6 +376,7 @@ export type EngineEvent =
 
 export interface LiveEngineEvent {
   eventId: number;
+  nodeId?: string | null;
   event: EngineEvent;
 }
 
@@ -448,6 +467,14 @@ export function getGameSessionRounds(
   );
 }
 
+export function getGameSessionStoryNode(sessionId: string, nodeId: string) {
+  return requestJson<StoryNodeMaterializationData>(
+    withApiOrigin(
+      `/api/game-sessions/${encodeURIComponent(sessionId)}/story-nodes/${encodeURIComponent(nodeId)}`,
+    ),
+  );
+}
+
 export function getGameSessionStoryline(sessionId: string) {
   return requestJson<StorylineData>(
     withApiOrigin(`/api/game-sessions/${encodeURIComponent(sessionId)}/storyline`),
@@ -506,7 +533,7 @@ export function submitGameSessionControl(
   sessionId: string,
   input: GameSessionControlInput,
 ) {
-  return requestJson<{ action: string }>(withApiOrigin(`/api/game-sessions/${sessionId}/control`), {
+  return requestJson<ControlGameSessionData>(withApiOrigin(`/api/game-sessions/${sessionId}/control`), {
     method: 'POST',
     body: JSON.stringify(input),
   });
@@ -525,8 +552,9 @@ export function backtrackGameSession(
   );
 }
 
-export function openGameSessionStream(
+export function openGameSessionStoryNodeStream(
   sessionId: string,
+  nodeId: string,
   handlers: {
     onEngineEvent: (event: LiveEngineEvent, lastEventId: string) => void;
     onOpen?: () => void;
@@ -536,7 +564,9 @@ export function openGameSessionStream(
 ) {
   const search = since ? `?since=${encodeURIComponent(since)}` : '';
   const eventSource = new EventSource(
-    withApiOrigin(`/api/game-sessions/${sessionId}/stream${search}`),
+    withApiOrigin(
+      `/api/game-sessions/${sessionId}/story-nodes/${encodeURIComponent(nodeId)}/stream${search}`,
+    ),
   );
 
   if (handlers.onOpen) {

@@ -27,8 +27,8 @@ import type { GameUIStoreState } from '../gameUIStore';
 export interface StartupFlowRuntime {
   set: StoreApi<GameUIStoreState>['setState'];
   get: StoreApi<GameUIStoreState>['getState'];
-  closeSessionStream: () => void;
-  connectSessionStream: (sessionId: string) => void;
+  closeStoryNodeStream: () => void;
+  materializeStoryNode: (sessionId: string, nodeId?: string) => void;
   enterWorld: () => Promise<{ sessionId: string } | null>;
 }
 
@@ -36,15 +36,15 @@ function startupProfileRuntime(runtime: StartupFlowRuntime) {
   return {
     set: runtime.set,
     get: runtime.get,
-    closeSessionStream: runtime.closeSessionStream,
+    closeStoryNodeStream: runtime.closeStoryNodeStream,
   };
 }
 
 function startupSessionRuntime(runtime: StartupFlowRuntime) {
   return {
     set: runtime.set,
-    closeSessionStream: runtime.closeSessionStream,
-    connectSessionStream: runtime.connectSessionStream,
+    closeStoryNodeStream: runtime.closeStoryNodeStream,
+    materializeStoryNode: runtime.materializeStoryNode,
   };
 }
 
@@ -109,7 +109,7 @@ export async function enterWorldFlow(
     }
 
     activateStartupGameSession(sessionRuntime, created.sessionId, character, world);
-    await requestStartupOpeningNarration(created.sessionId);
+    await requestStartupOpeningNarration(sessionRuntime, created.sessionId);
     if (!isStartupFlowCurrent(runId)) {
       return null;
     }

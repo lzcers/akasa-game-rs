@@ -211,6 +211,7 @@ impl SessionArchiveRepository {
             r#"
             SELECT
                 s.session_id,
+                s.active_node_id,
                 c.character_name,
                 w.world_profile,
                 c.character_profile,
@@ -233,26 +234,27 @@ impl SessionArchiveRepository {
             "#,
             params![session_id],
             |row| {
-                let phase: String = row.get(5)?;
+                let phase: String = row.get(6)?;
                 let phase = deserialize_phase(&phase).map_err(|err| {
                     rusqlite::Error::FromSqlConversionFailure(
-                        5,
+                        6,
                         rusqlite::types::Type::Text,
                         Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
                     )
                 })?;
-                let node_depth: u64 = row.get::<_, i64>(6)?.try_into().unwrap_or_default();
+                let node_depth: u64 = row.get::<_, i64>(7)?.try_into().unwrap_or_default();
                 let (turn_index, active_turn_id) = turn_state_from_active_node(phase, node_depth);
                 Ok(StoredSessionMetadata {
                     session_id: row.get(0)?,
-                    character_name: row.get(1)?,
-                    world_profile: row.get(2)?,
-                    character_profile: row.get(3)?,
-                    key_story_beats: row.get(4)?,
+                    active_node_id: row.get(1)?,
+                    character_name: row.get(2)?,
+                    world_profile: row.get(3)?,
+                    character_profile: row.get(4)?,
+                    key_story_beats: row.get(5)?,
                     phase,
                     turn_index,
                     active_turn_id,
-                    flow_end: row.get(7)?,
+                    flow_end: row.get(8)?,
                 })
             },
         )

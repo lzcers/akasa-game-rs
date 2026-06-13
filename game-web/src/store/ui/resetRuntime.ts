@@ -13,9 +13,9 @@ import type { GameUIStoreState } from '../gameUIStore';
 
 export function resetGameRuntime(
   set: StoreApi<GameUIStoreState>['setState'],
-  closeSessionStream: () => void,
+  closeStoryNodeStream: () => void,
 ) {
-  closeSessionStream();
+  closeStoryNodeStream();
   clearStartupStageTimer();
   setAnalyticsGameSessionId(null);
   useGameInternalStore.setState({

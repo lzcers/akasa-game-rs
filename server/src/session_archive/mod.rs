@@ -26,6 +26,7 @@ pub struct SessionArchiveRepository {
 #[derive(Debug, Clone)]
 pub struct StoredSessionMetadata {
     pub session_id: String,
+    pub active_node_id: String,
     pub character_name: String,
     pub world_profile: String,
     pub character_profile: String,
@@ -112,6 +113,15 @@ pub struct StoredSessionRoundPage {
     pub rounds: Vec<RoundHistoryEntry>,
     pub next_before_round: Option<u64>,
     pub has_more: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredStoryNodeRound {
+    pub node_id: String,
+    pub round: u64,
+    pub phase: TurnPhase,
+    pub flow_end: bool,
+    pub entry: RoundHistoryEntry,
 }
 const ROOT_NODE_ID: &str = "start";
 const DEFAULT_PLAYER_CHARACTER_NAME: &str = "玩家角色";

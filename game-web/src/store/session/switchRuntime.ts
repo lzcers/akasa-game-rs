@@ -13,8 +13,8 @@ import {
 import { resetUIState } from '../ui/initialState';
 
 type SetGameUIState = StoreApi<GameUIStoreState>['setState'];
-type CloseSessionStream = () => void;
-type ConnectSessionStream = (sessionId: string) => void;
+type CloseStoryNodeStream = () => void;
+type MaterializeStoryNode = (sessionId: string, nodeId?: string) => void;
 
 interface ActivateSessionSnapshotOptions {
   replaceTimeline?: boolean;
@@ -41,10 +41,10 @@ function setSessionSwitchLoadingState(set: SetGameUIState) {
 
 export function beginSessionSwitch(
   set: SetGameUIState,
-  closeSessionStream: CloseSessionStream,
+  closeStoryNodeStream: CloseStoryNodeStream,
   options: { invalidateStartup?: boolean } = {},
 ) {
-  closeSessionStream();
+  closeStoryNodeStream();
   clearStartupStageTimer();
   if (options.invalidateStartup) {
     invalidateStartupFlow();
@@ -55,7 +55,7 @@ export function beginSessionSwitch(
 export function activateSessionSnapshot(
   set: SetGameUIState,
   session: GameSessionWorldStateData,
-  connectSessionStream: ConnectSessionStream,
+  materializeStoryNode: MaterializeStoryNode,
   options: ActivateSessionSnapshotOptions = {},
 ) {
   setAnalyticsGameSessionId(session.sessionId);
@@ -72,16 +72,16 @@ export function activateSessionSnapshot(
     error: null,
     skipRestoredNarrationAnimation: true,
   });
-  connectSessionStream(session.sessionId);
+  materializeStoryNode(session.sessionId);
 }
 
 export function failSessionSwitch(
   set: SetGameUIState,
-  closeSessionStream: CloseSessionStream,
+  closeStoryNodeStream: CloseStoryNodeStream,
   error: unknown,
   fallbackMessage: string,
 ) {
-  closeSessionStream();
+  closeStoryNodeStream();
   resetInternalGameState();
   set({
     ...resetUIState(),
