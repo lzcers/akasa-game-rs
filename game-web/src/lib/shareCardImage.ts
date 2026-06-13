@@ -5,7 +5,7 @@ interface ShareCardImageInput {
   gameUrl: string;
   eyebrow: string;
   title: string;
-  sessionLabel: string;
+  nodeLabel: string;
 }
 
 const CARD_WIDTH = 1200;
@@ -197,7 +197,7 @@ export async function downloadStoryShareCardImage(input: ShareCardImageInput): P
 
   context.fillStyle = 'rgba(207,244,248,0.75)';
   context.font = '600 24px Inter, system-ui, sans-serif';
-  context.fillText(input.sessionLabel, CARD_PADDING, 210);
+  context.fillText(input.nodeLabel, CARD_PADDING, 210);
 
   context.fillStyle = '#f4ecd8';
   context.font = '500 62px Inter, "PingFang SC", "Microsoft YaHei", sans-serif';

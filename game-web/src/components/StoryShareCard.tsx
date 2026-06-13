@@ -11,7 +11,7 @@ interface StoryShareCardProps {
   className?: string;
   eyebrow?: string;
   title?: string;
-  sessionLabel?: string;
+  nodeLabel?: string;
   ctaLabel?: string;
   onClose?: () => void;
   closeLabel?: string;
@@ -22,8 +22,8 @@ const StoryShareCard: React.FC<StoryShareCardProps> = ({
   gameUrl,
   className,
   eyebrow = "AKASHIC ECHO",
-  title = "这一段记录，正在等待新的共鸣",
-  sessionLabel = "回响摘录",
+  title = "这一枚故事节点，正在等待新的共鸣",
+  nodeLabel = "节点摘录",
   ctaLabel = "分享入口",
   onClose,
   closeLabel = "关闭分享卡片",
@@ -51,7 +51,7 @@ const StoryShareCard: React.FC<StoryShareCardProps> = ({
         gameUrl,
         eyebrow,
         title,
-        sessionLabel,
+        nodeLabel,
       });
     } catch (error) {
       setDownloadError(
@@ -120,7 +120,7 @@ const StoryShareCard: React.FC<StoryShareCardProps> = ({
             </div>
             <div className="space-y-1 sm:space-y-2">
               <p className="text-[10px] tracking-[0.22em] text-cyan-100/75 uppercase sm:text-xs sm:tracking-[0.28em]">
-                {sessionLabel}
+                {nodeLabel}
               </p>
               <h2 className="max-w-xl text-xl leading-tight text-[#f4ecd8] sm:text-[2rem]">
                 {title}

@@ -5,35 +5,35 @@ interface CloneResult {
 
 let activeCloneRequest: {
   sourceSessionId: string;
-  sourceRound: number | null;
+  sourceNodeId: string | null;
   promise: Promise<CloneResult>;
 } | null = null;
 
 export function getActiveCloneRequest(
   sourceSessionId: string,
-  sourceRound: number | null,
+  sourceNodeId: string | null,
 ): Promise<CloneResult> | null {
   return activeCloneRequest?.sourceSessionId === sourceSessionId
-    && activeCloneRequest.sourceRound === sourceRound
+    && activeCloneRequest.sourceNodeId === sourceNodeId
     ? activeCloneRequest.promise
     : null;
 }
 
 export function trackCloneRequest(
   sourceSessionId: string,
-  sourceRound: number | null,
+  sourceNodeId: string | null,
   promise: Promise<CloneResult>,
 ) {
   activeCloneRequest = {
     sourceSessionId,
-    sourceRound,
+    sourceNodeId,
     promise,
   };
 
   promise.finally(() => {
     if (
       activeCloneRequest?.sourceSessionId === sourceSessionId
-      && activeCloneRequest.sourceRound === sourceRound
+      && activeCloneRequest.sourceNodeId === sourceNodeId
     ) {
       activeCloneRequest = null;
     }

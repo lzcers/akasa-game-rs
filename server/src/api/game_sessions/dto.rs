@@ -115,7 +115,7 @@ pub struct SelectStorylineNodeRequest {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloneGameSessionQuery {
-    pub round: Option<u64>,
+    pub node_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

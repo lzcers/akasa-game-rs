@@ -92,6 +92,7 @@ export function roundStateFromPersistedHistoryEntry(
   const selectedChoiceAction = entry.committedActions[0]?.action.trim() || null;
 
   return createRoundState(entry.round, {
+    nodeId: entry.nodeId,
     title: titleFromWorldState(entry.worldState),
     narrationText: entry.narrationText.trim(),
     narrationStatus: entry.narrationText.trim() ? 'done' : null,
@@ -125,6 +126,7 @@ function currentRoundStateFromSession(
 ): RoundState {
   return {
     ...createRoundState(round, {
+      nodeId: session.activeNodeId,
       title: titleFromWorldState(session.worldState),
       narrationText: latestHistoryFromSession(session),
       narrationStatus: session.latestNarration.trim() ? 'done' : null,

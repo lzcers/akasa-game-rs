@@ -176,55 +176,26 @@ impl SessionArchiveRepository {
         let _guard = self.db.lock().await;
         let conn = self.db.open_connection("choice explorations")?;
         schema::init(&conn)?;
-        let mut stmt = conn
-            .prepare(
-                r#"
-                WITH RECURSIVE active_path(node_id, parent_node_id, node_depth) AS (
-                    SELECT n.node_id, n.parent_node_id, n.node_depth
-                    FROM story_nodes n
-                    JOIN sessions s
-                        ON s.session_id = n.session_id
-                        AND s.active_node_id = n.node_id
-                    WHERE n.session_id = ?1
-                    UNION ALL
-                    SELECT parent.node_id, parent.parent_node_id, parent.node_depth
-                    FROM story_nodes parent
-                    JOIN active_path child
-                        ON child.parent_node_id = parent.node_id
-                    WHERE parent.session_id = ?1
-                )
-                SELECT DISTINCT
-                    active_path.node_depth,
-                    action.action
-                FROM story_edge_actions action
-                JOIN active_path
-                    ON active_path.node_id = action.from_node_id
-                WHERE action.session_id = ?1
-                    AND active_path.node_depth > 0
-                    AND length(trim(action.action)) > 0
-                    AND EXISTS (
-                        SELECT 1
-                        FROM entity_flow_outputs output
-                        WHERE output.session_id = action.session_id
-                            AND output.node_id = action.to_node_id
-                            AND output.stage = 'application'
-                            AND output.output_type = 'text'
-                            AND length(trim(output.content)) > 0
-                    )
-                ORDER BY active_path.node_depth ASC, action.action ASC
-                "#,
-            )
-            .context("failed to prepare choice exploration load")?;
-        let rows = stmt
-            .query_map(params![session_id], |row| {
-                Ok(StoredChoiceExploration {
-                    round: row.get::<_, i64>(0)?.try_into().unwrap_or_default(),
-                    action: row.get(1)?,
-                })
-            })
-            .context("failed to query choice explorations")?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .context("failed to read choice explorations")
+        let Some(active_node_id) = active_story_node_id(&conn, session_id)? else {
+            return Ok(Vec::new());
+        };
+        choice_explorations_for_node(&conn, session_id, &active_node_id)
+    }
+
+    pub async fn load_choice_explorations_for_node(
+        &self,
+        session_id: &str,
+        node_id: &str,
+    ) -> Result<Vec<StoredChoiceExploration>> {
+        let node_id = node_id.trim();
+        if node_id.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let _guard = self.db.lock().await;
+        let conn = self.db.open_connection("choice explorations for node")?;
+        schema::init(&conn)?;
+        choice_explorations_for_node(&conn, session_id, node_id)
     }
 
     pub async fn load_branch_explorations(
@@ -234,81 +205,26 @@ impl SessionArchiveRepository {
         let _guard = self.db.lock().await;
         let conn = self.db.open_connection("branch explorations")?;
         schema::init(&conn)?;
-        let mut stmt = conn
-            .prepare(
-                r#"
-                WITH RECURSIVE active_path(node_id, parent_node_id, node_depth) AS (
-                    SELECT n.node_id, n.parent_node_id, n.node_depth
-                    FROM story_nodes n
-                    JOIN sessions s
-                        ON s.session_id = n.session_id
-                        AND s.active_node_id = n.node_id
-                    WHERE n.session_id = ?1
-                    UNION ALL
-                    SELECT parent.node_id, parent.parent_node_id, parent.node_depth
-                    FROM story_nodes parent
-                    JOIN active_path child
-                        ON child.parent_node_id = parent.node_id
-                    WHERE parent.session_id = ?1
-                )
-                SELECT
-                    active_path.node_depth,
-                    action.character_name,
-                    action.player_id,
-                    action.action_type,
-                    action.title,
-                    action.action,
-                    action.motivation_and_risk
-                FROM story_edge_actions action
-                JOIN active_path
-                    ON active_path.node_id = action.from_node_id
-                WHERE action.session_id = ?1
-                    AND active_path.node_depth > 0
-                    AND length(trim(action.action)) > 0
-                    AND EXISTS (
-                        SELECT 1
-                        FROM entity_flow_outputs output
-                        WHERE output.session_id = action.session_id
-                            AND output.node_id = action.to_node_id
-                            AND output.stage = 'application'
-                            AND output.output_type = 'text'
-                            AND length(trim(output.content)) > 0
-                    )
-                ORDER BY active_path.node_depth ASC, action.submitted_at ASC, action.action ASC
-                "#,
-            )
-            .context("failed to prepare branch exploration load")?;
-        let rows = stmt
-            .query_map(params![session_id], |row| {
-                let action_type: String = row.get(3)?;
-                Ok(StoredBranchExploration {
-                    round: row.get::<_, i64>(0)?.try_into().unwrap_or_default(),
-                    action: PlayerActionItem {
-                        character_name: row.get(1)?,
-                        player_id: row.get(2)?,
-                        action_type: deserialize_player_action_type(&action_type).map_err(
-                            |err| {
-                                rusqlite::Error::FromSqlConversionFailure(
-                                    3,
-                                    rusqlite::types::Type::Text,
-                                    Box::new(std::io::Error::new(
-                                        std::io::ErrorKind::InvalidData,
-                                        err,
-                                    )),
-                                )
-                            },
-                        )?,
-                        title: row.get(4)?,
-                        action: row.get(5)?,
-                        motivation_and_risk: row.get(6)?,
-                    },
-                    visited: true,
-                })
-            })
-            .context("failed to query branch explorations")?;
+        let Some(active_node_id) = active_story_node_id(&conn, session_id)? else {
+            return Ok(Vec::new());
+        };
+        branch_explorations_for_node(&conn, session_id, &active_node_id)
+    }
 
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .context("failed to read branch explorations")
+    pub async fn load_branch_explorations_for_node(
+        &self,
+        session_id: &str,
+        node_id: &str,
+    ) -> Result<Vec<StoredBranchExploration>> {
+        let node_id = node_id.trim();
+        if node_id.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let _guard = self.db.lock().await;
+        let conn = self.db.open_connection("branch explorations for node")?;
+        schema::init(&conn)?;
+        branch_explorations_for_node(&conn, session_id, node_id)
     }
 
     pub async fn has_story_edge_action_for_round(
@@ -589,6 +505,146 @@ fn story_node_reactivation_phase(
     } else {
         TurnPhase::AwaitingPlayer
     })
+}
+
+fn active_story_node_id(conn: &Connection, session_id: &str) -> Result<Option<String>> {
+    conn.query_row(
+        "SELECT active_node_id FROM sessions WHERE session_id = ?1",
+        params![session_id],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .context("failed to load active story node id")
+}
+
+fn choice_explorations_for_node(
+    conn: &Connection,
+    session_id: &str,
+    node_id: &str,
+) -> Result<Vec<StoredChoiceExploration>> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            WITH RECURSIVE selected_path(node_id, parent_node_id, node_depth) AS (
+                SELECT node_id, parent_node_id, node_depth
+                FROM story_nodes
+                WHERE session_id = ?1
+                    AND node_id = ?2
+                UNION ALL
+                SELECT parent.node_id, parent.parent_node_id, parent.node_depth
+                FROM story_nodes parent
+                JOIN selected_path child
+                    ON child.parent_node_id = parent.node_id
+                WHERE parent.session_id = ?1
+            )
+            SELECT DISTINCT
+                selected_path.node_depth,
+                action.action
+            FROM story_edge_actions action
+            JOIN selected_path
+                ON selected_path.node_id = action.from_node_id
+            WHERE action.session_id = ?1
+                AND selected_path.node_depth > 0
+                AND length(trim(action.action)) > 0
+                AND EXISTS (
+                    SELECT 1
+                    FROM entity_flow_outputs output
+                    WHERE output.session_id = action.session_id
+                        AND output.node_id = action.to_node_id
+                        AND output.stage = 'application'
+                        AND output.output_type = 'text'
+                        AND length(trim(output.content)) > 0
+                )
+            ORDER BY selected_path.node_depth ASC, action.action ASC
+            "#,
+        )
+        .context("failed to prepare choice exploration load")?;
+    let rows = stmt
+        .query_map(params![session_id, node_id], |row| {
+            Ok(StoredChoiceExploration {
+                round: row.get::<_, i64>(0)?.try_into().unwrap_or_default(),
+                action: row.get(1)?,
+            })
+        })
+        .context("failed to query choice explorations")?;
+
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .context("failed to read choice explorations")
+}
+
+fn branch_explorations_for_node(
+    conn: &Connection,
+    session_id: &str,
+    node_id: &str,
+) -> Result<Vec<StoredBranchExploration>> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            WITH RECURSIVE selected_path(node_id, parent_node_id, node_depth) AS (
+                SELECT node_id, parent_node_id, node_depth
+                FROM story_nodes
+                WHERE session_id = ?1
+                    AND node_id = ?2
+                UNION ALL
+                SELECT parent.node_id, parent.parent_node_id, parent.node_depth
+                FROM story_nodes parent
+                JOIN selected_path child
+                    ON child.parent_node_id = parent.node_id
+                WHERE parent.session_id = ?1
+            )
+            SELECT
+                selected_path.node_depth,
+                action.character_name,
+                action.player_id,
+                action.action_type,
+                action.title,
+                action.action,
+                action.motivation_and_risk
+            FROM story_edge_actions action
+            JOIN selected_path
+                ON selected_path.node_id = action.from_node_id
+            WHERE action.session_id = ?1
+                AND selected_path.node_depth > 0
+                AND length(trim(action.action)) > 0
+                AND EXISTS (
+                    SELECT 1
+                    FROM entity_flow_outputs output
+                    WHERE output.session_id = action.session_id
+                        AND output.node_id = action.to_node_id
+                        AND output.stage = 'application'
+                        AND output.output_type = 'text'
+                        AND length(trim(output.content)) > 0
+                )
+            ORDER BY selected_path.node_depth ASC, action.submitted_at ASC, action.action ASC
+            "#,
+        )
+        .context("failed to prepare branch exploration load")?;
+    let rows = stmt
+        .query_map(params![session_id, node_id], |row| {
+            let action_type: String = row.get(3)?;
+            Ok(StoredBranchExploration {
+                round: row.get::<_, i64>(0)?.try_into().unwrap_or_default(),
+                action: PlayerActionItem {
+                    character_name: row.get(1)?,
+                    player_id: row.get(2)?,
+                    action_type: deserialize_player_action_type(&action_type).map_err(|err| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            3,
+                            rusqlite::types::Type::Text,
+                            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
+                        )
+                    })?,
+                    title: row.get(4)?,
+                    action: row.get(5)?,
+                    motivation_and_risk: row.get(6)?,
+                },
+                visited: true,
+            })
+        })
+        .context("failed to query branch explorations")?;
+
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .context("failed to read branch explorations")
 }
 
 fn choice_option_for_story_edge(

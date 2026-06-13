@@ -11,7 +11,7 @@ export const appRoutes = {
 export const SESSION_ID_QUERY_KEY = 'session_id';
 export const SHARE_MODE_QUERY_KEY = 'share';
 export const CLONE_SHARE_MODE = 'clone';
-export const SHARE_ROUND_QUERY_KEY = 'round';
+export const SHARE_NODE_QUERY_KEY = 'node_id';
 export const VIEW_MODE_QUERY_KEY = 'view';
 export const STORY_REVIEW_VIEW_MODE = 'story';
 export const FOCUS_ROUND_QUERY_KEY = 'focus_round';
@@ -25,14 +25,9 @@ export function isCloneShareSearch(search: string): boolean {
   return new URLSearchParams(search).get(SHARE_MODE_QUERY_KEY) === CLONE_SHARE_MODE;
 }
 
-export function readShareRoundFromSearch(search: string): number | null {
-  const rawRound = new URLSearchParams(search).get(SHARE_ROUND_QUERY_KEY);
-  if (!rawRound) {
-    return null;
-  }
-
-  const round = Number(rawRound);
-  return Number.isSafeInteger(round) && round > 0 ? round : null;
+export function readShareNodeIdFromSearch(search: string): string | null {
+  const nodeId = new URLSearchParams(search).get(SHARE_NODE_QUERY_KEY)?.trim();
+  return nodeId || null;
 }
 
 export function readFocusRoundFromSearch(search: string): number | null {
@@ -60,14 +55,15 @@ export function routeWithSession(route: string, sessionId: string): string {
 export function routeWithClonedSession(
   route: string,
   sessionId: string,
-  sourceRound?: number | null,
+  sourceNodeId?: string | null,
 ): string {
   const search = new URLSearchParams({
     [SESSION_ID_QUERY_KEY]: sessionId,
     [SHARE_MODE_QUERY_KEY]: CLONE_SHARE_MODE,
   });
-  if (sourceRound != null) {
-    search.set(SHARE_ROUND_QUERY_KEY, String(sourceRound));
+  const normalizedNodeId = sourceNodeId?.trim();
+  if (normalizedNodeId) {
+    search.set(SHARE_NODE_QUERY_KEY, normalizedNodeId);
   }
 
   return `${route}?${search.toString()}`;

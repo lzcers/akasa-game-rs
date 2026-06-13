@@ -249,13 +249,13 @@ const GameplayPage: React.FC = () => {
         ),
     [narrationHistory],
   );
-  const canArchiveLatestCompletedRound = Boolean(
-    sessionId && latestCompletedNarration,
+  const canArchiveLatestCompletedNode = Boolean(
+    sessionId && latestCompletedNarration?.nodeId,
   );
-  const archiveActionUnavailableReason = canArchiveLatestCompletedRound
+  const archiveActionUnavailableReason = canArchiveLatestCompletedNode
     ? null
     : "第一段回响显影后可分享或封存。";
-  const archiveActionKey = `${sessionId ?? "no-session"}:${latestCompletedNarration?.round ?? "no-completed-round"}`;
+  const archiveActionKey = `${sessionId ?? "no-session"}:${latestCompletedNarration?.nodeId ?? "no-completed-node"}`;
   const statusMessage = feedback ?? error;
   const broadcastItems = latestBroadcastItems
     .map((item) => item.trim())
@@ -295,12 +295,12 @@ const GameplayPage: React.FC = () => {
           ? routeWithClonedSession(
               appRoutes.gameplay,
               sessionId,
-              latestCompletedNarration?.round,
+              latestCompletedNarration?.nodeId,
             )
           : appRoutes.lobby,
         window.location.origin,
       ).toString(),
-    [latestCompletedNarration?.round, sessionId],
+    [latestCompletedNarration?.nodeId, sessionId],
   );
 
   useEffect(() => {
@@ -864,7 +864,7 @@ const GameplayPage: React.FC = () => {
   };
 
   const handleSave = async () => {
-    if (!canArchiveLatestCompletedRound) {
+    if (!canArchiveLatestCompletedNode) {
       setFeedback(archiveActionUnavailableReason);
       return;
     }
@@ -1009,7 +1009,7 @@ const GameplayPage: React.FC = () => {
               shareGameUrl={shareGameUrl}
               generatedProfiles={generatedProfiles}
               archiveActionKey={archiveActionKey}
-              isArchiveActionDisabled={!canArchiveLatestCompletedRound}
+              isArchiveActionDisabled={!canArchiveLatestCompletedNode}
               archiveActionUnavailableReason={archiveActionUnavailableReason}
               onBackToLobby={() => {
                 suppressSessionRestore(sessionId);

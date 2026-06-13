@@ -116,14 +116,15 @@ export async function restoreExistingGameSession(
 export async function cloneSharedGameSession(
   runtime: SessionRestoreRuntime,
   sourceSessionId: string,
-  sourceRound: number | null = null,
+  sourceNodeId: string | null = null,
 ): Promise<{ sessionId: string; isEnding: boolean }> {
   const targetSessionId = sourceSessionId.trim();
+  const targetNodeId = sourceNodeId?.trim() || null;
   if (!targetSessionId) {
     throw new Error('未找到要复制的记录编号。');
   }
 
-  const activeRequest = getActiveCloneRequest(targetSessionId, sourceRound);
+  const activeRequest = getActiveCloneRequest(targetSessionId, targetNodeId);
   if (activeRequest) {
     return activeRequest;
   }
@@ -133,12 +134,12 @@ export async function cloneSharedGameSession(
     restoringSessionId = null;
 
     try {
-      const cloned = await cloneGameSession(targetSessionId, sourceRound);
+      const cloned = await cloneGameSession(targetSessionId, targetNodeId);
       track('share_clone_session_created', {
         sourceSessionId: targetSessionId,
         clonedSessionId: cloned.sessionId,
         sourceSessionIdFromAttribution: getAnalyticsSourceSessionId(),
-        sourceRound: cloned.worldState.round,
+        sourceNodeId: targetNodeId,
         sourceEndingType: cloned.worldState.endingType ?? null,
         isEnding: cloned.worldState.isEnding,
       });
@@ -155,7 +156,7 @@ export async function cloneSharedGameSession(
     }
   })();
 
-  return trackCloneRequest(targetSessionId, sourceRound, clonePromise);
+  return trackCloneRequest(targetSessionId, targetNodeId, clonePromise);
 }
 
 export async function selectStorylineNodeForSession(

@@ -56,8 +56,8 @@ export function createGameUIActions(
     restoreSession: (sessionId) => (
       restoreExistingGameSession(createSessionRestoreRuntime(set, get), sessionId)
     ),
-    cloneSharedSession: (sourceSessionId, sourceRound = null) => (
-      cloneSharedGameSession(createSessionRestoreRuntime(set, get), sourceSessionId, sourceRound)
+    cloneSharedSession: (sourceSessionId, sourceNodeId = null) => (
+      cloneSharedGameSession(createSessionRestoreRuntime(set, get), sourceSessionId, sourceNodeId)
     ),
     selectStorylineNode: (sessionId, nodeId) => (
       selectStorylineNodeForSession(createSessionRestoreRuntime(set, get), sessionId, nodeId)

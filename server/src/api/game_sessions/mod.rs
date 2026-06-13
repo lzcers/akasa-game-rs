@@ -156,7 +156,7 @@ pub async fn clone_game_session(
     Query(query): Query<CloneGameSessionQuery>,
 ) -> ApiResult<GameSessionWorldStateData> {
     let state_view = state
-        .clone_game_session(&path.session_id, query.round)
+        .clone_game_session(&path.session_id, query.node_id.as_deref())
         .await?;
     Ok(Json(ApiResponse::ok(state_view)))
 }

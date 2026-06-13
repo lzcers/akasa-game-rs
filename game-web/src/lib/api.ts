@@ -494,10 +494,11 @@ export function selectGameSessionStorylineNode(
   );
 }
 
-export function cloneGameSession(sessionId: string, sourceRound?: number | null) {
+export function cloneGameSession(sessionId: string, sourceNodeId?: string | null) {
   const params = new URLSearchParams();
-  if (sourceRound != null) {
-    params.set('round', String(sourceRound));
+  const normalizedNodeId = sourceNodeId?.trim();
+  if (normalizedNodeId) {
+    params.set('nodeId', normalizedNodeId);
   }
   const search = params.size > 0 ? `?${params.toString()}` : '';
 

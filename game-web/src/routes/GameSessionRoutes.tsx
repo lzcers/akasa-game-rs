@@ -4,7 +4,7 @@ import {
   appRoutes,
   isCloneShareSearch,
   isStoryReviewSearch,
-  readShareRoundFromSearch,
+  readShareNodeIdFromSearch,
   readSessionIdFromSearch,
   routeWithSession,
 } from '../lib/appRoutes';
@@ -59,10 +59,10 @@ function SessionRestoreGate({ sessionId }: { sessionId: string }) {
 
 function SessionCloneGate({
   sourceSessionId,
-  sourceRound,
+  sourceNodeId,
 }: {
   sourceSessionId: string;
-  sourceRound: number | null;
+  sourceNodeId: string | null;
 }) {
   const cloneSharedSession = useGameUIStore((state) => state.cloneSharedSession);
   const isLoading = useGameUIStore((state) => state.isLoading);
@@ -70,7 +70,7 @@ function SessionCloneGate({
   const navigate = useNavigate();
 
   useEffect(() => {
-    void cloneSharedSession(sourceSessionId, sourceRound)
+    void cloneSharedSession(sourceSessionId, sourceNodeId)
       .then((cloned) => {
         navigate(
           routeWithSession(
@@ -83,7 +83,7 @@ function SessionCloneGate({
       .catch(() => {
         // The store keeps the user-facing error and navigates back to the lobby.
       });
-  }, [cloneSharedSession, navigate, sourceRound, sourceSessionId]);
+  }, [cloneSharedSession, navigate, sourceNodeId, sourceSessionId]);
 
   return (
     <div className="flex h-full w-full items-center justify-center px-6 text-center">
@@ -110,7 +110,7 @@ function SessionRouteGuard({
 }) {
   const location = useLocation();
   const requestedSessionId = readSessionIdFromSearch(location.search);
-  const requestedShareRound = readShareRoundFromSearch(location.search);
+  const requestedShareNodeId = readShareNodeIdFromSearch(location.search);
   const shouldCloneSession = isCloneShareSearch(location.search);
   const shouldReviewEndedStory = isStoryReviewSearch(location.search);
   const sessionId = useGameInternalStore((state) => state.sessionId);
@@ -120,7 +120,7 @@ function SessionRouteGuard({
     return (
       <SessionCloneGate
         sourceSessionId={requestedSessionId}
-        sourceRound={requestedShareRound}
+        sourceNodeId={requestedShareNodeId}
       />
     );
   }

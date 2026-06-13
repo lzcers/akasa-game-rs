@@ -261,7 +261,7 @@ impl AppState {
         &self,
         request: CreateGameSessionRequest,
     ) -> Result<CreateGameSessionData, AppError> {
-        let session_id = format!("session-{}", Uuid::new_v4().simple());
+        let session_id = Uuid::new_v4().simple().to_string();
         let created_at = now_string();
         let world_profile = request.world_profile.trim();
         let character_profile = request.character_profile.trim();
@@ -472,7 +472,22 @@ impl AppState {
             .await
             .map_err(|err| AppError::internal(format!("读取故事节点失败：{err:#}")))?
             .ok_or_else(|| AppError::not_found(format!("未找到故事节点 `{node_id}`")))?;
-        Ok(story_node_materialization_data(session_id, node))
+        let choice_explorations = self
+            .session_archive_repo
+            .load_choice_explorations_for_node(session_id, node_id)
+            .await
+            .map_err(|err| AppError::internal(format!("读取选项探索状态失败：{err:#}")))?;
+        let branch_explorations = self
+            .session_archive_repo
+            .load_branch_explorations_for_node(session_id, node_id)
+            .await
+            .map_err(|err| AppError::internal(format!("读取分支探索状态失败：{err:#}")))?;
+        Ok(story_node_materialization_data(
+            session_id,
+            node,
+            &choice_explorations,
+            &branch_explorations,
+        ))
     }
 
     pub async fn get_game_session_storyline(
@@ -571,16 +586,31 @@ impl AppState {
     pub async fn clone_game_session(
         &self,
         source_session_id: &str,
-        source_round: Option<u64>,
+        source_node_id: Option<&str>,
     ) -> Result<GameSessionWorldStateData, AppError> {
         let source_session_id = source_session_id.trim();
         if source_session_id.is_empty() {
             return Err(AppError::bad_request("`sessionId` 不能为空。"));
         }
+        let source_node_id = source_node_id.and_then(|node_id| {
+            let node_id = node_id.trim();
+            (!node_id.is_empty()).then_some(node_id)
+        });
+        let completed_round = match source_node_id {
+            Some(node_id) => Some(
+                self.session_archive_repo
+                    .load_story_node_round(source_session_id, node_id)
+                    .await
+                    .map_err(|err| AppError::internal(format!("读取分享节点失败：{err:#}")))?
+                    .ok_or_else(|| AppError::not_found(format!("未找到分享节点 `{node_id}`")))?
+                    .round,
+            ),
+            None => None,
+        };
 
-        let clone_session_id = format!("session-{}", Uuid::new_v4().simple());
+        let clone_session_id = Uuid::new_v4().simple().to_string();
         let mut payload = self
-            .archive_payload_for_session(source_session_id, None, source_round)
+            .archive_payload_for_session(source_session_id, None, completed_round)
             .await?;
         // 克隆会话本质是改写 archive 身份，再用改写后的 payload 同时重建
         // 持久化状态和新的热 runtime。
@@ -1938,23 +1968,29 @@ fn round_history_data_from_entry(
 fn story_node_materialization_data(
     session_id: &str,
     node: StoredStoryNodeRound,
+    choice_explorations: &[StoredChoiceExploration],
+    branch_explorations: &[StoredBranchExploration],
 ) -> StoryNodeMaterializationData {
+    let node_id = node.node_id.clone();
+    let round = node.round;
     let status = story_node_materialization_status(&node);
     let is_complete = status == "complete" || status == "ended";
-    let mut data = is_complete.then(|| round_history_data_from_entry(node.entry, &[], &[]));
+    let mut data = is_complete.then(|| {
+        round_history_data_from_entry(node.entry, choice_explorations, branch_explorations)
+    });
     if let Some(data) = &mut data {
-        data.node_id = node.node_id.clone();
+        data.node_id = node_id.clone();
     }
 
     StoryNodeMaterializationData {
         session_id: session_id.to_string(),
-        node_id: node.node_id.clone(),
+        node_id: node_id.clone(),
         status: status.to_string(),
-        round: node.round,
+        round,
         stream_url: (!is_complete && status != "failed").then(|| {
             format!(
                 "/api/game-sessions/{}/story-nodes/{}/stream",
-                session_id, node.node_id
+                session_id, node_id
             )
         }),
         data,
@@ -2731,6 +2767,21 @@ mod tests {
             "仔细翻查书本，看是否还有其他标记"
         );
 
+        let materialized_parent = state
+            .get_game_session_story_node(session_id, &branch_3.branch_node_id)
+            .await
+            .expect("selected parent node should materialize with exploration state");
+        let parent_data = materialized_parent
+            .data
+            .expect("completed parent node should include data");
+        assert_eq!(
+            parent_data
+                .choice_explorations
+                .get(&node_3_choice.action)
+                .map(|exploration| exploration.visited),
+            Some(true)
+        );
+
         let page = state
             .get_game_session_rounds(session_id, None, 20)
             .await
@@ -2934,6 +2985,9 @@ mod tests {
             .await
             .expect("session should create");
 
+        assert!(!created.session_id.starts_with("session-"));
+        Uuid::parse_str(&created.session_id).expect("created session id should be a UUID");
+
         let exported = state
             .export_save_archive(&created.session_id, Some("测试存档"))
             .await
@@ -3080,7 +3134,8 @@ mod tests {
             .expect("stable source session should clone");
 
         assert_ne!(cloned.session_id, "session-from-slot");
-        assert!(cloned.session_id.starts_with("session-"));
+        assert!(!cloned.session_id.starts_with("session-"));
+        Uuid::parse_str(&cloned.session_id).expect("cloned session id should be a UUID");
         assert_eq!(cloned.world_state.scene_title, "钟楼阴影");
         assert_eq!(cloned.current_outcome, "尚未做出选择");
 

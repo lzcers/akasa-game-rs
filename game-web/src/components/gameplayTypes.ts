@@ -1,6 +1,7 @@
 import type { Choice } from "../lib/api";
 
 export interface NarrationRoundEntry {
+  nodeId: string | null;
   round: number;
   title: string;
   narrationText: string;

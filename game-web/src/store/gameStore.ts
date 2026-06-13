@@ -5,6 +5,7 @@ export type RoundChoicesStatus = 'idle' | 'loading' | 'ready';
 export type RoundNarrationStatus = 'running' | 'done' | 'error';
 
 export interface RoundState {
+  nodeId: string | null;
   round: number;
   title: string;
   narrationText: string;
@@ -37,6 +38,7 @@ export const initialInternalState: GameInternalState = {
 
 export function createRoundState(round: number, overrides: Partial<RoundState> = {}): RoundState {
   return {
+    nodeId: null,
     round,
     title: '',
     narrationText: '',
