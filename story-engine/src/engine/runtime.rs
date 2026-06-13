@@ -60,11 +60,8 @@ impl SessionRuntimeHandle {
         handle
     }
 
-    pub(crate) fn send(
-        &self,
-        command: EngineCommand,
-    ) -> Result<(), mpsc::error::SendError<EngineCommand>> {
-        self.command_tx.send(command)
+    pub(crate) fn send(&self, command: EngineCommand) -> Result<(), ()> {
+        self.command_tx.send(command).map_err(|_| ())
     }
 }
 

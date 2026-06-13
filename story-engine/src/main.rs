@@ -234,10 +234,7 @@ impl StreamTypewriterOutput {
         self.finish_line()?;
 
         let mut stdout = io::stdout().lock();
-        write!(
-            stdout,
-            "[stream] round={round} entity={entity_name} chunk=\n"
-        )?;
+        writeln!(stdout, "[stream] round={round} entity={entity_name} chunk=")?;
         for ch in text.chars() {
             write!(stdout, "{ch}")?;
             stdout.flush()?;
@@ -261,10 +258,7 @@ impl StreamTypewriterOutput {
             if self.current.is_some() {
                 writeln!(stdout)?;
             }
-            write!(
-                stdout,
-                "[stream] round={round} entity={entity_name} chunk=\n"
-            )?;
+            writeln!(stdout, "[stream] round={round} entity={entity_name} chunk=")?;
             self.current = Some(StreamOutputKey {
                 round,
                 entity_name: entity_name.to_string(),

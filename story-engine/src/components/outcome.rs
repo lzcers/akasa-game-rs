@@ -191,18 +191,10 @@ impl PlayerActionItem {
 }
 
 /// 玩家提交到 ECS 的角色行动集合。单玩家模式是只有一项 character 行动的特例。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct PlayerActionInput {
     pub actions: Vec<PlayerActionItem>,
-}
-
-impl Default for PlayerActionInput {
-    fn default() -> Self {
-        Self {
-            actions: Vec::new(),
-        }
-    }
 }
 
 impl PlayerActionInput {

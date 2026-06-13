@@ -9,17 +9,17 @@ use story_engine::{
 
 use crate::session_history::{RoundHistoryEntry, TurnPhase};
 
+#[cfg(test)]
+use super::DEFAULT_PLAYER_CHARACTER_NAME;
 use super::codec::{
     deserialize_agent_output_type, deserialize_phase, serialize_agent_output_type, serialize_phase,
 };
 use super::story_path::{
-    StoryPathNode, active_or_linear_node_id_for_depth, ensure_linear_story_path,
-    linear_node_id_for_depth, select_story_path_nodes,
+    StoryPathNode, active_or_linear_node_id_for_depth, select_story_path_nodes,
 };
-use super::{
-    DEFAULT_PLAYER_CHARACTER_NAME, SessionArchiveRepository, StoredSessionRoundPage,
-    StoredStoryNodeRound, schema,
-};
+#[cfg(test)]
+use super::story_path::{ensure_linear_story_path, linear_node_id_for_depth};
+use super::{SessionArchiveRepository, StoredSessionRoundPage, StoredStoryNodeRound, schema};
 
 impl SessionArchiveRepository {
     pub async fn resolve_story_node_for_round(
@@ -156,6 +156,7 @@ impl SessionArchiveRepository {
         .context("failed to upsert entity flow output")?;
         Ok(())
     }
+    #[cfg(test)]
     pub async fn save_rounds(&self, session_id: &str, rounds: &[RoundHistoryEntry]) -> Result<()> {
         let session_id = session_id.trim();
         if session_id.is_empty() {
@@ -230,6 +231,7 @@ impl SessionArchiveRepository {
 }
 
 #[derive(Debug)]
+#[cfg(test)]
 struct FlowOutputRow {
     session_id: String,
     node_id: String,
@@ -238,6 +240,7 @@ struct FlowOutputRow {
     output_type: String,
     content: String,
 }
+#[cfg(test)]
 fn entity_flow_outputs_from_round(
     session_id: &str,
     round: &RoundHistoryEntry,

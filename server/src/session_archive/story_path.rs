@@ -222,28 +222,20 @@ pub(super) fn active_or_linear_node_id_for_depth(
         return Ok(node_id);
     }
 
-    if depth > 0 {
-        if let Some(parent_node_id) =
+    if depth > 0
+        && let Some(parent_node_id) =
             story_node_id_for_active_path_depth(conn, session_id, depth - 1)?
-        {
-            let linear_parent_node_id = linear_node_id_for_depth(depth - 1);
-            if parent_node_id != linear_parent_node_id {
-                if let Some(node_id) =
-                    latest_child_node_for_parent(conn, session_id, &parent_node_id, depth)?
-                {
-                    return Ok(node_id);
-                }
-
-                let phase = session_phase(conn, session_id)?.unwrap_or(TurnPhase::Simulation);
-                return create_branch_story_node(
-                    conn,
-                    session_id,
-                    &parent_node_id,
-                    depth,
-                    phase,
-                    now,
-                );
+    {
+        let linear_parent_node_id = linear_node_id_for_depth(depth - 1);
+        if parent_node_id != linear_parent_node_id {
+            if let Some(node_id) =
+                latest_child_node_for_parent(conn, session_id, &parent_node_id, depth)?
+            {
+                return Ok(node_id);
             }
+
+            let phase = session_phase(conn, session_id)?.unwrap_or(TurnPhase::Simulation);
+            return create_branch_story_node(conn, session_id, &parent_node_id, depth, phase, now);
         }
     }
 
