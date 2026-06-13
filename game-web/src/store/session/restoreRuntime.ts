@@ -173,12 +173,12 @@ export async function selectStorylineNodeForSession(
     isLoading: true,
     error: null,
   });
+  runtime.closeSessionStream();
 
   try {
     const selected = await selectGameSessionStorylineNode(targetSessionId, {
       nodeId: targetNodeId,
     });
-    runtime.closeSessionStream();
     activateSessionSnapshot(runtime.set, selected, runtime.connectSessionStream, {
       replaceTimeline: true,
     });
@@ -190,6 +190,9 @@ export async function selectStorylineNodeForSession(
       isEnding: selected.worldState.isEnding || selected.flowEnd,
     };
   } catch (error) {
+    if (useGameInternalStore.getState().sessionId === targetSessionId) {
+      runtime.connectSessionStream(targetSessionId);
+    }
     runtime.set({
       isLoading: false,
       error: error instanceof Error ? error.message : '切换故事线失败。',

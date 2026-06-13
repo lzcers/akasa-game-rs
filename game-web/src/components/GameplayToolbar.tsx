@@ -180,6 +180,22 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
             >
               <GitBranch className="h-4 w-4 flex-none" />
             </SecondaryButton>
+            <SecondaryButton
+              type="button"
+              disabled={!hasGeneratedProfiles}
+              title={hasGeneratedProfiles ? "查看回响记录" : "记录仍在显影中"}
+              onClick={() => {
+                if (!hasGeneratedProfiles) {
+                  return;
+                }
+                setIsRecordViewerOpen(true);
+                setIsUtilityMenuOpen(false);
+              }}
+              className="game-toolbar-icon-btn"
+              aria-label="查看回响记录"
+            >
+              <BookOpenText className="h-4 w-4 flex-none" />
+            </SecondaryButton>
             <div className="relative">
               <SecondaryButton
                 type="button"
@@ -202,24 +218,6 @@ const GameplayToolbar: React.FC<GameplayToolbarProps> = ({
                   >
                     <House className="h-3.5 w-3.5" />
                     返回回响厅
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!hasGeneratedProfiles}
-                    title={
-                      hasGeneratedProfiles ? "查看回响记录" : "记录仍在显影中"
-                    }
-                    onClick={() => {
-                      if (!hasGeneratedProfiles) {
-                        return;
-                      }
-                      setIsRecordViewerOpen(true);
-                      setIsUtilityMenuOpen(false);
-                    }}
-                    className="flex w-full items-center gap-1.5 rounded-[0.7rem] px-2 py-1.5 text-left text-[0.72rem] leading-4 text-[#f3ead8] transition-colors hover:bg-[rgba(188,169,124,0.14)] disabled:cursor-not-allowed disabled:text-[#8f98ab] disabled:hover:bg-transparent sm:text-xs"
-                  >
-                    <BookOpenText className="h-3.5 w-3.5" />
-                    查看回响记录
                   </button>
                   <button
                     type="button"

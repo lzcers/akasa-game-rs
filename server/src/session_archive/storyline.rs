@@ -6,8 +6,8 @@ use story_engine::components::{outcome::PlayerActionItem, world_snapshot::WorldS
 
 use super::codec::{deserialize_phase, deserialize_player_action_type};
 use super::{
-    ActivatedStorylineNode, SessionArchiveRepository, StoredStoryline, StoredStorylineEdge,
-    StoredStorylineNode, schema,
+    ActivatedStorylineNode, ROOT_NODE_ID, SessionArchiveRepository, StoredStoryline,
+    StoredStorylineEdge, StoredStorylineNode, schema,
 };
 
 impl SessionArchiveRepository {
@@ -103,6 +103,27 @@ fn load_selectable_storyline_node(
     session_id: &str,
     node_id: &str,
 ) -> Result<Option<(u64, u64, bool)>> {
+    if node_id == ROOT_NODE_ID {
+        return conn
+            .query_row(
+                r#"
+                SELECT node.node_depth, node.sequence_index, node.flow_end
+                FROM story_nodes node
+                WHERE node.session_id = ?1
+                    AND node.node_id = ?2
+                "#,
+                params![session_id, node_id],
+                |row| {
+                    let round = row.get::<_, i64>(0)?.try_into().unwrap_or_default();
+                    let sequence_index = row.get::<_, i64>(1)?.try_into().unwrap_or_default();
+                    let flow_end = row.get(2)?;
+                    Ok((round, sequence_index, flow_end))
+                },
+            )
+            .optional()
+            .context("failed to load selectable storyline root node");
+    }
+
     conn.query_row(
         r#"
         SELECT node.node_depth, node.sequence_index, node.flow_end

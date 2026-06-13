@@ -1039,6 +1039,74 @@ async fn storyline_loads_all_generated_nodes_edges_and_action_titles() {
 }
 
 #[tokio::test]
+async fn activating_storyline_root_does_not_fallback_to_leaf_rounds() {
+    let db_path = std::env::temp_dir().join(format!(
+        "akasa-storyline-root-{}.sqlite3",
+        Uuid::new_v4().simple()
+    ));
+    let repo = SessionArchiveRepository::new(AppDatabase::new(db_path));
+    let first_choice = CharacterOption {
+        title: "走进大厅".to_string(),
+        action: "推门走进正门大厅".to_string(),
+        motivation_and_risk: "更快接近线索，但容易被发现".to_string(),
+    };
+
+    repo.save_session_created(&SessionCreated {
+        session_id: "session-storyline-root".to_string(),
+        character_name: "hero".to_string(),
+        world_profile: "world".to_string(),
+        character_profile: "hero".to_string(),
+        key_story_beats: "beats".to_string(),
+    })
+    .await
+    .expect("session metadata should save");
+    repo.save_rounds(
+        "session-storyline-root",
+        &[
+            RoundHistoryEntry {
+                round: 1,
+                narration_text: Some("钟楼门前雾气翻涌。".to_string()),
+                choices: vec![PendingCharacterChoice {
+                    id: "choice-1".to_string(),
+                    option: first_choice.clone(),
+                }],
+                ..RoundHistoryEntry::default()
+            },
+            RoundHistoryEntry {
+                round: 2,
+                narration_text: Some("你推开正门，木轴发出长声。".to_string()),
+                ..RoundHistoryEntry::default()
+            },
+        ],
+    )
+    .await
+    .expect("rounds should save");
+    repo.update_session_turn_state("session-storyline-root", TurnPhase::AwaitingPlayer, 2, 2)
+        .await
+        .expect("leaf should become active");
+
+    let selected = repo
+        .activate_storyline_node("session-storyline-root", ROOT_NODE_ID)
+        .await
+        .expect("root activation should run")
+        .expect("root should be selectable");
+    assert_eq!(selected.round, 0);
+
+    let active_rounds = repo
+        .load_rounds("session-storyline-root")
+        .await
+        .expect("active path rounds should load");
+    assert!(active_rounds.is_empty());
+
+    let page = repo
+        .load_round_page("session-storyline-root", None, 10)
+        .await
+        .expect("active path page should load");
+    assert!(page.rounds.is_empty());
+    assert!(!page.has_more);
+}
+
+#[tokio::test]
 async fn backtrack_generation_persists_outputs_to_prepared_branch_node() {
     let db_path = std::env::temp_dir().join(format!(
         "akasa-backtrack-target-node-{}.sqlite3",
@@ -1231,6 +1299,137 @@ async fn backtrack_generation_persists_outputs_to_prepared_branch_node() {
         .expect("stored branch should reactivate");
     assert!(reused.reused_existing_branch);
     assert_eq!(reused.branch_node_id, branch.branch_node_id);
+}
+
+#[tokio::test]
+async fn continuing_from_backtracked_branch_attaches_child_to_branch_parent() {
+    let db_path = std::env::temp_dir().join(format!(
+        "akasa-branch-continuation-parent-{}.sqlite3",
+        Uuid::new_v4().simple()
+    ));
+    let repo = SessionArchiveRepository::new(AppDatabase::new(db_path.clone()));
+    let linear_choice = CharacterOption {
+        title: "记录原路线".to_string(),
+        action: "沿原路线继续记录".to_string(),
+        motivation_and_risk: "稳定，但会错过旁支线索".to_string(),
+    };
+    let branch_choice = CharacterOption {
+        title: "改走侧门".to_string(),
+        action: "从侧门绕进管理员室".to_string(),
+        motivation_and_risk: "能避开监控，但会进入陌生区域".to_string(),
+    };
+    let downstream_choice = CharacterOption {
+        title: "询问管理员".to_string(),
+        action: "向管理员打听旧楼里的异常蓝光".to_string(),
+        motivation_and_risk: "可能拿到线索，也可能暴露怀疑".to_string(),
+    };
+
+    repo.save_session_created(&SessionCreated {
+        session_id: "session-branch-continuation".to_string(),
+        character_name: "hero".to_string(),
+        world_profile: "world".to_string(),
+        character_profile: "hero".to_string(),
+        key_story_beats: "beats".to_string(),
+    })
+    .await
+    .expect("session metadata should save");
+    repo.save_rounds(
+        "session-branch-continuation",
+        &[
+            RoundHistoryEntry {
+                round: 1,
+                choices: vec![
+                    PendingCharacterChoice {
+                        id: "choice-1".to_string(),
+                        option: linear_choice.clone(),
+                    },
+                    PendingCharacterChoice {
+                        id: "choice-2".to_string(),
+                        option: branch_choice.clone(),
+                    },
+                ],
+                ..RoundHistoryEntry::default()
+            },
+            RoundHistoryEntry {
+                round: 2,
+                choices: vec![PendingCharacterChoice {
+                    id: "choice-1".to_string(),
+                    option: downstream_choice.clone(),
+                }],
+                ..RoundHistoryEntry::default()
+            },
+        ],
+    )
+    .await
+    .expect("rounds should save");
+    repo.update_session_turn_state(
+        "session-branch-continuation",
+        TurnPhase::AwaitingPlayer,
+        1,
+        1,
+    )
+    .await
+    .expect("source node should become active");
+    repo.save_player_input(&PlayerInput {
+        session_id: "session-branch-continuation".to_string(),
+        round: 1,
+        actions: vec![PlayerActionItem::character_selected_option(&linear_choice)],
+    })
+    .await
+    .expect("linear edge should save");
+    repo.update_session_turn_state(
+        "session-branch-continuation",
+        TurnPhase::AwaitingPlayer,
+        2,
+        2,
+    )
+    .await
+    .expect("linear future should become active");
+
+    let branch = repo
+        .prepare_backtrack_branch(
+            "session-branch-continuation",
+            1,
+            &[PlayerActionItem::character_selected_option(&branch_choice)],
+        )
+        .await
+        .expect("backtrack branch should prepare");
+    repo.update_session_turn_state_for_node(
+        "session-branch-continuation",
+        &branch.branch_node_id,
+        TurnPhase::AwaitingPlayer,
+    )
+    .await
+    .expect("branch source should await player");
+    repo.save_player_input(&PlayerInput {
+        session_id: "session-branch-continuation".to_string(),
+        round: 2,
+        actions: vec![PlayerActionItem::character_selected_option(
+            &downstream_choice,
+        )],
+    })
+    .await
+    .expect("branch continuation edge should save");
+
+    let conn = Connection::open(db_path).expect("sqlite db should open");
+    let (child_node_id, child_parent_node_id): (String, String) = conn
+        .query_row(
+            r#"
+            SELECT child.node_id, child.parent_node_id
+            FROM story_edges edge
+            JOIN story_nodes child
+                ON child.session_id = edge.session_id
+                AND child.node_id = edge.to_node_id
+            WHERE edge.session_id = ?1
+                AND edge.from_node_id = ?2
+            "#,
+            params!["session-branch-continuation", &branch.branch_node_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("branch child should exist");
+
+    assert_ne!(child_node_id, "node-3");
+    assert_eq!(child_parent_node_id, branch.branch_node_id);
 }
 
 #[tokio::test]

@@ -15,6 +15,7 @@ import { ScreenShell, StoryFrame } from "../components/AkashicUI";
 import ChoicePanel from "../components/ChoicePanel";
 import GameplayToolbar from "../components/GameplayToolbar";
 import NarrationPanel from "../components/NarrationPanel";
+import StorylinePage from "./StorylinePage";
 import type { NarrationRoundEntry } from "../components/gameplayTypes";
 import {
   appRoutes,
@@ -117,6 +118,7 @@ const GameplayPage: React.FC = () => {
   const [expandedChoicePanelRound, setExpandedChoicePanelRound] = useState<
     number | null
   >(null);
+  const [isStorylineOpen, setIsStorylineOpen] = useState(false);
   const [submittedChoiceState, setSubmittedChoiceState] =
     useState<SubmittedChoiceState>({
       choices: {},
@@ -124,6 +126,7 @@ const GameplayPage: React.FC = () => {
     });
   const autoChoiceKeyRef = useRef<string | null>(null);
   const reachedRoundKeyRef = useRef<string | null>(null);
+  const handledStorylineNavigationKeyRef = useRef<string | null>(null);
 
   const currentRound = Math.max(displayRound || turnIndex || 1, 1);
   const requestedFocusRound = useMemo(
@@ -306,6 +309,30 @@ const GameplayPage: React.FC = () => {
     const timer = window.setTimeout(() => setFeedback(null), 2200);
     return () => window.clearTimeout(timer);
   }, [feedback]);
+
+  useEffect(() => {
+    if (!scrollNarrationToBottomKey) {
+      return;
+    }
+    if (handledStorylineNavigationKeyRef.current === scrollNarrationToBottomKey) {
+      return;
+    }
+
+    handledStorylineNavigationKeyRef.current = scrollNarrationToBottomKey;
+
+    setExpandedChoicePanelRound(currentRound);
+    setRoundControls({
+      round: currentRound,
+      activeObsession: false,
+      obsessionInput: "",
+      previews: {},
+    });
+    setSubmittedChoiceState({
+      sessionId,
+      choices: {},
+    });
+    setFeedback(null);
+  }, [currentRound, scrollNarrationToBottomKey, sessionId]);
 
   useEffect(() => {
     if (!import.meta.env.DEV) {
@@ -990,15 +1017,19 @@ const GameplayPage: React.FC = () => {
                 resetGame();
               }}
               onOpenStoryline={() => {
-                if (sessionId) {
-                  navigate(routeWithSession(appRoutes.storyline, sessionId));
-                }
+                setIsStorylineOpen(true);
               }}
               onSave={handleSave}
             />
           </div>
         </div>
       </StoryFrame>
+      {isStorylineOpen ? (
+        <StorylinePage
+          isOverlay
+          onClose={() => setIsStorylineOpen(false)}
+        />
+      ) : null}
     </ScreenShell>
   );
 };

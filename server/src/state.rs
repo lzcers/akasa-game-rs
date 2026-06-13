@@ -526,6 +526,14 @@ impl AppState {
             .map_err(|err| AppError::internal(format!("切换故事线节点失败：{err:#}")))?
             .ok_or_else(|| AppError::not_found("未找到可切换的已生成故事节点。"))?;
 
+        if selected.round == 0 {
+            self.session_archive_repo
+                .update_session_turn_state_for_node(session_id, node_id, TurnPhase::Start)
+                .await
+                .map_err(|err| AppError::internal(format!("更新故事线节点状态失败：{err:#}")))?;
+            return self.game_session_world_from_database(session_id).await;
+        }
+
         let payload = if selected.flow_end {
             self.archive_payload_for_session(session_id, None, None)
                 .await?
@@ -2096,7 +2104,7 @@ mod tests {
     use rusqlite::{Connection, params};
     use serde_json::Value;
     use story_engine::components::{
-        outcome::{CharacterOption, PendingCharacterChoice},
+        outcome::{CharacterOption, CharacterOptions, PendingCharacterChoice},
         world_snapshot::WorldSnapshot,
     };
 
@@ -2323,6 +2331,294 @@ mod tests {
             summarize_actions(&merged[1].committed_actions),
             "绕到钟楼背面"
         );
+    }
+
+    #[tokio::test]
+    async fn select_storyline_node_uses_selected_branch_path_and_choices() {
+        let state = test_state();
+        let session_id = "session-select-branch-node";
+        let to_node_2 = CharacterOption {
+            title: "下楼查看老人情况".to_string(),
+            action: "下楼去401室观察保险丝问题".to_string(),
+            motivation_and_risk: "能靠近异常现场，但可能被邻居注意".to_string(),
+        };
+        let to_node_3 = CharacterOption {
+            title: "检查《电路基础》中的纸条".to_string(),
+            action: "翻到夹纸条的那一页，重新审视姐姐留下的地址".to_string(),
+            motivation_and_risk: "能获得姐姐线索，但会暂时错过楼下异响".to_string(),
+        };
+        let to_node_4 = CharacterOption {
+            title: "从窗户观察楼下情况".to_string(),
+            action: "从窗帘缝隙观察401室窗口和楼下动静".to_string(),
+            motivation_and_risk: "能保持距离，但看到的信息有限".to_string(),
+        };
+        let node_3_choice = CharacterOption {
+            title: "仔细翻查书本，看是否还有其他标记".to_string(),
+            action: "一页一页翻查《电路基础》中的旧标记".to_string(),
+            motivation_and_risk: "可能发现更多姐姐留下的暗号".to_string(),
+        };
+        let node_4_to_5 = CharacterOption {
+            title: "立刻下楼直接敲门询问老人".to_string(),
+            action: "下到401室敲门询问老人保险丝和铜线".to_string(),
+            motivation_and_risk: "能立刻接触线索，但会暴露关注".to_string(),
+        };
+
+        let mut payload = sample_payload_with_rounds(2);
+        payload.session_id = session_id.to_string();
+        payload.character_name = "陆沉舟".to_string();
+        payload.turn_state.phase = TurnPhase::AwaitingPlayer;
+        payload.turn_state.turn_index = 2;
+        payload.turn_state.active_turn_id = 2;
+        payload.world_snapshot = WorldSnapshot {
+            round: 2,
+            scene_title: "焦糊味的源头".to_string(),
+            description: "楼道里的焦糊味正从401室门缝里渗出。".to_string(),
+            ..WorldSnapshot::default()
+        };
+        payload.character_decision.committed_actions =
+            vec![PlayerActionItem::character_selected_option(&to_node_2)];
+        payload.character_decision.choices = vec![PendingCharacterChoice {
+            id: "choice-node-2".to_string(),
+            option: CharacterOption {
+                title: "借故进屋查看".to_string(),
+                action: "装作热心想帮忙，借故进屋检查保险丝".to_string(),
+                motivation_and_risk: "可以接近电路箱，但容易引发怀疑".to_string(),
+            },
+        }];
+        payload.history_log.rounds = vec![
+            RoundHistoryEntry {
+                round: 1,
+                world_snapshot: Some(WorldSnapshot {
+                    round: 1,
+                    scene_title: "成年日的第一个早晨".to_string(),
+                    description: "身份芯片在手腕下微微发热。".to_string(),
+                    ..WorldSnapshot::default()
+                }),
+                narration_text: Some("成年日的晨光照进房间。".to_string()),
+                choices: vec![
+                    PendingCharacterChoice {
+                        id: "choice-1".to_string(),
+                        option: to_node_2.clone(),
+                    },
+                    PendingCharacterChoice {
+                        id: "choice-2".to_string(),
+                        option: to_node_3.clone(),
+                    },
+                    PendingCharacterChoice {
+                        id: "choice-3".to_string(),
+                        option: to_node_4.clone(),
+                    },
+                ],
+                committed_actions: vec![PlayerActionItem::character_selected_option(&to_node_2)],
+            },
+            RoundHistoryEntry {
+                round: 2,
+                world_snapshot: Some(payload.world_snapshot.clone()),
+                narration_text: Some("楼道里的焦糊味越来越明显。".to_string()),
+                choices: payload.character_decision.choices.clone(),
+                committed_actions: vec![],
+            },
+        ];
+        state
+            .persist_payload_database_state(&payload)
+            .await
+            .expect("branch test payload should persist");
+
+        let branch_3 = state
+            .session_archive_repo
+            .prepare_backtrack_branch(
+                session_id,
+                1,
+                &[PlayerActionItem::character_selected_option(&to_node_3)],
+            )
+            .await
+            .expect("node 3 branch should prepare");
+        save_generated_node(
+            &state,
+            session_id,
+            &branch_3.branch_node_id,
+            2,
+            "书页间的旧痕",
+            "纸条上的旧地址再次浮现。",
+            vec![node_3_choice.clone()],
+        )
+        .await;
+
+        let branch_3_child = state
+            .session_archive_repo
+            .prepare_backtrack_branch(
+                session_id,
+                2,
+                &[PlayerActionItem::character_selected_option(&node_3_choice)],
+            )
+            .await
+            .expect("node 3 child branch should prepare");
+        save_generated_node(
+            &state,
+            session_id,
+            &branch_3_child.branch_node_id,
+            3,
+            "书脊里的针孔",
+            "书脊背面的针孔排列成新的地址。",
+            vec![CharacterOption {
+                title: "沿着新地址继续查下去".to_string(),
+                action: "把针孔地址记下，准备前往新地点".to_string(),
+                motivation_and_risk: "线索更明确，但会离家更远".to_string(),
+            }],
+        )
+        .await;
+
+        let branch_4 = state
+            .session_archive_repo
+            .prepare_backtrack_branch(
+                session_id,
+                1,
+                &[PlayerActionItem::character_selected_option(&to_node_4)],
+            )
+            .await
+            .expect("node 4 branch should prepare");
+        save_generated_node(
+            &state,
+            session_id,
+            &branch_4.branch_node_id,
+            2,
+            "窥视与信号",
+            "窗外的异常蓝光在雨幕里闪了一下。",
+            vec![node_4_to_5.clone()],
+        )
+        .await;
+
+        let branch_5 = state
+            .session_archive_repo
+            .prepare_backtrack_branch(
+                session_id,
+                2,
+                &[PlayerActionItem::character_selected_option(&node_4_to_5)],
+            )
+            .await
+            .expect("node 5 branch should prepare");
+        save_generated_node(
+            &state,
+            session_id,
+            &branch_5.branch_node_id,
+            3,
+            "冰冷门扉",
+            "401室的门后传来电流嗡鸣。",
+            vec![CharacterOption {
+                title: "以保险丝为借口，假装关心".to_string(),
+                action: "以保险丝为借口继续试探老人".to_string(),
+                motivation_and_risk: "能缓和气氛，但可能问不出真相".to_string(),
+            }],
+        )
+        .await;
+
+        let selected = state
+            .select_game_session_storyline_node(
+                session_id,
+                SelectStorylineNodeRequest {
+                    node_id: branch_3.branch_node_id.clone(),
+                },
+            )
+            .await
+            .expect("node 3 should be selectable through AppState");
+        assert_eq!(selected.world_state.scene_title, "书页间的旧痕");
+        assert_eq!(selected.phase, TurnPhase::AwaitingPlayer);
+        assert_eq!(
+            selected.choices[0].option.title,
+            "仔细翻查书本，看是否还有其他标记"
+        );
+
+        let page = state
+            .get_game_session_rounds(session_id, None, 20)
+            .await
+            .expect("selected branch rounds should load");
+        let titles = page
+            .rounds
+            .iter()
+            .filter_map(|round| {
+                round
+                    .world_state
+                    .as_ref()
+                    .map(|world_state| world_state.scene_title.as_str())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(titles, vec!["成年日的第一个早晨", "书页间的旧痕"]);
+        assert!(!titles.contains(&"冰冷门扉"));
+        assert_eq!(
+            page.rounds
+                .last()
+                .and_then(|round| round.choices.first())
+                .map(|choice| choice.option.title.as_str()),
+            Some("仔细翻查书本，看是否还有其他标记")
+        );
+    }
+
+    async fn save_generated_node(
+        state: &AppState,
+        session_id: &str,
+        node_id: &str,
+        round: u64,
+        title: &str,
+        narration: &str,
+        choices: Vec<CharacterOption>,
+    ) {
+        state
+            .session_archive_repo
+            .save_flow_turn_update_for_node(
+                &FlowTurnUpdate {
+                    session_id: session_id.to_string(),
+                    round,
+                    stage: TurnPhase::Simulation,
+                    entity_name: "FateWeaver".to_string(),
+                    output_type: AgentOutputType::Json,
+                    content: serde_json::to_string(&WorldSnapshot {
+                        round,
+                        scene_title: title.to_string(),
+                        description: narration.to_string(),
+                        ..WorldSnapshot::default()
+                    })
+                    .expect("world snapshot should serialize"),
+                },
+                node_id,
+            )
+            .await
+            .expect("world output should save");
+        state
+            .session_archive_repo
+            .save_flow_turn_update_for_node(
+                &FlowTurnUpdate {
+                    session_id: session_id.to_string(),
+                    round,
+                    stage: TurnPhase::Application,
+                    entity_name: "UpperNarrator".to_string(),
+                    output_type: AgentOutputType::Text,
+                    content: narration.to_string(),
+                },
+                node_id,
+            )
+            .await
+            .expect("narration output should save");
+        state
+            .session_archive_repo
+            .save_flow_turn_update_for_node(
+                &FlowTurnUpdate {
+                    session_id: session_id.to_string(),
+                    round,
+                    stage: TurnPhase::Application,
+                    entity_name: "陆沉舟".to_string(),
+                    output_type: AgentOutputType::Json,
+                    content: serde_json::to_string(&CharacterOptions { options: choices })
+                        .expect("character options should serialize"),
+                },
+                node_id,
+            )
+            .await
+            .expect("choice output should save");
+        state
+            .session_archive_repo
+            .update_session_turn_state_for_node(session_id, node_id, TurnPhase::AwaitingPlayer)
+            .await
+            .expect("generated node should become awaiting player");
     }
 
     #[test]

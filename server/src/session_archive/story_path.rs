@@ -3,7 +3,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::session_history::TurnPhase;
 
-use super::codec::serialize_phase;
+use super::codec::{deserialize_phase, serialize_phase};
 use super::{ROOT_NODE_ID, normalized_character_name};
 
 #[derive(Debug, Clone)]
@@ -222,6 +222,31 @@ pub(super) fn active_or_linear_node_id_for_depth(
         return Ok(node_id);
     }
 
+    if depth > 0 {
+        if let Some(parent_node_id) =
+            story_node_id_for_active_path_depth(conn, session_id, depth - 1)?
+        {
+            let linear_parent_node_id = linear_node_id_for_depth(depth - 1);
+            if parent_node_id != linear_parent_node_id {
+                if let Some(node_id) =
+                    latest_child_node_for_parent(conn, session_id, &parent_node_id, depth)?
+                {
+                    return Ok(node_id);
+                }
+
+                let phase = session_phase(conn, session_id)?.unwrap_or(TurnPhase::Simulation);
+                return create_branch_story_node(
+                    conn,
+                    session_id,
+                    &parent_node_id,
+                    depth,
+                    phase,
+                    now,
+                );
+            }
+        }
+    }
+
     ensure_linear_story_path(conn, session_id, depth, now)?;
     Ok(linear_node_id_for_depth(depth))
 }
@@ -258,6 +283,52 @@ pub(super) fn story_node_id_for_active_path_depth(
     )
     .optional()
     .context("failed to find active story path node")
+}
+
+fn latest_child_node_for_parent(
+    conn: &Connection,
+    session_id: &str,
+    parent_node_id: &str,
+    depth: u64,
+) -> Result<Option<String>> {
+    let depth = i64::try_from(depth).context("story node depth exceeds SQLite INTEGER range")?;
+    conn.query_row(
+        r#"
+        SELECT child.node_id
+        FROM story_edges edge
+        JOIN story_nodes child
+            ON child.session_id = edge.session_id
+            AND child.node_id = edge.to_node_id
+        WHERE edge.session_id = ?1
+            AND edge.from_node_id = ?2
+            AND child.node_depth = ?3
+        ORDER BY edge.created_at DESC, child.sequence_index DESC
+        LIMIT 1
+        "#,
+        params![session_id, parent_node_id, depth],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .context("failed to find active story branch child")
+}
+
+fn session_phase(conn: &Connection, session_id: &str) -> Result<Option<TurnPhase>> {
+    conn.query_row(
+        r#"
+        SELECT active_node.phase
+        FROM sessions session
+        JOIN story_nodes active_node
+            ON active_node.session_id = session.session_id
+            AND active_node.node_id = session.active_node_id
+        WHERE session.session_id = ?1
+        "#,
+        params![session_id],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .context("failed to load active story node phase")?
+    .map(|phase| deserialize_phase(&phase).map_err(anyhow::Error::msg))
+    .transpose()
 }
 
 pub(super) fn story_node_depth(
@@ -394,6 +465,10 @@ pub(super) fn select_story_path_nodes(
 ) -> Result<Vec<StoryPathNode>> {
     let mut nodes = select_active_story_path_nodes(conn, session_id)?;
     if nodes.is_empty() {
+        if active_story_node_depth(conn, session_id)? == Some(0) {
+            return Ok(nodes);
+        }
+
         nodes = select_all_story_nodes_with_outputs(conn, session_id)?;
     }
 
@@ -407,6 +482,30 @@ pub(super) fn select_story_path_nodes(
 
     Ok(nodes)
 }
+
+fn active_story_node_depth(conn: &Connection, session_id: &str) -> Result<Option<u64>> {
+    conn.query_row(
+        r#"
+        SELECT active_node.node_depth
+        FROM sessions session
+        JOIN story_nodes active_node
+            ON active_node.session_id = session.session_id
+            AND active_node.node_id = session.active_node_id
+        WHERE session.session_id = ?1
+        "#,
+        params![session_id],
+        |row| row.get::<_, i64>(0),
+    )
+    .optional()
+    .context("failed to load active story node depth")?
+    .map(|depth| {
+        depth
+            .try_into()
+            .context("active story node depth is negative")
+    })
+    .transpose()
+}
+
 fn select_active_story_path_nodes(
     conn: &Connection,
     session_id: &str,

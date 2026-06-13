@@ -22,6 +22,7 @@ interface GameSessionStreamRuntime {
 
 let activeSessionStream: EventSource | null = null;
 let activeStreamSessionId: string | null = null;
+let activeStreamGeneration = 0;
 let lastStreamEventId: string | null = null;
 let endingSnapshotSyncTimer: number | null = null;
 const STREAM_RECONNECTING_MESSAGE = '连接有些不稳定，正在为你续接这段记录...';
@@ -30,7 +31,12 @@ export function isSessionStreamActive(sessionId: string): boolean {
   return activeStreamSessionId === sessionId;
 }
 
+function isCurrentSessionStream(sessionId: string, generation: number): boolean {
+  return activeStreamSessionId === sessionId && activeStreamGeneration === generation;
+}
+
 export function closeSessionStream() {
+  activeStreamGeneration += 1;
   activeSessionStream?.close();
   activeSessionStream = null;
   activeStreamSessionId = null;
@@ -52,18 +58,21 @@ function scheduleSnapshotSync(sessionId: string, handler: (sessionId: string) =>
 }
 
 export function connectSessionStream(sessionId: string, handlers: SessionStreamHandlers) {
+  activeSessionStream?.close();
+  const streamGeneration = activeStreamGeneration + 1;
+  activeStreamGeneration = streamGeneration;
   activeStreamSessionId = sessionId;
   activeSessionStream = openGameSessionStream(
     sessionId,
     {
       onOpen: () => {
-        if (!isSessionStreamActive(sessionId)) {
+        if (!isCurrentSessionStream(sessionId, streamGeneration)) {
           return;
         }
         handlers.onStreamConnected();
       },
       onEngineEvent: (event, lastEventId) => {
-        if (!isSessionStreamActive(sessionId)) {
+        if (!isCurrentSessionStream(sessionId, streamGeneration)) {
           return;
         }
         handlers.onStreamConnected();
@@ -71,7 +80,7 @@ export function connectSessionStream(sessionId: string, handlers: SessionStreamH
         handlers.onEngineEvent(event);
       },
       onError: () => {
-        if (!isSessionStreamActive(sessionId)) {
+        if (!isCurrentSessionStream(sessionId, streamGeneration)) {
           return;
         }
         handlers.onStreamError();
@@ -79,6 +88,7 @@ export function connectSessionStream(sessionId: string, handlers: SessionStreamH
     },
     lastStreamEventId,
   );
+  return streamGeneration;
 }
 
 function applyStreamEventToStores(
@@ -105,14 +115,15 @@ function applyStreamEventToStores(
 async function syncActiveSessionSnapshot(
   runtime: GameSessionStreamRuntime,
   sessionId: string,
+  streamGeneration: number,
 ) {
-  if (!isSessionStreamActive(sessionId)) {
+  if (!isCurrentSessionStream(sessionId, streamGeneration)) {
     return;
   }
 
   try {
     const session = await getGameSession(sessionId);
-    if (!isSessionStreamActive(sessionId)) {
+    if (!isCurrentSessionStream(sessionId, streamGeneration)) {
       return;
     }
 
@@ -123,7 +134,7 @@ async function syncActiveSessionSnapshot(
       error: session.phase === 'failed' ? '故事推进失败，请稍后重试。' : null,
     });
   } catch (error) {
-    if (!isSessionStreamActive(sessionId)) {
+    if (!isCurrentSessionStream(sessionId, streamGeneration)) {
       return;
     }
     runtime.set({
@@ -137,11 +148,12 @@ export function connectGameSessionStream(
   sessionId: string,
   runtime: GameSessionStreamRuntime,
 ) {
-  connectSessionStream(sessionId, {
+  let streamGeneration = 0;
+  streamGeneration = connectSessionStream(sessionId, {
     onEngineEvent: (event) => {
       if (applyStreamEventToStores(runtime, event)) {
         scheduleSnapshotSync(sessionId, (nextSessionId) => {
-          void syncActiveSessionSnapshot(runtime, nextSessionId);
+          void syncActiveSessionSnapshot(runtime, nextSessionId, streamGeneration);
         });
       }
     },

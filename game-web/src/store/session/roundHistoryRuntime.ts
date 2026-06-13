@@ -3,6 +3,7 @@ import { useGameInternalStore } from '../gameStore';
 import { roundStateFromPersistedHistoryEntry } from './mappers';
 
 const SESSION_ROUNDS_PAGE_LIMIT = 100;
+let roundHistoryLoadVersion = 0;
 
 interface LoadCompleteSessionRoundsOptions {
   replaceTimeline?: boolean;
@@ -12,6 +13,7 @@ export async function loadCompleteSessionRounds(
   sessionId: string,
   options: LoadCompleteSessionRoundsOptions = {},
 ): Promise<void> {
+  const loadVersion = ++roundHistoryLoadVersion;
   let beforeRound: number | null | undefined = null;
   let isFirstPage = true;
 
@@ -21,12 +23,18 @@ export async function loadCompleteSessionRounds(
       limit: SESSION_ROUNDS_PAGE_LIMIT,
     });
 
-    if (useGameInternalStore.getState().sessionId !== sessionId) {
+    if (
+      loadVersion !== roundHistoryLoadVersion
+      || useGameInternalStore.getState().sessionId !== sessionId
+    ) {
       return;
     }
 
     useGameInternalStore.setState((state) => {
-      if (state.sessionId !== sessionId) {
+      if (
+        loadVersion !== roundHistoryLoadVersion
+        || state.sessionId !== sessionId
+      ) {
         return state;
       }
 
