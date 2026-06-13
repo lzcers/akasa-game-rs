@@ -38,6 +38,7 @@ interface StorylineNode {
   title: string;
   summary: string;
   incomingChoice: string | null;
+  isObsession: boolean;
   isActive: boolean;
 }
 
@@ -45,6 +46,7 @@ interface StorylineEdge {
   id: string;
   from: string;
   to: string;
+  isObsession: boolean;
 }
 
 interface StorylineGraph {
@@ -128,6 +130,17 @@ function incomingChoiceTitle(edge: StorylineEdgeData | undefined): string | null
   }
 
   return trimText(firstAction.title || firstAction.action, "继续回响");
+}
+
+function isObsessionEdge(edge: StorylineEdgeData | undefined): boolean {
+  return Boolean(
+    edge?.actions.some(
+      (action) =>
+        action.action_type === "free_text" &&
+        action.action.trim() &&
+        action.action.trim() !== "continue",
+    ),
+  );
 }
 
 function sortStorylineNodes(
@@ -252,6 +265,7 @@ function buildStorylineGraph(storyline: StorylineData | null): StorylineGraph {
   for (const [levelIndex, levelNodes] of nodesByLevel.entries()) {
     levelNodes.sort(sortStorylineNodes).forEach((node) => {
       const centerX = nodeCenterX.get(node.nodeId) ?? ROUND_WIDTH / 2;
+      const incomingEdge = incomingEdges.get(node.nodeId);
       nodes.push({
         id: node.nodeId,
         kind: "round",
@@ -262,7 +276,8 @@ function buildStorylineGraph(storyline: StorylineData | null): StorylineGraph {
         height: ROUND_HEIGHT,
         title: node.title || (node.round === 0 ? "根节点" : `第 ${node.round} 章`),
         summary: trimText(node.narrationText, "这一章仍在铺展。"),
-        incomingChoice: incomingChoiceTitle(incomingEdges.get(node.nodeId)),
+        incomingChoice: incomingChoiceTitle(incomingEdge),
+        isObsession: isObsessionEdge(incomingEdge),
         isActive: node.nodeId === storyline.activeNodeId,
       });
     });
@@ -272,6 +287,7 @@ function buildStorylineGraph(storyline: StorylineData | null): StorylineGraph {
     id: `${edge.fromNodeId}-${edge.toNodeId}`,
     from: edge.fromNodeId,
     to: edge.toNodeId,
+    isObsession: isObsessionEdge(edge),
   }));
 
   const deepestContentBottom = nodes.reduce(
@@ -718,6 +734,20 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
                         opacity="0.52"
                       />
                     </marker>
+                    <marker
+                      id="storyline-obsession-arrow"
+                      markerWidth="5"
+                      markerHeight="5"
+                      refX="4"
+                      refY="2.5"
+                      orient="auto"
+                    >
+                      <path
+                        d="M 0 0 L 5 2.5 L 0 5 z"
+                        fill="#f87171"
+                        opacity="0.74"
+                      />
+                    </marker>
                   </defs>
                   {graph.edges.map((edge) => {
                     const from = nodeById.get(edge.from);
@@ -731,10 +761,14 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
                         key={edge.id}
                         d={edgePath(from, to)}
                         fill="none"
-                        stroke="#d8c18f"
-                        strokeWidth={1.6}
-                        strokeOpacity={0.5}
-                        markerEnd="url(#storyline-arrow)"
+                        stroke={edge.isObsession ? "#f87171" : "#d8c18f"}
+                        strokeWidth={edge.isObsession ? 2 : 1.6}
+                        strokeOpacity={edge.isObsession ? 0.72 : 0.5}
+                        markerEnd={
+                          edge.isObsession
+                            ? "url(#storyline-obsession-arrow)"
+                            : "url(#storyline-arrow)"
+                        }
                       />
                     );
                   })}
@@ -750,8 +784,13 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
                     disabled={selectingNodeId !== null}
                     className={cn(
                       "absolute flex flex-col items-center justify-center overflow-hidden rounded-[0.6rem] border border-[#d8c18f]/42 bg-[linear-gradient(180deg,rgba(18,30,51,0.96),rgba(10,17,31,0.94))] px-2 py-1.5 text-center shadow-[0_6px_14px_rgba(0,0,0,0.2)] transition-transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#d8c18f]/45",
+                      node.isObsession &&
+                        "border-red-300/70 bg-[linear-gradient(180deg,rgba(54,25,39,0.98),rgba(28,18,32,0.95))] shadow-[0_0_0_1px_rgba(248,113,113,0.2),0_8px_18px_rgba(127,29,29,0.2)] focus:ring-red-300/45",
                       node.isActive &&
                         "border-[#8fa4ca]/85 bg-[linear-gradient(180deg,rgba(34,50,82,0.98),rgba(13,23,42,0.96))] shadow-[0_0_0_1px_rgba(143,164,202,0.35),0_10px_20px_rgba(0,0,0,0.28)]",
+                      node.isActive &&
+                        node.isObsession &&
+                        "border-red-200/85 bg-[linear-gradient(180deg,rgba(72,30,48,0.98),rgba(35,20,36,0.96))] shadow-[0_0_0_1px_rgba(248,113,113,0.28),0_10px_22px_rgba(127,29,29,0.25)]",
                       selectingNodeId === node.id &&
                         "border-[#8fa4ca]/70 text-[#8fa4ca]",
                       selectingNodeId !== null && "cursor-wait hover:translate-y-0",
@@ -765,6 +804,8 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
                     title={
                       node.isActive
                         ? `当前故事线：第 ${node.round} 章`
+                        : node.isObsession
+                          ? `切换到第 ${node.round} 章（执念分支）`
                         : `切换到第 ${node.round} 章`
                     }
                   >
@@ -772,8 +813,18 @@ const StorylinePage: React.FC<StorylinePageProps> = ({
                       {node.title}
                     </span>
                     {node.incomingChoice ? (
-                      <span className="mt-0.5 flex max-w-full items-center justify-center gap-1 text-[0.62rem] font-medium leading-3 text-[#bca984]">
-                        <MousePointer2 className="h-2.5 w-2.5 shrink-0 text-[#8fa4ca]" />
+                      <span
+                        className={cn(
+                          "mt-0.5 flex max-w-full items-center justify-center gap-1 text-[0.62rem] font-medium leading-3 text-[#bca984]",
+                          node.isObsession && "text-red-100/90",
+                        )}
+                      >
+                        <MousePointer2
+                          className={cn(
+                            "h-2.5 w-2.5 shrink-0 text-[#8fa4ca]",
+                            node.isObsession && "text-red-300",
+                          )}
+                        />
                         <span className="min-w-0 truncate">
                           {node.incomingChoice}
                         </span>

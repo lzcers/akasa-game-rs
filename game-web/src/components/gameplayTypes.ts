@@ -1,4 +1,4 @@
-import type { Choice } from "../lib/api";
+import type { BranchExploration, Choice } from "../lib/api";
 
 export interface NarrationRoundEntry {
   nodeId: string | null;
@@ -7,6 +7,7 @@ export interface NarrationRoundEntry {
   narrationText: string;
   narrationStatus: 'pending' | 'running' | 'done' | 'error' | null;
   choices: Choice[];
+  branchExplorations: BranchExploration[];
   selectedChoiceText: string | null;
   selectedChoiceAction: string | null;
   isAwaitingNarration: boolean;

@@ -65,7 +65,9 @@ const NarrationHistoryItem: React.FC<NarrationHistoryItemProps> = React.memo(
           <SelectedChoiceDisplay
             selectedChoiceText={entry.selectedChoiceText}
             selectedChoiceAction={entry.selectedChoiceAction}
-            canBacktrack={entry.choices.length > 0}
+            canBacktrack={
+              entry.choices.length > 0 || entry.branchExplorations.length > 0
+            }
             isBacktrackActive={activeBacktrackRound === entry.round}
             onBacktrack={onBacktrack ? () => onBacktrack(entry.round) : undefined}
           />

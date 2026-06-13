@@ -196,7 +196,8 @@ const GameplayPage: React.FC = () => {
   const choicePanelObsessionBranches = useMemo(
     () => (choicePanelState?.branchExplorations ?? []).filter((branch) => {
       const action = branch.action.action.trim();
-      return branch.action.action_type === "free_text" && action && action !== "continue";
+      const actionType = branch.action.action_type ?? "free_text";
+      return actionType === "free_text" && action && action !== "continue";
     }),
     [choicePanelState?.branchExplorations],
   );
